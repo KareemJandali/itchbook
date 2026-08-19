@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build zlib1g-dev clang
+
+      - name: Configure (Debug + sanitizers)
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke test (generate sample, run tools)
+        run: |
+          python3 python/make_sample.py data/raw/sample.gz
+          ./build/itch_census data/raw/sample.gz
+          ./build/itch_dump   data/raw/sample.gz 5
+          ./build/itch_slice  data/raw/sample.gz TEST data/sliced/TEST.gz
