@@ -23,8 +23,11 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Unit tests
+      - name: Unit tests (C++)
         run: ctest --test-dir build --output-on-failure
+
+      - name: Unit tests (Python oracle)
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Smoke test (generate sample, run tools)
         run: |
@@ -32,3 +35,9 @@ jobs:
           ./build/itch_census data/raw/sample.gz
           ./build/itch_dump   data/raw/sample.gz 5
           ./build/itch_slice  data/raw/sample.gz TEST data/sliced/TEST.gz
+
+      - name: Smoke test (reference book replay)
+        run: |
+          python3 python/reference/replay.py data/raw/sample.gz --symbol TEST \
+            --snapshots data/sliced/TEST_book.csv --interval-ms 5
+          head -3 data/sliced/TEST_book.csv
