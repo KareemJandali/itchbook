@@ -23,6 +23,7 @@ against a LOBSTER file. Missing levels use LOBSTER's dummy fills.
 """
 import argparse
 import gzip
+import json
 import sys
 from pathlib import Path
 
@@ -133,6 +134,39 @@ def replay(path, symbol=None, snapshots=None, interval_ns=60_000_000_000,
     return book, read, written
 
 
+def summary_dict(book, symbol, read, written):
+    """The daily summary as plain data, for validate.py to compare against an
+    external oracle. Prices stay in Price(4) integer units — converting to
+    floats here would introduce rounding into a comparison that should be exact.
+    """
+    bid, ask = book.best_bid(), book.best_ask()
+    return {
+        "symbol": symbol,
+        "messages_read": read,
+        "messages_applied": book.applied,
+        "unknown_refs": book.unknown_ref,
+        "snapshots_written": written,
+        "volume": book.volume,
+        "hidden_volume": book.hidden_volume,
+        "cross_volume": book.cross_volume,
+        "trades": book.trades,
+        "open": book.open,
+        "high": book.high,
+        "low": book.low,
+        "close": book.close,
+        "notional": book.notional,
+        "vwap": book.vwap(),
+        "cross_prices": book.cross_prices,
+        "resting_orders": len(book.orders),
+        "resting_shares": book.total_shares(),
+        "best_bid": bid,
+        "best_ask": ask,
+        "crossed": book.crossed(),
+        "system_event": book.system_event,
+        "trading_state": book.trading_state,
+    }
+
+
 def print_summary(book, symbol, read, written, snapshots):
     bid, ask = book.best_bid(), book.best_ask()
     rows = [
@@ -179,6 +213,8 @@ def main(argv=None):
     ap.add_argument("--levels", type=int, default=10,
                     help="book levels per side in each snapshot (default 10)")
     ap.add_argument("--limit", type=int, help="stop after N messages")
+    ap.add_argument("--json", metavar="PATH",
+                    help="also write the summary as JSON, for validate.py")
     ap.add_argument("--quiet", action="store_true", help="suppress the summary")
     a = ap.parse_args(argv)
 
@@ -191,6 +227,10 @@ def main(argv=None):
     book, read, written = replay(a.feed, symbol=a.symbol, snapshots=a.snapshots,
                                  interval_ns=interval_ns, levels=a.levels,
                                  limit=a.limit)
+    if a.json:
+        Path(a.json).parent.mkdir(parents=True, exist_ok=True)
+        with open(a.json, "w") as f:
+            json.dump(summary_dict(book, a.symbol, read, written), f, indent=2, sort_keys=True)
     if not a.quiet:
         print_summary(book, a.symbol, read, written, a.snapshots)
     return 0

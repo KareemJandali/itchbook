@@ -42,6 +42,7 @@ python/
     replay.py       driver — snapshot CSV + daily volume/OHLC/VWAP
   analysis/
     book_diff.py    diffs two snapshot CSVs — the differential test
+    validate.py     grades a reconstruction against Databento — Phase 2's gate
 tests/  bench/      unit/property tests, Google Benchmark
 data/               gitignored — raw .gz feeds and per-symbol slices
 ```
@@ -166,34 +167,72 @@ as an oracle) or [Databento](https://databento.com) `XNAS.ITCH` free credits.
 
 ## Validation
 
-The synthetic sample proves the code is self-consistent. It does not prove the
-protocol is understood correctly — only an external oracle does that, and until
-one has been matched this project knows nothing. That check is Phase 2's
-done-condition — and phase 3's, which asks for the same equality over a real
-day rather than a synthetic one — and it has **not been run yet**:
+Everything else in this repo checks the code against itself. The unit tests
+check it against hand-derived numbers; the differential test checks the C++
+against our own Python oracle. Both would pass happily if our reading of the
+ITCH spec were wrong *in the same way in both implementations*. Only an outside
+number settles that, and until one has been matched this project knows nothing.
+
+That is phase 2's done-condition, and it has **not been run yet** — no raw ITCH
+day has been through it.
+
+### Grading a reconstruction
 
 ```bash
-# slice one mid-liquidity symbol out of a real day, then reconstruct it
+# 1. slice one mid-liquidity symbol out of a real day and reconstruct it
 ./build/itch_slice data/raw/<day>.gz MSFT data/sliced/MSFT.gz
 python3 python/reference/replay.py data/sliced/MSFT.gz \
-    --snapshots data/sliced/MSFT_book.csv --interval-ms 1000
+    --snapshots data/sliced/MSFT_book.csv --interval-ms 1000 \
+    --json data/sliced/MSFT.json
 
-# ...and confirm the C++ book agrees over the whole day
+# 2. grade it against Databento's published bar for the same venue and day
+pip install databento
+export DATABENTO_API_KEY=db-...          # never commit this
+python3 python/analysis/validate.py data/sliced/MSFT.json \
+    --symbol MSFT --date 2019-01-30
+
+# 3. confirm the C++ book agrees over the whole day
 ./build/book_replay data/sliced/MSFT.gz \
     --snapshots data/sliced/MSFT_book_cpp.csv --interval-ms 1000
 python3 python/analysis/book_diff.py \
     data/sliced/MSFT_book.csv data/sliced/MSFT_book_cpp.csv
 ```
 
-Two ways to grade it, either of which is sufficient:
+`validate.py --cost-only` prints what the query would bill before spending
+anything, and `--oracle-json` re-runs the comparison offline against a fetch you
+already paid for.
 
-1. **NASDAQ's published daily summary** for that symbol and date — the reported
-   volume, OHLC and VWAP must match the summary block this prints.
-2. **A LOBSTER orderbook file** for the same symbol and day — drop the leading
-   `ts` column and the snapshot rows must match level for level.
+Passing means volume and OHLC match **exactly**. A book that is a few thousand
+shares off is a book with a bug in it.
 
-Pick a mid-liquidity name. Not AAPL (too many messages to eyeball when
-debugging), not something illiquid (not enough book activity to be interesting).
+### Two things worth knowing before you start
+
+**Databento is the oracle, not the input.** It serves normalised DBN, not raw
+ITCH 5.0 binary, so it cannot feed this parser — the point is to prove *our*
+parser reads the wire format correctly. The feed itself still has to come from
+NASDAQ's public FTP (`emi.nasdaq.com/ITCH/`) or another source of the original
+binary.
+
+**Do not grade against a retail quote source.** Yahoo, Google and friends report
+*consolidated* volume across every US venue and dark pool. This reconstruction
+is NASDAQ-only, which is a fraction of that, so a consolidated figure will look
+like a catastrophic failure when the code is fine. Databento's `XNAS.ITCH` bar
+is built from the same feed we parse, which is exactly why it is the right
+comparison. LOBSTER is an even stronger oracle in principle — same source,
+comparable level for level rather than in aggregate — but it publishes
+reconstructed output rather than the raw input, so it only works if you can get
+a raw ITCH day for the same symbol *and* date as one of their samples.
+
+### When it does not match
+
+Debug roughly in this order:
+
+| Symptom | Likely cause |
+|---|---|
+| Short a few percent, book looks right | `P`/`Q` volume — hidden and cross executions are real volume that never appears as a displayed order |
+| Short by a lot | the locate filter is dropping messages, or the symbol resolved to the wrong locate code |
+| Slightly over | non-printable `C` executions being counted; they move the book but not the volume |
+| OHLC off but volume right | the opening and closing crosses, which set the official open and close |
 
 ## License
 
