@@ -1,0 +1,44 @@
+Hardware counter confirmation for the pool chunk-size change.
+Intel, 3.60GHz, WSL2 Ubuntu, perf with working hardware counters.
+Two builds differing only in ITCHBOOK_POOL_FIRST_CHUNK / _MAX_CHUNK.
+Feed: python3 python/make_bench_feed.py data/raw/bench.gz --messages 1000000
+
+=================== BEFORE (fixed 1<<20 chunk, 42MB slab) ===================
+ Performance counter stats for 'taskset -c 2 ./bench_old data/raw/bench.gz':
+
+             69640      page-faults:u
+             69639      minor-faults:u
+           5196031      cache-misses:u
+        2031377218      instructions:u
+        1437389398      cycles:u
+
+       0.441167311 seconds time elapsed
+       0.269539000 seconds user
+       0.120689000 seconds sys
+
+  book_bench: 39.54 ns/msg  142.31 cycles/msg  25.29 M msg/s
+  all p50 62  p99 384  p99.9 842  max 89,906,442
+
+=================== AFTER (geometric chunks, 4096 -> 262144) ================
+ Performance counter stats for 'taskset -c 2 ./bench_new data/raw/bench.gz':
+
+             28876      page-faults:u
+             28876      minor-faults:u
+           2745508      cache-misses:u
+        1996287051      instructions:u
+        1245317483      cycles:u
+
+       0.367305927 seconds time elapsed
+       0.281363000 seconds user
+       0.035665000 seconds sys
+
+  book_bench: 22.79 ns/msg   82.04 cycles/msg  43.88 M msg/s
+  all p50 62  p99 366  p99.9 748  max 504,046
+
+============================== reading ======================================
+40,764 page faults eliminated / 4 book constructions = 10,191 pages per book
+10,191 pages x 4096 = 41.7 MB; the removed slab is 1<<20 x 40 = 41.9 MB.
+Agreement 99.5% — the eliminated faults are that slab and nothing else.
+
+instructions -1.7%: no steady-state work was removed, which is the point.
+kernel time -70.4%: the kernel is no longer zeroing 42MB of fresh pages.

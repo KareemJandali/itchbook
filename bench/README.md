@@ -89,7 +89,8 @@ O(log n) and the bulk of orders still land in a few large contiguous blocks.
 | geometric chunks | **79.6** | 58 | 366 | 728 | **551,020** |
 
 **1.65x faster, 39% fewer cycles per message**, and the worst message improves
-by 97x.
+by 97x. On the PMU machine the same change measures **1.73x** (142.31 -> 82.04
+cycles/msg), and throughput goes from 25.3M to 43.9M messages/second.
 
 ## Two predicted wins that were not
 
@@ -115,23 +116,58 @@ The lesson both share: on this workload the cost is memory traffic, not
 instructions. Removing instructions from a path that is waiting on cache buys
 nothing.
 
-## What is missing, and why
+## Confirmed with hardware counters
 
-The build plan's done-condition asks for a hardware counter behind every
-speedup. **This machine cannot provide one.** `perf` is not installed and cannot
-be, and the PMU is not virtualised — `perf_event_open` returns `ENOENT` for
-`instructions`, `cycles`, `cache-misses` and `branch-misses` alike.
-
-So the mechanism above is established by a controlled sweep rather than by a
-counter: cost tracks slab size across five orders of magnitude while p50 stays
-flat, which isolates first-touch page-fault cost about as well as an experiment
-can without a PMU. On a machine with `perf`, confirm it directly:
+The sweep above was run on a machine with no PMU, so the mechanism was inferred
+rather than measured. It has since been confirmed on real hardware — Intel,
+3.60GHz, WSL2 Ubuntu, `perf` with working hardware counters — using two builds
+that differ only in the pool's chunk size:
 
 ```bash
-perf stat -e page-faults,cache-misses,instructions,cycles \
-    ./build/book_bench data/raw/bench.gz
+g++ -std=c++20 -O3 -Iinclude tools/book_bench.cpp -lz -o bench_new
+g++ -std=c++20 -O3 -DITCHBOOK_POOL_FIRST_CHUNK="(1u<<20)" \
+                   -DITCHBOOK_POOL_MAX_CHUNK="(1u<<20)" \
+    -Iinclude tools/book_bench.cpp -lz -o bench_old
+
+perf stat -e page-faults,minor-faults,cache-misses,instructions,cycles \
+    -- taskset -c 2 ./bench_old data/raw/bench.gz
 ```
 
-`page-faults` and the `max sample` column should move together; `instructions`
-should barely change, since this optimisation removes no work from the steady
-state.
+| counter | 42MB slab | geometric | change |
+|---|---|---|---|
+| **page-faults** | 69,640 | 28,876 | **-58.5%** |
+| **cache-misses** | 5,196,031 | 2,745,508 | **-47.2%** |
+| **instructions** | 2,031,377,218 | 1,996,287,051 | **-1.7%** |
+| cycles (whole process) | 1,437,389,398 | 1,245,317,483 | -13.4% |
+| kernel time | 0.1207s | 0.0357s | **-70.4%** |
+| cycles/msg (replay only) | 142.31 | 82.04 | **-42.4%** |
+
+**The page-fault count identifies the cause exactly.** 40,764 faults disappear.
+The benchmark constructs four books — one instrumented pass plus three timed
+repeats — so that is 10,191 pages per book, or **41.7MB**. The slab no longer
+being allocated is `1<<20 x 40` bytes = **41.9MB**, or 10,240 pages. The two
+agree to **99.5%**: the eliminated faults *are* that slab, and nothing else.
+
+**Instructions barely move (-1.7%), which is the point.** The optimisation
+removes no work from the steady state. A change that made the book do less would
+show up here; this one does not. What it removes is the kernel zeroing 42MB of
+fresh pages, which is why kernel time falls 70% while user-space instruction
+count stays put.
+
+Cache misses falling 47% was more than expected. Cold, never-touched pages miss
+on every first access, and zeroing 42MB evicts everything else on the way
+through — so the same first-touch cost shows up in two counters at once.
+
+### Where the prediction was imprecise
+
+The prediction written before the run was "page-faults drop a lot, instructions
+barely move, cycles down ~40%". The first two landed. The third needs a
+correction: **process-level `cycles:u` fell only 13.4%**, not 40%, because
+`perf stat` measures everything the process does — gzip-decoding a 30MB feed,
+four book constructions, the instrumented pass — while the 42% figure is the
+replay loop alone.
+
+The two are consistent. Three timed replays at (142.31 - 82.04) cycles/msg is
+181M cycles saved, against a process-level delta of 192M; the remainder is the
+instrumented pass. Quoting the 42% against a whole-process counter would have
+been wrong, and the counter is what caught it.
