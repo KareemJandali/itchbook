@@ -30,6 +30,8 @@ position limit, at 250 µs one-way latency.
 | mbo | 9,892 | 709,308 | −$3,425.35 | −0.4829 | −0.1102 | −0.0307 |
 | pessimistic | 8,548 | 655,232 | −$3,154.44 | −0.4814 | −0.2179 | −0.0307 |
 
+![Total P&L by fill model, MSFT](figures/MSFT-fills-total.svg)
+
 **It loses money in every model.** That is the phase's stated done-condition —
 "run a strategy you know is unprofitable and confirm it loses money" — met on a
 real day rather than by construction. Naive still flatters: it reports $401.35
@@ -63,6 +65,8 @@ share, signed so positive is in our favour.
 | optimistic | −0.3230 | −0.3531 | −0.4725 | −0.3884 |
 | mbo | −0.1876 | −0.2097 | −0.3300 | −0.4402 |
 | pessimistic | −0.1076 | −0.1222 | −0.2326 | −0.4505 |
+
+![Post-fill drift, MSFT](figures/MSFT-markout.svg)
 
 Negative at every horizon, in every model, worsening as the horizon lengthens.
 That is being picked off, and it is why the strategy loses: the fills arrive
@@ -147,6 +151,8 @@ of the queue, so latency slows the churn, each order rests longer, and it
 climbs further. For a strategy that loses money, filling more is losing more —
 the rising share count and the worsening per-share number are the same fact
 twice.
+
+![Fill volume vs latency, MSFT](figures/MSFT-latency-shares.svg)
 
 This is not an argument for slow infrastructure. It is an argument that
 `TouchMaker` requotes too eagerly, and it is only visible because the queue
