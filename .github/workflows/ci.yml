@@ -107,6 +107,16 @@ jobs:
           cmp /tmp/truth.csv /tmp/recovered.csv
           echo "recovered book identical to truth after an 800-message outage"
 
+      # A restart is only worth having if it is transparent. Snapshot halfway
+      # through a real feed, throw the book away, restore from the file, and
+      # require the end state to match a run that never died — every order at
+      # every price in queue order, plus the tape. The same step enforces the
+      # conditional cross invariant: crossed while halted is legal and counted,
+      # crossed while trading fails the build.
+      - name: Restart recovery (snapshot, restore, compare to a run that never died)
+        run: |
+          ./build/restart_check data/raw/rec.gz --snapshot-file /tmp/mid.snap
+
       # A feed with a closed form. Every number below is fixed by construction
       # before the simulator runs, so a disagreement is a defect rather than an
       # opinion — and all four models must agree, because the feed contains no

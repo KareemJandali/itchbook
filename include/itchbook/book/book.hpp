@@ -588,6 +588,68 @@ public:
                             : static_cast<double>(notional_) / static_cast<double>(volume_);
     }
 
+    // ---- state capture, for the snapshot ------------------------------------
+    //
+    // Everything the book accumulates that is NOT derivable from replaying the
+    // orders: the tape. A process restarting mid-day has to come back with the
+    // day's volume and range intact, because they are facts about trades that
+    // happened and no amount of re-reading the current book recovers them.
+    struct TapeState {
+        uint64_t volume = 0;
+        uint64_t notional = 0;
+        uint64_t trades = 0;
+        uint64_t hidden_volume = 0;
+        uint64_t cross_volume = 0;
+        uint64_t unknown_ref = 0;
+        int32_t open = -1;
+        int32_t high = -1;
+        int32_t low = -1;
+        int32_t close = -1;
+        char trading_state = '\0';
+        char system_event = '\0';
+    };
+
+    TapeState tape() const {
+        return TapeState{volume_,        notional_,      trades_,
+                         hidden_volume_, cross_volume_,  unknown_ref_,
+                         open_,          high_,          low_,
+                         close_,         trading_state_, system_event_};
+    }
+
+    void restore_tape(const TapeState& t) {
+        volume_ = t.volume;
+        notional_ = t.notional;
+        trades_ = t.trades;
+        hidden_volume_ = t.hidden_volume;
+        cross_volume_ = t.cross_volume;
+        unknown_ref_ = t.unknown_ref;
+        open_ = t.open;
+        high_ = t.high;
+        low_ = t.low;
+        close_ = t.close;
+        trading_state_ = t.trading_state;
+        system_event_ = t.system_event;
+    }
+
+    // Every resting order, in the order the exchange would fill them: best
+    // price first, and within a price, oldest first.
+    //
+    // The traversal order is the whole point. A snapshot that dumps the ref map
+    // in hash order restores a book with the right levels, the right shares and
+    // scrambled queue priority — which every level-based check passes and every
+    // queue model silently gets wrong. Writing them in fill order and restoring
+    // by replaying adds reproduces the FIFO exactly, because add() appends.
+    template <typename Fn>
+    void for_each_order(char side, Fn&& fn) const {
+        std::vector<LevelView> levels;
+        top(side, kMaxDenseLevels * 4, &levels);
+        for (const LevelView& lv : levels) {
+            for (const Order* o = first_order(side, lv.price); o != nullptr; o = o->next) {
+                fn(*o);
+            }
+        }
+    }
+
     uint64_t unknown_ref() const { return unknown_ref_; }
     size_t overflow_levels() const { return bids_.overflow_count() + asks_.overflow_count(); }
     const Pool& pool() const { return pool_; }
