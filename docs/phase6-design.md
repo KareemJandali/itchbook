@@ -1980,6 +1980,31 @@ across four lanes, and free relative to the gzip decode and book reconstruction.
 | **I3b** | `mbo`: `ahead == Σ recorded shares over the ahead-set` — **conditional** on no priority anomaly since arrival and no clamp having fired. Two mechanisms, no shared code. |
 | **I4** | `ahead_optimistic <= ahead_mbo <= ahead_pessimistic`, pointwise |
 | **I5** | cumulative filled shares: `naive >= optimistic >= mbo >= pessimistic`, per order, per event |
+
+**I4 and I5 carry two conditions, both found by the fuzzer rather than by
+reading.** Each is a real limit on the containment argument, not a bug:
+
+1. **No lane may have refreshed an iceberg slice.** The argument is inductive —
+   every lane starts at the same `ahead0`, and optimistic's decrements are a
+   superset of `mbo`'s, which are a superset of pessimistic's. A refresh *resets*
+   `ahead` from the book instead of decrementing it, and because the faster lane
+   fills first it also refreshes first, and is then sitting behind a queue the
+   slower lane has not rejoined yet. Observed directly:
+   `opt(ahead=93, refreshes=1)` against `mbo(ahead=1, refreshes=0)`.
+   Consequence: **the published band brackets `mbo` only for fully displayed
+   orders.** For an iceberg, the bounds are still individually meaningful but
+   their ordering is not guaranteed.
+
+2. **At most one live order of ours per `(side, price)`.** The clamp's limit
+   includes our own earlier orders' *remaining displayed* shares, and that
+   remainder is model-dependent because each lane fills it at a different rate.
+   The limit then differs per lane and containment breaks — observed as
+   `mbo(ahead=65)` against `pess(ahead=13)`, an inversion of the bound itself.
+   This is why the reference strategy asserts one live order per price (section
+   3.6); it is a correctness constraint, not tidiness.
+
+`Entry::refreshes` exists so a property test can tell a legal increase from a
+bug, rather than inferring it from share counts.
 | **I6** | per order: `filled + cancelled + display + hidden == original` at all times; at session end `display == hidden == 0` and `position == 0` |
 | **I7** | our filled shares at a price level over any window `<=` (executed shares at that level and at prices through it on our side) + (R1/R2 reach consumed) over the same window |
 | **I8** | re-deriving realised P&L and position from the fill audit record equals the incrementally maintained ledger, **exactly**, in micro-dollars |
