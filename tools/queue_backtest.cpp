@@ -6,7 +6,7 @@
 // band is honest.
 //
 // Usage:
-//   queue_backtest <feed.gz> [--strategy touch-maker|crosser|null|far-quoter]
+//   queue_backtest <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]
 //                  [--size N] [--json out.json] [--fees base|top|inverted]
 #include <cinttypes>
 #include <cstdint>
@@ -83,12 +83,13 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
                      ", \"through_fills\": %" PRIu64 ", \"clamp_events\": %" PRIu64
                      ", \"priority_anomalies\": %" PRIu64
                      ", \"drift_100ms\": %" PRId64 ", \"drift_1s\": %" PRId64
-                     ", \"drift_10s\": %" PRId64 "}",
+                     ", \"drift_10s\": %" PRId64
+                     ", \"unresolved_10s\": %" PRIu64 "}",
                      first ? "" : ",", to_string(r.model), r.fills, r.shares, r.equity,
                      r.equity_per_share, r.edge, r.fees, r.residual_position, r.lock_fills,
                      r.through_fills, r.clamp_events, r.priority_anomalies,
                      r.markouts[0].drift_per_share, r.markouts[1].drift_per_share,
-                     r.markouts[2].drift_per_share);
+                     r.markouts[2].drift_per_share, r.markouts[2].unresolved_fills);
         first = false;
     }
     std::fprintf(f, "\n  }\n}\n");
@@ -139,7 +140,7 @@ int main(int argc, char** argv) {
     }
     if (feed == nullptr) {
         std::fprintf(stderr,
-                     "usage: %s <feed.gz> [--strategy touch-maker|crosser|null|far-quoter]\n"
+                     "usage: %s <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]\n"
                      "                    [--size N] [--fees base|top|inverted] [--json out]\n"
                      "                    [--latency-ns N] [--cancel-latency-ns N]\n",
                      argv[0]);
@@ -152,6 +153,11 @@ int main(int argc, char** argv) {
 
     if (strategy == "touch-maker") {
         TouchMaker s;
+        s.size = size;
+        return run(feed, s, fees, latency, json_path);
+    }
+    if (strategy == "patient-maker") {
+        PatientMaker s;
         s.size = size;
         return run(feed, s, fees, latency, json_path);
     }

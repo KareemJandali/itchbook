@@ -45,6 +45,7 @@ add_executable(book_replay tools/book_replay.cpp)
 # the sanitiser, not the book.
 add_executable(queue_sim tools/queue_sim.cpp)
 add_executable(queue_backtest tools/queue_backtest.cpp)
+add_executable(latency_sweep tools/latency_sweep.cpp)
 
 add_executable(book_bench tools/book_bench.cpp)
 target_compile_options(book_bench PRIVATE -O3 -fno-omit-frame-pointer)
@@ -53,7 +54,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(book_bench PRIVATE -fno-sanitize=all)
 endif()
 
-foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest)
+foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
+          latency_sweep)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()
 
