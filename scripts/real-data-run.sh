@@ -94,6 +94,15 @@ python3 python/analysis/leave_one_out.py "$SLICE" --binary "$BIN/queue_sim" \
     --samples "$SAMPLES" --partial-only | tee "$OUT/$SYMBOL-oracle.txt"
 
 echo
+echo "=== phase 7: adversarial replay ==="
+# On a real day the outage resolves to an actual 14:00 — the plan's scenario as
+# literally specified, with a full book behind it and two hours of session still
+# to come. No synthetic feed can pose that test, because none of them is long
+# enough to contain 14:00.
+python3 python/analysis/adversarial.py "$SLICE" --build "$BIN" \
+    | tee "$OUT/$SYMBOL-adversarial.txt"
+
+echo
 echo "=== done ==="
 echo "tables and figures in $OUT/"
 echo "nothing under data/ or out/ is committed — both are gitignored."

@@ -84,6 +84,9 @@ SCENARIOS = [
     ("everything", ["--drop", "500", "--duplicate", "500", "--reorder", "500",
                     "--truncate", "2000", "--disconnect-for", "40"], "dropped",
      "all of it at once, because failures compose and are rarely alone"),
+    ("disconnect-to-end", ["--disconnect-for", "100000"], "disconnected",
+     "the link dies and never comes back: no later packet reveals the jump, "
+     "so nothing announces the loss"),
 ]
 
 

@@ -167,6 +167,10 @@ int main(int argc, char** argv) {
         // Anything still held out of order was never reachable. A gap open at
         // the end of the stream is still a gap.
         seq.flush(sink);
+        // A stream that stopped is not a stream that ended. Without this the
+        // receiver reports a clean session having missed everything after the
+        // disconnect.
+        gap.on_stream_end(seq.ended());
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         if (sink.out != nullptr) gzclose(sink.out);
@@ -255,6 +259,7 @@ int main(int argc, char** argv) {
                      "  \"rebuilds\": %" PRIu64 ",\n"
                      "  \"recoveries\": %" PRIu64 ",\n"
                      "  \"unknown_refs_after_gap\": %" PRIu64 ",\n"
+                     "  \"truncated_stream\": %s,\n"
                      "  \"resting_orders\": %zu,\n"
                      "  \"resting_shares\": %" PRIu64 ",\n"
                      "  \"first_ts\": %" PRIu64 ",\n"
@@ -265,7 +270,8 @@ int main(int argc, char** argv) {
                      s.truncated_packets, seq.ended() ? "true" : "false",
                      recover::to_string(gap.state()),
                      gap.trusted() ? "true" : "false", g.rebuilds, g.recoveries,
-                     g.unknown_refs_after_gap, bk.resting_orders(),
+                     g.unknown_refs_after_gap,
+                     g.truncated_streams > 0 ? "true" : "false", bk.resting_orders(),
                      bk.resting_shares(), sink.first_ts, sink.last_ts);
         std::fclose(jf);
     }

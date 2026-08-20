@@ -151,6 +151,42 @@ void test_a_message_about_the_pre_gap_world_is_expected_not_an_error() {
     CHECK(t.trusted());
 }
 
+void test_a_stream_that_stopped_is_not_a_stream_that_ended() {
+    // The bug the scenario matrix missed. A gap in the middle announces
+    // itself: the next packet's sequence number has jumped. A stream that dies
+    // never sends that next packet, so there is no discontinuity to see and
+    // every counter stays at zero while the book misses the rest of the day.
+    //
+    // Found by sweeping outage lengths past the point where the feed resumes —
+    // 80,235 messages, 40% of a session, gone, and the receiver called itself
+    // trusted.
+    GapTracker t;
+    CHECK(t.trusted());
+    t.on_stream_end(false);
+    CHECK(!t.trusted());
+    CHECK(t.halted());
+    CHECK_EQ(t.stats().truncated_streams, 1u);
+
+    // ...and an orderly end is not a failure.
+    GapTracker clean;
+    clean.on_stream_end(true);
+    CHECK(clean.trusted());
+    CHECK_EQ(clean.stats().truncated_streams, 0u);
+}
+
+void test_a_truncated_stream_outranks_a_recovery_in_progress() {
+    // If the feed dies while we are still rebuilding, the answer is halted and
+    // not recovering: there is no bound on what was missed and no further
+    // messages with which to demonstrate convergence.
+    GapConfig c;
+    c.clean_messages_to_recover = 10;
+    GapTracker t{c};
+    t.on_gap(100, 50);
+    CHECK(!t.trusted());
+    t.on_stream_end(false);
+    CHECK(t.halted());
+}
+
 }  // namespace
 
 int main() {
@@ -162,5 +198,7 @@ int main() {
     test_a_feed_that_keeps_losing_packets_is_not_a_feed_you_are_recovering_from();
     test_clearing_a_book_keeps_the_tape_and_drops_the_orders();
     test_a_message_about_the_pre_gap_world_is_expected_not_an_error();
+    test_a_stream_that_stopped_is_not_a_stream_that_ended();
+    test_a_truncated_stream_outranks_a_recovery_in_progress();
     return REPORT();
 }
