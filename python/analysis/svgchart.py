@@ -27,6 +27,8 @@ STYLE = """
   .surface { fill: #fcfcfb; }
   .ink     { fill: #0b0b0b; }
   .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
   .grid    { stroke: #d8d7d2; stroke-width: 1; }
   .axis    { stroke: #52514e; stroke-width: 1; }
   .s1 { fill: #2a78d6; stroke: #2a78d6; }
@@ -44,6 +46,7 @@ STYLE = """
     .surface { fill: #1a1a19; }
     .ink     { fill: #ffffff; }
     .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
     .grid    { stroke: #3a3a38; }
     .axis    { stroke: #c3c2b7; }
     .s1 { fill: #3987e5; stroke: #3987e5; }
@@ -123,11 +126,24 @@ def svg_bars(labels, values, title, subtitle, unit="c/share", value_fmt=None):
         p.append(f'<text class="ink" x="{left - 12}" y="{y + bar_h * 0.68:.0f}" '
                  f'text-anchor="end" font-family="system-ui,sans-serif" '
                  f'font-size="12.5">{esc(lab)}</text>')
-        tx = (x1 + 8) if v >= 0 else (x0 - 8)
-        anchor = "start" if v >= 0 else "end"
-        p.append(f'<text class="ink" x="{tx:.1f}" y="{y + bar_h * 0.68:.0f}" '
+        # A negative bar grows LEFTWARD from zero, straight at the category
+        # labels, so its value label cannot live outside it: on the first
+        # all-negative chart this code drew, the longest bar rendered as
+        # "mbo3,425.4" with the minus sign hidden behind the category name —
+        # the largest loss reading as a gain. Long negative bars carry their
+        # label inside, right-aligned at the zero end, where there is always
+        # room and nothing to collide with.
+        label = show(v)
+        inside = v < 0 and w > 8 * len(label) + 16
+        if inside:
+            tx, anchor, cls = zero - 10, "end", "on-fill"
+        elif v >= 0:
+            tx, anchor, cls = x1 + 8, "start", "ink"
+        else:
+            tx, anchor, cls = x0 - 8, "end", "ink"
+        p.append(f'<text class="{cls}" x="{tx:.1f}" y="{y + bar_h * 0.68:.0f}" '
                  f'text-anchor="{anchor}" font-family="ui-monospace,monospace" '
-                 f'font-size="12">{esc(show(v))}</text>')
+                 f'font-size="12">{esc(label)}</text>')
 
     p.append(f'<line class="axis" x1="{zero:.1f}" y1="{top - 8}" x2="{zero:.1f}" '
              f'y2="{top + len(labels) * (bar_h + gap) - gap + 6}"/>')

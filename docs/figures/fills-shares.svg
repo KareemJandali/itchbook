@@ -3,6 +3,8 @@
   .surface { fill: #fcfcfb; }
   .ink     { fill: #0b0b0b; }
   .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
   .grid    { stroke: #d8d7d2; stroke-width: 1; }
   .axis    { stroke: #52514e; stroke-width: 1; }
   .s1 { fill: #2a78d6; stroke: #2a78d6; }
@@ -20,6 +22,7 @@
     .surface { fill: #1a1a19; }
     .ink     { fill: #ffffff; }
     .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
     .grid    { stroke: #3a3a38; }
     .axis    { stroke: #c3c2b7; }
     .s1 { fill: #3987e5; stroke: #3987e5; }
