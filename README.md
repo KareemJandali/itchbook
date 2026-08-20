@@ -303,12 +303,17 @@ CAUTIOUS=1  CORRECT=5  SAFE=4        (0 WRONG)
 that differs while claiming to be trusted — is the one outcome the phase exists
 to make impossible, and CI fails on any occurrence.
 
-Losing 16,231 consecutive messages and converging back to a byte-identical book
-is the interesting row. There is no retransmission service to ask, so recovery
+On MSFT, 30 December 2019: 3 CORRECT, 7 SAFE, 0 WRONG, with the outage at a
+real 14:00. Duplication and reordering are handled exactly — 12,199 duplicated
+messages applied once, 270 reordered packets resolved without one false gap —
+and a feed losing 269 packets halts rather than pretending to recover. There is no retransmission service to ask, so recovery
 is rebuild-forward, and its guarantee is narrow and precise: the rebuilt book
-contains **no wrong orders, only missing ones**. It converges because the feed
-itself supplies the signal — every message referencing an order the book never
-saw is a message about the world before the gap, and that rate falls to zero.
+contains **no wrong orders, only missing ones**. That holds unconditionally.
+Whether it re-converges before the close does not: on a synthetic feed it
+recovers from a 16,231-message hole to a byte-identical book, and on MSFT it
+never converges at all, because a rebuild at 14:00 discards thousands of orders
+that keep being cancelled for the rest of the day. The verdicts stay SAFE
+throughout — the book differs and the system says so, which is the contract.
 
 The harness also has to be able to fail. Set the convergence bar to a single
 clean reference and three scenarios go WRONG; that run is in CI too, and must
