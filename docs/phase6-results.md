@@ -315,3 +315,27 @@ python3 python/analysis/leave_one_out.py data/raw/queue_long.gz \
 
 CI runs the closed-form check and the leave-one-out oracle on every push, so
 neither can rot silently.
+
+### On a real day
+
+Everything above is synthetic. `scripts/real-data-run.sh` runs the same four
+measurements against a real NASDAQ day and writes the tables and figures to
+`out/real/`:
+
+```bash
+./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 200
+```
+
+Two things it does that are easy to forget by hand. It **slices first** —
+`queue_backtest` does not filter by symbol, so pointing it at a full day would
+interleave eight thousand symbols into one book and produce confident nonsense.
+And it builds **Release** — the default Debug build has ASan and UBSan on and
+runs about ten times slower, which on 1.2M messages is the difference between a
+coffee and an afternoon.
+
+The last argument is the leave-one-out sample count. Each sample replays the
+whole slice once, so 200 is worth doing and is not a thirty-second job; start
+at 50.
+
+Nothing under `data/` or `out/` is committed. Both are gitignored, because both
+are derived from licensed data.
