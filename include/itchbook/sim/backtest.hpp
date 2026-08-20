@@ -19,6 +19,7 @@
 
 #include "itchbook/book/book.hpp"
 #include "itchbook/book/dispatch.hpp"
+#include "itchbook/risk/kill_switch.hpp"
 #include "itchbook/sim/latency_model.hpp"
 #include "itchbook/sim/ledger.hpp"
 #include "itchbook/sim/markout.hpp"
@@ -44,6 +45,14 @@ struct LaneResult {
     uint64_t through_fills = 0;
     uint64_t suppressed_quotes = 0;
     int64_t peak_position = 0;
+    // The kill switch is per lane for the same reason the position limit is:
+    // the lanes fill differently, so they reach a limit at different moments,
+    // and a switch shared between them would stop a lane for something another
+    // lane did.
+    risk::Trip trip = risk::Trip::None;
+    uint64_t tripped_at_event = 0;
+    int64_t trip_observed = 0;
+    int64_t trip_limit = 0;
     HorizonReport markouts[kNumHorizons];
 };
 
@@ -63,8 +72,12 @@ struct Lane {
     // stated limit is not the P&L of the strategy that was described.
     uint64_t suppressed_quotes = 0;
     int64_t peak_position = 0;
+    risk::KillSwitch kill;
+    uint64_t tripped_at_event = 0;
+    bool trip_seen = false;
 
-    Lane(Model m, QueueConfig c, FeeSchedule f) : model(m), queue(c), ledger(f) {}
+    Lane(Model m, QueueConfig c, FeeSchedule f, risk::KillSwitchConfig k)
+        : model(m), queue(c), ledger(f), kill(k) {}
 };
 
 // The one risk control the harness owns.
@@ -108,12 +121,12 @@ template <typename Strategy>
 class Backtest {
 public:
     Backtest(Strategy strategy, FeeSchedule fees, LatencyModel latency = {},
-             RiskLimits risk = {})
+             RiskLimits risk = {}, risk::KillSwitchConfig kill = {})
         : strategy_(strategy), latency_(latency), risk_(risk) {
         for (Model m : {Model::Naive, Model::Optimistic, Model::Mbo, Model::Pessimistic}) {
             QueueConfig c;
             c.model = m;
-            lanes_.emplace_back(m, c, fees);
+            lanes_.emplace_back(m, c, fees, kill);
         }
     }
 
@@ -156,8 +169,29 @@ public:
                 l.markout.on_fill(f, mid);
                 if (f.trigger == Trigger::Lock) ++l.lock_fills;
                 if (f.trigger == Trigger::Through) ++l.through_fills;
+                // The denominator of the order-to-fill ratio. Passive fills
+                // arrive here; the taker path reports its own below.
+                const Price4 mk = mid.ok() ? static_cast<Price4>(mid.two_mid / 2) : 0;
+                l.kill.on_fill(f.ts, l.ledger.position(), l.ledger.equity(mk), mk);
             }
             l.markout.observe(ts, mid);
+            // The switch sees every mark, not only fills. Drawdown moves while
+            // a position is marked against a market running away from it, and a
+            // control that only looks when you trade is blind exactly then.
+            if (mid.ok()) {
+                l.kill.observe(ts, l.ledger.position(),
+                               l.ledger.equity(static_cast<Price4>(mid.two_mid / 2)),
+                               static_cast<Price4>(mid.two_mid / 2));
+            }
+            // One place, after every path that can trip — a fill, a mark, or a
+            // message sent. Tripping and flattening happen together: leaving
+            // resting quotes in the market after a trip means the switch stopped
+            // you sending orders and did not stop you trading.
+            if (!l.kill.live() && !l.trip_seen) {
+                l.trip_seen = true;
+                l.tripped_at_event = event_index_;
+                l.queue.cancel_all();
+            }
             const int64_t pos = l.ledger.position();
             if (pos > l.peak_position || -pos > l.peak_position) {
                 l.peak_position = pos < 0 ? -pos : pos;
@@ -205,6 +239,14 @@ private:
     void apply_intent(const Intent& in, uint64_t arrival_ts) {
         const Mid mid = last_good_mid_;
         for (Lane& l : lanes_) {
+            // A tripped lane sends nothing further. This is the difference
+            // between a limit and a kill switch: the limit declined one order,
+            // the switch ends the session.
+            if (!l.kill.live()) {
+                ++l.suppressed_quotes;
+                continue;
+            }
+            l.kill.on_message_sent(arrival_ts, in.kind != IntentKind::Cancel);
             switch (in.kind) {
                     case IntentKind::Quote:
                         // Checked per lane and at ARRIVAL, because both halves
@@ -247,6 +289,12 @@ private:
                         f.liquidity = Liquidity::Removed;
                         l.ledger.on_fill(f, mid);
                         l.markout.on_fill(f, mid);
+                        {
+                            const Price4 mk =
+                                mid.ok() ? static_cast<Price4>(mid.two_mid / 2) : 0;
+                            l.kill.on_fill(f.ts, l.ledger.position(),
+                                           l.ledger.equity(mk), mk);
+                        }
                         break;
                     }
             }
@@ -280,6 +328,10 @@ public:
             r.through_fills = l.through_fills;
             r.suppressed_quotes = l.suppressed_quotes;
             r.peak_position = l.peak_position;
+            r.trip = l.kill.report().reason;
+            r.tripped_at_event = l.tripped_at_event;
+            r.trip_observed = l.kill.report().observed;
+            r.trip_limit = l.kill.report().limit;
             for (size_t h = 0; h < kNumHorizons; ++h) r.markouts[h] = l.markout.report(h);
             out.push_back(r);
         }

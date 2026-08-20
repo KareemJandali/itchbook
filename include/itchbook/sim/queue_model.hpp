@@ -126,6 +126,24 @@ public:
         }
     }
 
+    // Pull everything. A kill switch that stops you SENDING orders but leaves
+    // the ones already resting in the market has not stopped you trading — the
+    // resting quotes keep filling, in whatever the conditions were that tripped
+    // it. Tripping and flattening are one action.
+    //
+    // It pulls quotes; it does not liquidate. Trading out of a position into
+    // the conditions that just tripped a risk limit is a separate decision with
+    // its own costs, and making it automatically is how a bad ten minutes turns
+    // into a bad day. The position is left for a human.
+    void cancel_all() {
+        for (Entry& e : entries_) {
+            if (!e.live) continue;
+            e.live = false;
+            e.display = 0;
+            e.hidden = 0;
+        }
+    }
+
     void cancel(uint64_t id) {
         for (Entry& e : entries_) {
             if (e.id == id && e.live) {

@@ -76,6 +76,30 @@ void print_results(const std::vector<LaneResult>& rs, uint64_t events,
         std::printf("%-12s %14" PRId64 " %14" PRId64 " %14" PRIu64 "\n", to_string(r.model),
                     r.peak_position, r.residual_position, r.suppressed_quotes);
     }
+
+    // A tripped lane stopped trading partway through the day, so its P&L is not
+    // a full session and must never be compared against one that ran to the
+    // close without the reader being told.
+    bool any_trip = false;
+    for (const LaneResult& r : rs) any_trip = any_trip || r.trip != risk::Trip::None;
+    if (any_trip) {
+        std::printf("\nKILL SWITCH\n");
+        std::printf("%-12s %16s %12s %14s %14s\n", "model", "reason", "at event",
+                    "observed", "limit");
+        std::printf("---------------------------------------------------------"
+                    "----------------\n");
+        for (const LaneResult& r : rs) {
+            if (r.trip == risk::Trip::None) {
+                std::printf("%-12s %16s\n", to_string(r.model), "-");
+                continue;
+            }
+            std::printf("%-12s %16s %12" PRIu64 " %14" PRId64 " %14" PRId64 "\n",
+                        to_string(r.model), risk::to_string(r.trip),
+                        r.tripped_at_event, r.trip_observed, r.trip_limit);
+        }
+        std::printf("\nA tripped lane stopped early. Its P&L is a partial "
+                    "session, not a worse one.\n");
+    }
 }
 
 void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t events,
@@ -97,13 +121,14 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
                      ", \"drift_10s\": %" PRId64
                      ", \"unresolved_10s\": %" PRIu64
                      ", \"peak_position\": %" PRId64
-                     ", \"suppressed_quotes\": %" PRIu64 "}",
+                     ", \"suppressed_quotes\": %" PRIu64
+                     ", \"trip\": \"%s\"}",
                      first ? "" : ",", to_string(r.model), r.fills, r.shares, r.equity,
                      r.equity_per_share, r.edge, r.fees, r.residual_position, r.lock_fills,
                      r.through_fills, r.clamp_events, r.priority_anomalies,
                      r.markouts[0].drift_per_share, r.markouts[1].drift_per_share,
                      r.markouts[2].drift_per_share, r.markouts[2].unresolved_fills,
-                     r.peak_position, r.suppressed_quotes);
+                     r.peak_position, r.suppressed_quotes, risk::to_string(r.trip));
         first = false;
     }
     std::fprintf(f, "\n  }\n}\n");
@@ -112,8 +137,8 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
 
 template <typename S>
 int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
-        RiskLimits risk, const char* json_path) {
-    Backtest<S> bt(strategy, fees, latency, risk);
+        RiskLimits limits, risk::KillSwitchConfig kill, const char* json_path) {
+    Backtest<S> bt(strategy, fees, latency, limits, kill);
     try {
         Reader reader(feed);
         parse(reader, bt);
@@ -139,6 +164,7 @@ int main(int argc, char** argv) {
     uint32_t size = 100;
     LatencyModel latency;   // deliberately non-zero by default
     RiskLimits risk;        // no position limit unless asked for
+    risk::KillSwitchConfig kill;   // every limit off unless asked for
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -152,6 +178,18 @@ int main(int argc, char** argv) {
             latency.cancel_ns = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--max-position" && i + 1 < argc)
             risk.max_position = std::strtoll(argv[++i], nullptr, 10);
+        // The kill-switch limits. Distinct from --max-position on purpose:
+        // that one declines an order, these end the session.
+        else if (a == "--kill-position" && i + 1 < argc)
+            kill.max_position = std::strtoll(argv[++i], nullptr, 10);
+        else if (a == "--kill-notional" && i + 1 < argc)
+            kill.max_notional = std::strtoll(argv[++i], nullptr, 10) * 1000000;
+        else if (a == "--kill-msg-rate" && i + 1 < argc)
+            kill.max_messages_per_second = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--kill-order-to-fill" && i + 1 < argc)
+            kill.max_orders_per_fill = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--kill-drawdown" && i + 1 < argc)
+            kill.max_drawdown = std::strtoll(argv[++i], nullptr, 10) * 1000000;
         else if (feed == nullptr) feed = argv[i];
         else { std::fprintf(stderr, "error: unexpected '%s'\n", argv[i]); return 2; }
     }
@@ -160,7 +198,10 @@ int main(int argc, char** argv) {
                      "usage: %s <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]\n"
                      "                    [--size N] [--fees base|top|inverted] [--json out]\n"
                      "                    [--latency-ns N] [--cancel-latency-ns N]\n"
-                     "                    [--max-position N]\n",
+                     "                    [--max-position N]\n"
+                     "                    [--kill-position N] [--kill-notional DOLLARS]\n"
+                     "                    [--kill-msg-rate N] [--kill-order-to-fill N]\n"
+                     "                    [--kill-drawdown DOLLARS]\n",
                      argv[0]);
         return 2;
     }
@@ -172,24 +213,24 @@ int main(int argc, char** argv) {
     if (strategy == "touch-maker") {
         TouchMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path);
     }
     if (strategy == "patient-maker") {
         PatientMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path);
     }
     if (strategy == "crosser") {
         Crosser s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path);
     }
     if (strategy == "far-quoter") {
         FarQuoter s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path);
     }
-    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, json_path);
+    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, kill, json_path);
     std::fprintf(stderr, "error: unknown strategy '%s'\n", strategy.c_str());
     return 2;
 }
