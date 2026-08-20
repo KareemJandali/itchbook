@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 430" width="780" height="430" role="img" aria-label="Post-fill drift — touch-maker">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="780" height="430"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Post-fill drift — touch-maker</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">Positive is in your favour. Negative and worsening with the horizon means you are being picked off.</text>
+<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">cents/share</text>
+<line class="grid" x1="78" y1="368.0" x2="648" y2="368.0"/>
+<text class="muted" x="68" y="372.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">-0.021</text>
+<line class="grid" x1="78" y1="295.5" x2="648" y2="295.5"/>
+<text class="muted" x="68" y="299.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">0.034</text>
+<line class="grid" x1="78" y1="223.0" x2="648" y2="223.0"/>
+<text class="muted" x="68" y="227.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">0.088</text>
+<line class="grid" x1="78" y1="150.5" x2="648" y2="150.5"/>
+<text class="muted" x="68" y="154.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">0.143</text>
+<line class="grid" x1="78" y1="78.0" x2="648" y2="78.0"/>
+<text class="muted" x="68" y="82.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">0.198</text>
+<line class="axis" x1="78" y1="339.9" x2="648" y2="339.9"/>
+<text class="ink" x="68" y="343.9" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">0</text>
+<text class="muted" x="78.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100ms</text>
+<text class="muted" x="363.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1s</text>
+<text class="muted" x="648.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10s</text>
+<text class="muted" x="363" y="412" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">horizon after the fill (three separate measurements)</text>
+<polyline class="k1" stroke-width="2" stroke-linejoin="round" points="78.0,179.3 363.0,106.1 648.0,113.1"/>
+<circle class="s1" cx="78.0" cy="179.3" r="4"/>
+<circle class="s1" cx="363.0" cy="106.1" r="4"/>
+<circle class="s1" cx="648.0" cy="113.1" r="4"/>
+<polyline class="k2" stroke-width="2" stroke-linejoin="round" points="78.0,293.8 363.0,214.5 648.0,253.1"/>
+<circle class="s2" cx="78.0" cy="293.8" r="4"/>
+<circle class="s2" cx="363.0" cy="214.5" r="4"/>
+<circle class="s2" cx="648.0" cy="253.1" r="4"/>
+<polyline class="k3" stroke-width="2" stroke-linejoin="round" points="78.0,292.2 363.0,214.3 648.0,255.8"/>
+<circle class="s3" cx="78.0" cy="292.2" r="4"/>
+<circle class="s3" cx="363.0" cy="214.3" r="4"/>
+<circle class="s3" cx="648.0" cy="255.8" r="4"/>
+<polyline class="k4" stroke-width="2" stroke-linejoin="round" points="78.0,296.1 363.0,195.9 648.0,250.1"/>
+<circle class="s4" cx="78.0" cy="296.1" r="4"/>
+<circle class="s4" cx="363.0" cy="195.9" r="4"/>
+<circle class="s4" cx="648.0" cy="250.1" r="4"/>
+<circle class="s1" cx="660" cy="109.1" r="4"/>
+<text class="ink" x="670" y="113.1" font-family="system-ui,sans-serif" font-size="11.5">naive</text>
+<circle class="s4" cx="660" cy="246.1" r="4"/>
+<text class="ink" x="670" y="250.1" font-family="system-ui,sans-serif" font-size="11.5">pessimistic</text>
+<circle class="s2" cx="660" cy="261.1" r="4"/>
+<text class="ink" x="670" y="265.1" font-family="system-ui,sans-serif" font-size="11.5">optimistic</text>
+<circle class="s3" cx="660" cy="276.1" r="4"/>
+<text class="ink" x="670" y="280.1" font-family="system-ui,sans-serif" font-size="11.5">mbo</text>
+</svg>

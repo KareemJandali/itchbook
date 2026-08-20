@@ -3,7 +3,7 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–5 complete. Reconstruction validated against real market
+> **Status:** Phases 1–6 complete. Reconstruction validated against real market
 > data, performance against hardware counters, and the matching engine against
 > a million random order sequences. Reconstructs MSFT
 > from a real NASDAQ trading day (30 Dec 2019, 1.2M messages) and **matches
@@ -15,7 +15,11 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > to the pool's slab allocation rather than anything on the hot path — the
 > page-fault count matches the removed 41.9MB slab to 99.5%. Two optimisations
 > the plan predicted measured flat. See [`bench/`](bench/) and
-> [`docs/build-plan.md`](docs/build-plan.md).
+> [`docs/build-plan.md`](docs/build-plan.md). Phase 6 is the headline: the same
+> maker, the same bytes, four fill models — the naive one claims **3.67x** the
+> P&L of the pessimistic one, and shadowing 200 real orders puts the truth
+> inside the band **200 times out of 200** with the reference-resolving model
+> exact on every one. See [`docs/phase6-results.md`](docs/phase6-results.md).
 
 ## What it's for
 
@@ -210,6 +214,49 @@ libFuzzer where its runtime is available:
 clang++ -fsanitize=fuzzer,address -DITCHBOOK_LIBFUZZER \
     -Iinclude tests/fuzz/fuzz_matcher.cpp -o fuzz_libfuzzer
 ```
+
+## Queue-position backtesting
+
+A public feed tells you a cancel happened at your price. It does not tell you
+whether it was ahead of your order or behind it. Ahead means you moved up the
+queue; behind means you did not, and nothing in the data resolves it. So the
+backtester runs four models over one book in one pass and reports the range:
+
+- **naive** — filled whenever anything trades at your price. What most
+  backtests do, and it is the number to distrust.
+- **optimistic** — every cancel at your level was ahead of you.
+- **pessimistic** — every cancel was behind you; only executions advance you.
+- **mbo** — resolve the reference and know. Available because we reconstruct
+  the book by order, not by level; it is the check that the band is a band.
+
+```bash
+./build/queue_backtest data/raw/queue_long.gz --strategy touch-maker     --max-position 1000 --json out.json
+python3 python/analysis/fill_comparison.py out.json --svg fills.svg
+```
+
+```
+model            fills    shares     P&L ($)     c/share   edge c/sh
+naive             8624   521,345     8423.15      1.6157      1.3515
+optimistic        3065   207,061     2403.18      1.1606      1.0162
+mbo               2997   204,832     2366.28      1.1552      1.0079
+pessimistic       2960   199,791     2293.93      1.1482      1.0021
+
+naive / pessimistic total P&L: 3.67x
+```
+
+Also modelled: one-way latency, with queue position computed at arrival and
+cancels that are late too, so a fill in the gap between deciding to pull and
+actually pulling still happens; markouts at 100 ms / 1 s / 10 s with unresolved
+fills counted rather than dropped; and the NASDAQ maker-taker schedule with
+Section 31 and TAF, in integer micro-dollars.
+
+The external check is the one that matters. `leave_one_out.py` replays the feed
+**unchanged** with a simulated order standing exactly where a real order stood,
+and grades the models against what that order actually filled. Over 200 orders
+that were pulled part-filled — the cases where the answer depends on queue
+position — the truth fell inside `[pessimistic, optimistic]` 200 times, and
+`mbo` reproduced all 200 exactly. Full numbers, figures and the limits in
+[`docs/phase6-results.md`](docs/phase6-results.md).
 
 ## Differential testing
 
