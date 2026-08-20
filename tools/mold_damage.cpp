@@ -30,6 +30,7 @@
 
 #include <zlib.h>
 
+#include "itchbook/itch/messages.hpp"
 #include "itchbook/itch/reader.hpp"
 #include "itchbook/mold/packet.hpp"
 
@@ -55,7 +56,7 @@ int main(int argc, char** argv) {
     const char* in_path = nullptr;
     const char* out_path = nullptr;
     uint64_t drop = 0, duplicate = 0, reorder = 0, truncate = 0;
-    uint64_t disconnect_at = 0, disconnect_for = 0;
+    uint64_t disconnect_at = 0, disconnect_for = 0, disconnect_at_ns = 0;
     unsigned seed = 1;
 
     for (int i = 1; i < argc; ++i) {
@@ -66,6 +67,11 @@ int main(int argc, char** argv) {
         else if (a == "--reorder" && i + 1 < argc) num(&reorder);
         else if (a == "--truncate" && i + 1 < argc) num(&truncate);
         else if (a == "--disconnect-at" && i + 1 < argc) num(&disconnect_at);
+        // The plan asks for "a mid-day disconnect at 14:00", which is a wall
+        // clock time and not a sequence number. Expressing it as one keeps the
+        // scenario faithful instead of making the harness guess which packet
+        // 14:00 landed in.
+        else if (a == "--disconnect-at-ns" && i + 1 < argc) num(&disconnect_at_ns);
         else if (a == "--disconnect-for" && i + 1 < argc) num(&disconnect_for);
         else if (a == "--seed" && i + 1 < argc) seed = static_cast<unsigned>(std::atol(argv[++i]));
         else if (in_path == nullptr) in_path = argv[i];
@@ -76,7 +82,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <in.gz> <out.gz> [--drop N] [--duplicate N]\n"
                      "           [--reorder N] [--truncate N]\n"
-                     "           [--disconnect-at SEQ --disconnect-for N] [--seed N]\n"
+                     "           [--disconnect-at SEQ | --disconnect-at-ns NS]\n"
+                     "           [--disconnect-for N] [--seed N]\n"
                      "\nrates are one-in-N; --disconnect-at is a sequence number\n",
                      argv[0]);
         return 2;
@@ -109,10 +116,25 @@ int main(int argc, char** argv) {
             // comes back. Everything in between is simply gone, which is a
             // much bigger hole than any one-in-N rate produces and is the case
             // a receiver most needs to survive.
-            if (disconnect_at > 0 && have_hdr && disconnect_until == 0 &&
-                hdr.sequence >= disconnect_at && disconnected == 0) {
-                disconnect_until = disconnect_for;
+            bool outage_starts = false;
+            if (have_hdr && disconnect_until == 0 && disconnected == 0) {
+                if (disconnect_at > 0 && hdr.sequence >= disconnect_at) {
+                    outage_starts = true;
+                } else if (disconnect_at_ns > 0 && hdr.message_count() > 0) {
+                    // Peek at the first message in the packet. A datagram is
+                    // the unit that goes missing, so the outage begins with
+                    // the first one carrying a timestamp at or past the mark.
+                    mold::BlockIterator it(packet.data(), packet.size(),
+                                           hdr.message_count());
+                    const uint8_t* msg = nullptr;
+                    uint16_t msg_len = 0;
+                    if (it.next(&msg, &msg_len) && msg_len >= 11 &&
+                        itch::timestamp(msg) >= disconnect_at_ns) {
+                        outage_starts = true;
+                    }
+                }
             }
+            if (outage_starts) disconnect_until = disconnect_for;
             if (disconnect_until > 0) {
                 --disconnect_until;
                 ++disconnected;

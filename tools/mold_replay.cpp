@@ -24,6 +24,7 @@
 #include <zlib.h>
 
 #include "itchbook/book/book.hpp"
+#include "itchbook/itch/messages.hpp"
 #include "itchbook/book/dispatch.hpp"
 #include "itchbook/itch/reader.hpp"
 #include "itchbook/mold/sequencer.hpp"
@@ -45,8 +46,18 @@ struct Recovered {
     book::Book* bk = nullptr;
     recover::GapTracker* gap = nullptr;
 
+    uint64_t first_ts = 0;
+    uint64_t last_ts = 0;
+
     void on_message(char type, const uint8_t* p, uint16_t len) {
         ++messages;
+        if (len >= 11) {
+            const uint64_t ts = itch::timestamp(p);
+            if (ts > 0) {
+                if (first_ts == 0) first_ts = ts;
+                last_ts = ts;
+            }
+        }
         if (out != nullptr) {
             uint8_t lb[2] = {static_cast<uint8_t>(len >> 8),
                              static_cast<uint8_t>(len & 0xff)};
@@ -97,6 +108,7 @@ int main(int argc, char** argv) {
     bool quiet = false;
     bool build_book = false;
     const char* book_out = nullptr;
+    const char* json_out = nullptr;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -108,6 +120,7 @@ int main(int argc, char** argv) {
         else if (a == "--quiet") quiet = true;
         else if (a == "--book") build_book = true;
         else if (a == "--book-out" && i + 1 < argc) { book_out = argv[++i]; build_book = true; }
+        else if (a == "--json" && i + 1 < argc) json_out = argv[++i];
         else if (a == "--halt-on-gap") gcfg.policy = recover::Policy::Halt;
         else if (a == "--recover-after" && i + 1 < argc)
             gcfg.clean_messages_to_recover = std::strtoull(argv[++i], nullptr, 10);
@@ -122,7 +135,7 @@ int main(int argc, char** argv) {
                      "                       [--reorder-patience N] [--quiet]\n"
                      "                       [--book] [--halt-on-gap]\n"
                      "                       [--recover-after N] [--max-gaps N]\n"
-                     "                       [--book-out levels.csv]\n",
+                     "                       [--book-out levels.csv] [--json out.json]\n",
                      argv[0]);
         return 2;
     }
@@ -212,6 +225,49 @@ int main(int argc, char** argv) {
             }
             std::fclose(f);
         }
+    }
+
+    // Machine-readable, for the adversarial harness. The verdict it computes
+    // turns on whether the system KNEW it was damaged, so `state` matters as
+    // much as the counters — a book that differs from the truth while claiming
+    // to be trusted is the one outcome that is never acceptable.
+    if (json_out != nullptr) {
+        std::FILE* jf = std::fopen(json_out, "w");
+        if (jf == nullptr) {
+            std::fprintf(stderr, "error: cannot write %s\n", json_out);
+            return 1;
+        }
+        const recover::GapStats& g = gap.stats();
+        std::fprintf(jf,
+                     "{\n"
+                     "  \"packets\": %" PRIu64 ",\n"
+                     "  \"messages\": %" PRIu64 ",\n"
+                     "  \"heartbeats\": %" PRIu64 ",\n"
+                     "  \"gaps\": %" PRIu64 ",\n"
+                     "  \"messages_lost\": %" PRIu64 ",\n"
+                     "  \"duplicate_packets\": %" PRIu64 ",\n"
+                     "  \"duplicate_messages\": %" PRIu64 ",\n"
+                     "  \"reordered_packets\": %" PRIu64 ",\n"
+                     "  \"truncated_packets\": %" PRIu64 ",\n"
+                     "  \"ended\": %s,\n"
+                     "  \"state\": \"%s\",\n"
+                     "  \"trusted\": %s,\n"
+                     "  \"rebuilds\": %" PRIu64 ",\n"
+                     "  \"recoveries\": %" PRIu64 ",\n"
+                     "  \"unknown_refs_after_gap\": %" PRIu64 ",\n"
+                     "  \"resting_orders\": %zu,\n"
+                     "  \"resting_shares\": %" PRIu64 ",\n"
+                     "  \"first_ts\": %" PRIu64 ",\n"
+                     "  \"last_ts\": %" PRIu64 "\n"
+                     "}\n",
+                     s.packets, s.messages, s.heartbeats, s.gaps, s.messages_lost,
+                     s.duplicate_packets, s.duplicate_messages, s.reordered_packets,
+                     s.truncated_packets, seq.ended() ? "true" : "false",
+                     recover::to_string(gap.state()),
+                     gap.trusted() ? "true" : "false", g.rebuilds, g.recoveries,
+                     g.unknown_refs_after_gap, bk.resting_orders(),
+                     bk.resting_shares(), sink.first_ts, sink.last_ts);
+        std::fclose(jf);
     }
 
     // A non-zero exit when messages were lost, so a harness can assert on it
