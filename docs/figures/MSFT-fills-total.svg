@@ -3,6 +3,8 @@
   .surface { fill: #fcfcfb; }
   .ink     { fill: #0b0b0b; }
   .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
   .grid    { stroke: #d8d7d2; stroke-width: 1; }
   .axis    { stroke: #52514e; stroke-width: 1; }
   .s1 { fill: #2a78d6; stroke: #2a78d6; }
@@ -20,6 +22,7 @@
     .surface { fill: #1a1a19; }
     .ink     { fill: #ffffff; }
     .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
     .grid    { stroke: #3a3a38; }
     .axis    { stroke: #c3c2b7; }
     .s1 { fill: #3987e5; stroke: #3987e5; }
@@ -38,19 +41,19 @@
 <rect class="s1" x="257.5" y="62" width="324.1" height="26" rx="4"/>
 <rect class="s1" x="577.6" y="62" width="4" height="26"/>
 <text class="ink" x="118" y="80" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">naive</text>
-<text class="ink" x="249.5" y="80" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-2,753.1</text>
+<text class="on-fill" x="571.6" y="80" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-2,753.1</text>
 <rect class="s1" x="220.7" y="108" width="360.9" height="26" rx="4"/>
 <rect class="s1" x="577.6" y="108" width="4" height="26"/>
 <text class="ink" x="118" y="126" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">optimistic</text>
-<text class="ink" x="212.7" y="126" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-3,065.8</text>
+<text class="on-fill" x="571.6" y="126" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-3,065.8</text>
 <rect class="s1" x="178.4" y="154" width="403.2" height="26" rx="4"/>
 <rect class="s1" x="577.6" y="154" width="4" height="26"/>
 <text class="ink" x="118" y="172" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">mbo</text>
-<text class="ink" x="170.4" y="172" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-3,425.4</text>
+<text class="on-fill" x="571.6" y="172" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-3,425.4</text>
 <rect class="s1" x="210.3" y="200" width="371.3" height="26" rx="4"/>
 <rect class="s1" x="577.6" y="200" width="4" height="26"/>
 <text class="ink" x="118" y="218" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">pessimistic</text>
-<text class="ink" x="202.3" y="218" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-3,154.4</text>
+<text class="on-fill" x="571.6" y="218" text-anchor="end" font-family="ui-monospace,monospace" font-size="12">-3,154.4</text>
 <line class="axis" x1="581.6" y1="54" x2="581.6" y2="232"/>
 <text class="muted" x="581.6" y="262" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">0 dollars</text>
 </svg>
