@@ -117,6 +117,16 @@ jobs:
         run: |
           ./build/restart_check data/raw/rec.gz --snapshot-file /tmp/mid.snap
 
+      # Two quadratics lived in the simulator from the moment it was written
+      # until a real 1.2M-message day exposed them — a six-point latency sweep
+      # took the better part of an hour. Every existing test passed throughout,
+      # because they are all about correctness and a quadratic is not wrong,
+      # only ruinous. This asserts on the RATIO between two feed sizes rather
+      # than a wall clock, so the runner's speed cancels out: double the input
+      # and linear costs ~2x, quadratic ~4x. The pre-fix code measures 3.8x.
+      - name: Scaling guard (the backtester must stay linear in feed length)
+        run: python3 python/analysis/scaling_check.py --build build
+
       # The phase 7 done-condition. Nine scenarios of packet damage over a real
       # feed, each graded CORRECT / SAFE / CAUTIOUS / WRONG. Any WRONG — the
       # book diverged while the system called itself trusted — fails the build.

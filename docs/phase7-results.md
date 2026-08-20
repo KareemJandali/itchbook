@@ -113,7 +113,8 @@ Sweeping outage lengths past the point where the feed resumes found this:
 | 1,000 | 40,630 | recovering | no | SAFE |
 | 2,000 | **0** | halted | no | SAFE |
 
-The last row is the bug. An outage of 2,000 packets at 60% through runs past
+These are **synthetic** figures and the convergence half of them does not hold
+on a real day — see section 9. The last row is the bug. An outage of 2,000 packets at 60% through runs past
 the end of the file, so the feed never comes back — and **before the fix that
 row read `0 lost, 0 gaps, trusted`, with 80,235 messages missing. 40% of the
 session, gone, reported clean.**
@@ -299,9 +300,69 @@ Not established:
 * Anything about latency under recovery. The book rebuild is not on a measured
   path.
 
+One process note, since it cost two phases. Nothing in this repo measured the
+SIMULATOR's cost — phase 4 benchmarked the book and stopped there — and two
+quadratics lived in it from the commit that introduced each until a real
+1.2M-message day made them impossible to ignore. Every correctness test passed
+the whole time, because a quadratic is not wrong, only ruinous.
+`python/analysis/scaling_check.py` now runs in CI and asserts the cost is linear
+in the length of the feed, by ratio rather than wall clock so the runner's speed
+cancels out. The pre-fix code measures 3.83x for 2x the input against a limit of
+3.0, so the guard is known to catch what it is for.
+
 ---
 
 ## 9. On a real day
+
+```
+./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 200
+```
+
+MSFT, 30 December 2019, 1,221,484 messages, the outage at a real 14:00 ET and
+books compared at 90% of the session against a checkpoint holding **318 levels**:
+
+| scenario | verdict | lost | gaps | state |
+|---|---|---:|---:|---|
+| clean | CORRECT | 0 | 0 | trusted |
+| drop-1-in-1000 | SAFE | 1,127 | 25 | recovering |
+| drop-1-in-100 | SAFE | 12,199 | 269 | **halted** |
+| duplicate-1-in-100 | CORRECT | 0 | 0 | trusted |
+| reorder-1-in-100 | CORRECT | 0 | 0 | trusted |
+| truncate-1-in-500 | SAFE | 1,341 | 58 | recovering |
+| disconnect-short | SAFE | 1,806 | 1 | recovering |
+| disconnect-long | SAFE | 18,145 | 1 | recovering |
+| everything | SAFE | 4,251 | 63 | recovering |
+| disconnect-to-end | SAFE | 0 | 0 | halted |
+
+**3 CORRECT, 7 SAFE, 0 WRONG.** Duplication and reordering are handled exactly
+on a real feed — 12,199 duplicated messages applied once, 270 reordered packets
+resolved without a single false gap.
+
+`drop-1-in-100` halting after 269 gaps is the `max_gaps_before_halt` policy
+doing its job: a feed losing that many packets is not one you are recovering
+from, it is one you are not receiving, and a system that resyncs forever looks
+healthy while being blind.
+
+### The claim that did not survive
+
+Section 3's convergence table says a rebuild-forward recovers from a
+16,231-message hole to a byte-identical book. **On MSFT it does not.** Every
+damaged scenario finishes the session still `recovering`, and the mid-afternoon
+checkpoint differs from the truth in every one.
+
+That is not a defect, and the verdicts are right — SAFE means the book differs
+and the system says so, which is the whole contract. It is a fact about real
+books. A rebuild-forward at 14:00 discards several thousand orders that were
+resting at that moment, and on a real name those orders keep being cancelled
+and executed for hours. The pre-gap tail does not die out before the close, so
+the book never gets to demonstrate convergence. The synthetic feed converged
+because it is two minutes long and churns its whole book many times over.
+
+So the honest statement of the recovery property is narrower than section 3
+implies: rebuild-forward **contains no wrong orders, only missing ones**, and
+that holds unconditionally. Whether it re-converges within the session is a
+question about the symbol and the time of day, and at 14:00 on MSFT the answer
+is no.
 
 ```
 ./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 50
