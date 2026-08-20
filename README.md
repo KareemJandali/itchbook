@@ -315,8 +315,12 @@ every pointer the levels hold stays valid.
 
 ## Reproduce it
 
-Verified from a clean clone on a machine with nothing cached. Requires a C++20
-compiler, CMake ≥ 3.20, zlib and Python 3.9+.
+Every command below was run from a fresh clone with nothing cached, in order,
+and works as written — Linux, GCC 12 and Clang 16, Python 3.11, and separately
+on macOS with Apple Clang. Requires a C++20 compiler, CMake ≥ 3.20, zlib and
+Python 3.9+. No third-party libraries: the tests, the fuzzers, the charts and
+the analysis are stdlib only, deliberately, so this clones and builds without a
+package manager standing in the way.
 
 ```bash
 # macOS:  brew install cmake zlib
