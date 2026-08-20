@@ -3,8 +3,9 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–4 complete, validated on real market data and real
-> hardware. Reconstructs MSFT
+> **Status:** Phases 1–5 complete. Reconstruction validated against real market
+> data, performance against hardware counters, and the matching engine against
+> a million random order sequences. Reconstructs MSFT
 > from a real NASDAQ trading day (30 Dec 2019, 1.2M messages) and **matches
 > Databento's published daily bar exactly** — volume, open, high, low and close,
 > to the share and the cent. The C++ book and the Python oracle agree byte for
@@ -37,7 +38,7 @@ include/itchbook/   public headers (this is a library, not an app)
   book/             order (40 bytes), level (intrusive FIFO), pool (slab),
                     book (dense tick array + open-addressing ref map),
                     dispatch (the ITCH -> book seam)
-  engine/           phase 5 (matching engine) — stub
+  engine/           order types, states, and price-time matching
   sim/ risk/        phases 6 & 7 (queue backtester, risk) — stubs
 tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench
 python/
@@ -154,6 +155,61 @@ interleaves variants, because without both this machine's run-to-run noise
 (~19%) is large enough to invent a speedup that isn't there — which it did, on
 the first attempt. [`bench/README.md`](bench/README.md) has the numbers, the
 mechanism, and the two predicted optimisations that measured flat.
+
+## Matching engine
+
+The book replays the market. The engine puts *your* orders into it and decides
+what trades.
+
+```cpp
+Matcher m;
+m.submit({.id = 1, .side = Side::Sell, .price = 100'0000, .quantity = 100});
+Result r = m.submit({.id = 2, .side = Side::Buy, .price = 100'5000, .quantity = 100});
+// r.filled == 100, and the fill printed at 100'0000 — the resting order's price
+```
+
+Limit, market, IOC, FOK, iceberg, stop and stop-limit; self-trade prevention in
+cancel-newest, cancel-oldest and cancel-both; and a state machine where an
+illegal transition asserts rather than quietly corrupting the share count.
+
+Three rules carry most of the behaviour, and none of them is arbitrary:
+
+- **A fill prints at the resting order's price, never the incoming one.** The
+  order that was there first set the terms, which is why price improvement goes
+  to the taker.
+- **Within a price, oldest trades first.** This is the "time" in price-time
+  priority, and the reason phase 6 exists at all: your place in that queue
+  decides whether you are filled.
+- **An iceberg's next slice joins the back of the queue.** Hiding size costs
+  priority. If it did not, everyone would hide everything.
+
+### Property fuzzing
+
+```bash
+./build/fuzz_matcher --iterations 1000000 --seed 1
+```
+
+Random order sequences, with four invariants checked after every operation:
+the book is never crossed; shares are conserved per order and in aggregate;
+terminal orders hold nothing; and price-time priority holds, checked two ways —
+fills at a price come in non-decreasing arrival order, and the front of the
+book's queue is always the lowest-sequence order resting there.
+
+That last check compares two mechanisms that share no code: the book maintains
+its queue as an intrusive linked list, while arrival sequences are assigned by
+the engine and never touched by the book. A bug in either shows up as a
+disagreement.
+
+Run to date: **1,000,000 sequences (135M operations) on seed 1, plus 500,000
+each on seeds 2–5** — no invariant violated. CI runs a million on every push.
+
+Input is a byte buffer decoded into operations, so the same file runs under
+libFuzzer where its runtime is available:
+
+```bash
+clang++ -fsanitize=fuzzer,address -DITCHBOOK_LIBFUZZER \
+    -Iinclude tests/fuzz/fuzz_matcher.cpp -o fuzz_libfuzzer
+```
 
 ## Differential testing
 

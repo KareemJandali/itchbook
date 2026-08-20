@@ -217,6 +217,15 @@ public:
         }
     }
 
+    // The best level on this side, or nullptr when the side is empty. The
+    // matching engine needs the level, not just its price: matching consumes
+    // the FIFO from the front, one resting order at a time.
+    Level* best_level() {
+        int32_t px = 0;
+        if (!best(&px)) return nullptr;
+        return level_at(px);
+    }
+
     Level* level_at(int32_t price) {
         uint32_t idx = index_of(price);
         if (idx != kOverflowLevel) {
@@ -461,6 +470,24 @@ public:
         int32_t a = 0;
         if (!bids_.best(&b) || !asks_.best(&a)) return false;
         return b >= a;
+    }
+
+    // Front of the queue on one side: the order that price-time priority says
+    // trades next. nullptr when that side is empty.
+    const Order* best_order(char side) {
+        Level* lvl = (side == 'B' ? bids_ : asks_).best_level();
+        return lvl == nullptr ? nullptr : lvl->head;
+    }
+
+    // Take shares off a resting order because they traded, as opposed to
+    // cancel(), which takes them off because the owner withdrew them. The book
+    // mutation is identical; the distinction is that the matching engine does
+    // its own fill accounting and must not also move this book's market trade
+    // statistics, which describe the *feed's* trades and not ours.
+    void take(uint64_t ref, uint32_t shares) {
+        size_t slot = refs_.find_index(ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        reduce(refs_.at(slot), shares, slot);
     }
 
     uint64_t shares_at(char side, int32_t price) {

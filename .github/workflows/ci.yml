@@ -55,3 +55,8 @@ jobs:
 
       - name: Differential test (adversarial feeds)
         run: python3 tests/differential.py --binary build/book_replay --seeds 5
+
+      # ctest already runs a short soak. This is a longer one, still bounded so
+      # a push does not wait minutes for it.
+      - name: Property fuzz the matching engine
+        run: ./build/fuzz_matcher --iterations 1000000 --seed 1
