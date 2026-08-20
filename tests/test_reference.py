@@ -367,6 +367,34 @@ class TestSampleReplay(unittest.TestCase):
         self.assertEqual(book.total_shares(), self.book.total_shares())
 
 
+class TestSessionWindow(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.feed = Path(self.tmp.name) / "sample.gz"
+        with gzip.open(self.feed, "wb") as f:
+            f.write(gen.build())
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_end_ns_stops_the_replay(self):
+        full, _, _ = replay.replay(self.feed)
+        # The sample's messages all sit just after T0; cut it partway through.
+        cut, _, _ = replay.replay(self.feed, end_ns=gen.T0 + 10_000_000)
+        self.assertLess(cut.applied, full.applied)
+        self.assertLess(cut.volume, full.volume)
+
+    def test_end_ns_beyond_the_feed_changes_nothing(self):
+        full, _, _ = replay.replay(self.feed)
+        cut, _, _ = replay.replay(self.feed, end_ns=gen.T0 * 2)
+        self.assertEqual(cut.volume, full.volume)
+        self.assertEqual(cut.applied, full.applied)
+
+    def test_utc_day_end_is_dst_aware(self):
+        self.assertEqual(replay.utc_day_end_ns("2019-12-30"), 19 * 3600 * 10**9)
+        self.assertEqual(replay.utc_day_end_ns("2019-07-30"), 20 * 3600 * 10**9)
+
+
 class TestSnapshots(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -36,6 +36,7 @@ struct Options {
     uint64_t interval_ns = 60ULL * 1000 * 1000 * 1000;   // 1 minute
     size_t levels = 10;
     uint64_t limit = 0;         // 0 = no limit
+    uint64_t end_ns = 0;        // 0 = run to the end of the file
     int32_t tick = 100;         // a penny, in Price(4) units
     bool quiet = false;
 };
@@ -129,6 +130,15 @@ struct Replayer {
         }
         if (!itchbook::book::modelled(type)) return;
 
+        uint64_t ts = itchbook::itch::timestamp(p);
+        // Messages are chronological within a feed, so once past the session
+        // end there is nothing later to see. Mirrors replay.py --end-ns.
+        if (opt.end_ns != 0 && ts >= opt.end_ns && ts > 0) {
+            --read;
+            stop = true;
+            return;
+        }
+
         if (!opt.symbol.empty()) {
             if (type == 'R' &&
                 std::memcmp(itchbook::itch::stock_directory::stock(p),
@@ -143,7 +153,6 @@ struct Replayer {
             }
         }
 
-        uint64_t ts = itchbook::itch::timestamp(p);
         if (out != nullptr && ts > 0) {
             if (!grid_started) {
                 next_grid = (ts / opt.interval_ns + 1) * opt.interval_ns;
@@ -230,6 +239,8 @@ bool parse_args(int argc, char** argv, Options* opt) {
             long v = std::atol(next("--tick"));
             if (v <= 0) { std::fprintf(stderr, "error: --tick must be positive\n"); return false; }
             opt->tick = static_cast<int32_t>(v);
+        } else if (a == "--end-ns") {
+            opt->end_ns = std::strtoull(next("--end-ns"), nullptr, 10);
         } else if (a == "--quiet") {
             opt->quiet = true;
         } else if (a == "-h" || a == "--help") {
@@ -252,7 +263,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <feed.gz> [--symbol SYM] [--snapshots out.csv]\n"
                      "           [--interval-ms N] [--levels N] [--limit N]\n"
-                     "           [--tick N] [--quiet]\n",
+                     "           [--tick N] [--end-ns N] [--quiet]\n",
                      argv[0]);
         return 2;
     }

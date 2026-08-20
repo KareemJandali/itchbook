@@ -3,13 +3,13 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phase 3 (C++ parser + book). Reconstructs MSFT from a real
-> NASDAQ trading day — 30 Dec 2019, 1,221,484 messages — with the C++ book and
-> the Python oracle producing **61,228 byte-identical snapshot rows** and zero
-> unknown order references. That closes phase 3's done-condition. Phase 2's
-> remains open: the numbers have not yet been graded against an external
-> oracle, see [Validation](#validation). See
-> [`docs/build-plan.md`](docs/build-plan.md) for the full eight-phase roadmap.
+> **Status:** Phases 1–3 complete, validated on real data. Reconstructs MSFT
+> from a real NASDAQ trading day (30 Dec 2019, 1.2M messages) and **matches
+> Databento's published daily bar exactly** — volume, open, high, low and close,
+> to the share and the cent. The C++ book and the Python oracle agree byte for
+> byte across 57,291 snapshot rows, with zero unknown order references. See
+> [Validation](#validation) and [`validation/`](validation/). Next up is phase 4
+> (performance); see [`docs/build-plan.md`](docs/build-plan.md) for the roadmap.
 
 ## What it's for
 
@@ -174,18 +174,21 @@ against our own Python oracle. Both would pass happily if our reading of the
 ITCH spec were wrong *in the same way in both implementations*. Only an outside
 number settles that, and until one has been matched this project knows nothing.
 
-That is phase 2's done-condition, and it has **not been run yet**. A real day
-*has* now been through the reconstruction — see `validation/` — but the numbers
-it produced have not been checked against anybody else's.
+That is phase 2's done-condition, and it is **met**: MSFT on 30 Dec 2019 matches
+Databento's `XNAS.ITCH` daily bar exactly on all five fields. See
+[`validation/`](validation/) for the record and the one subtlety that first run
+turned up.
 
 ### Grading a reconstruction
 
 ```bash
-# 1. slice one mid-liquidity symbol out of a real day and reconstruct it
+# 1. slice one mid-liquidity symbol out of a real day and reconstruct it.
+#    --utc-day bounds the replay to the window the oracle's bar covers; without
+#    it the after-hours tail lands in the next bar and nothing lines up.
 ./build/itch_slice data/raw/<day>.gz MSFT data/sliced/MSFT.gz
 python3 python/reference/replay.py data/sliced/MSFT.gz \
     --snapshots data/sliced/MSFT_book.csv --interval-ms 1000 \
-    --json data/sliced/MSFT.json
+    --utc-day 2019-12-30 --json data/sliced/MSFT.json
 
 # 2. grade it against Databento's published bar for the same venue and day
 pip install databento

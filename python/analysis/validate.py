@@ -34,6 +34,8 @@ import datetime
 import json
 import os
 import sys
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # Databento prices are 1e-9 fixed point; ITCH Price(4) is 1e-4. The ratio is
 # exact, so the conversion stays in integers and the comparison stays exact.
@@ -46,6 +48,47 @@ FIELDS = [
     ("low", "low", True),
     ("close", "close", True),
 ]
+
+
+def utc_day_end_ns(date):
+    """Where the UTC day rolls over, in ns since ET midnight.
+
+    Kept identical to replay.py's copy — see the note there for why the window
+    matters. DST-aware, so it is 19:00 ET in winter and 20:00 ET in summer.
+    """
+    et = ZoneInfo("America/New_York")
+    d = datetime.date.fromisoformat(date)
+    rollover = (datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.timezone.utc)
+                + datetime.timedelta(days=1))
+    et_midnight = datetime.datetime(d.year, d.month, d.day, tzinfo=et)
+    return int((rollover.astimezone(et) - et_midnight).total_seconds() * 1e9)
+
+
+def check_window(ours, date, path):
+    """Refuse to grade a reconstruction whose session window does not match the
+    oracle's.
+
+    Databento buckets ohlcv-1d by UTC day. A reconstruction that ran to the end
+    of the ITCH file includes after-hours trades belonging to the next UTC bar,
+    which shows up as a small volume excess and a wrong close — a real
+    disagreement between two different questions, not a bug. Catching it here
+    beats sending someone hunting for a parser bug that is not there.
+    """
+    expected = utc_day_end_ns(date)
+    actual = ours.get("session_end_ns")
+    if actual == expected:
+        return True
+    print("WINDOW MISMATCH — not comparing like with like.\n")
+    if actual is None:
+        print("  The reconstruction covers the whole ITCH file (through 20:00 ET).")
+    else:
+        print(f"  The reconstruction stops at {actual:,} ns ({actual / 3.6e12:.2f}h ET).")
+    print(f"  Databento's daily bar stops at {expected:,} ns "
+          f"({expected / 3.6e12:.2f}h ET), where the UTC day rolls over.\n")
+    print("  Re-run the reconstruction bounded to the same window:\n")
+    print(f"    python3 python/reference/replay.py <feed.gz> \\")
+    print(f"        --utc-day {date} --json {path}\n")
+    return False
 
 
 def next_day(date):
@@ -201,6 +244,9 @@ def main(argv=None):
             print(f"{a.dataset} ohlcv-1d {a.symbol} {a.date}: ${cost}")
             return 0
         theirs = fetch_daily(a.api_key, a.dataset, a.symbol, a.date)
+
+    if not check_window(ours, a.date, a.summary):
+        return 1
 
     rows, ok = compare(ours, theirs)
     return 0 if report(rows, ok, a.symbol, a.date) else 1

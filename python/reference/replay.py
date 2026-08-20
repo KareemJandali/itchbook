@@ -22,10 +22,12 @@ bid size, repeated per level — so a slice of this CSV can be diffed straight
 against a LOBSTER file. Missing levels use LOBSTER's dummy fills.
 """
 import argparse
+import datetime
 import gzip
 import json
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,6 +37,25 @@ from reference.book import Book
 # LOBSTER's dummy fills for levels a thin book doesn't reach.
 NO_ASK_PRICE = 9999999999
 NO_BID_PRICE = -9999999999
+
+
+def utc_day_end_ns(date):
+    """When the UTC day rolls over, in ns since that trading day's ET midnight.
+
+    ITCH timestamps are nanoseconds since midnight Eastern. Vendors that bucket
+    daily bars by UTC day therefore cut the session at 19:00 ET in winter and
+    20:00 ET in summer, leaving the tail of after-hours trading in the *next*
+    bar. Comparing a full-file reconstruction against such a bar shows up as a
+    small volume excess and a wrong close, which looks like a bug and is not.
+
+    Computed from the zone rather than hardcoded, so it stays right across DST.
+    """
+    et = ZoneInfo("America/New_York")
+    d = datetime.date.fromisoformat(date)
+    rollover = (datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.timezone.utc)
+                + datetime.timedelta(days=1))
+    et_midnight = datetime.datetime(d.year, d.month, d.day, tzinfo=et)
+    return int((rollover.astimezone(et) - et_midnight).total_seconds() * 1e9)
 
 
 def open_feed(path):
@@ -74,7 +95,7 @@ def px(price):
 
 
 def replay(path, symbol=None, snapshots=None, interval_ns=60_000_000_000,
-           levels=10, limit=None):
+           levels=10, limit=None, end_ns=None):
     """Replay `path`, returning (book, messages_read, snapshots_written).
 
     With `symbol`, the stock locate code is resolved from the Stock Directory
@@ -105,6 +126,12 @@ def replay(path, symbol=None, snapshots=None, interval_ns=60_000_000_000,
                 m = itch.decode(mtype, payload)
                 if m is None:
                     continue  # a metadata type we don't model
+
+                # Messages are chronological within a feed, so once past the
+                # session end there is nothing later to see.
+                if end_ns is not None and m["ts"] >= end_ns and m["ts"] > 0:
+                    read -= 1
+                    break
 
                 if symbol is not None:
                     if m["type"] == "R" and m["stock"] == symbol:
@@ -215,6 +242,12 @@ def main(argv=None):
     ap.add_argument("--limit", type=int, help="stop after N messages")
     ap.add_argument("--json", metavar="PATH",
                     help="also write the summary as JSON, for validate.py")
+    ap.add_argument("--end-ns", type=int,
+                    help="stop at this timestamp (ns since ET midnight)")
+    ap.add_argument("--utc-day", metavar="YYYY-MM-DD",
+                    help="stop where the UTC day rolls over, which is how "
+                         "vendors bucket daily bars — use this when the output "
+                         "is going to be compared against one")
     ap.add_argument("--quiet", action="store_true", help="suppress the summary")
     a = ap.parse_args(argv)
 
@@ -224,13 +257,23 @@ def main(argv=None):
     if a.levels <= 0:
         ap.error("--levels must be positive")
 
+    end_ns = a.end_ns
+    if a.utc_day:
+        if end_ns is not None:
+            ap.error("--end-ns and --utc-day are mutually exclusive")
+        end_ns = utc_day_end_ns(a.utc_day)
+
     book, read, written = replay(a.feed, symbol=a.symbol, snapshots=a.snapshots,
                                  interval_ns=interval_ns, levels=a.levels,
-                                 limit=a.limit)
+                                 limit=a.limit, end_ns=end_ns)
     if a.json:
         Path(a.json).parent.mkdir(parents=True, exist_ok=True)
+        summary = summary_dict(book, a.symbol, read, written)
+        # Record the window, so a comparison against an external bar can check
+        # it is being graded like for like instead of silently disagreeing.
+        summary["session_end_ns"] = end_ns
         with open(a.json, "w") as f:
-            json.dump(summary_dict(book, a.symbol, read, written), f, indent=2, sort_keys=True)
+            json.dump(summary, f, indent=2, sort_keys=True)
     if not a.quiet:
         print_summary(book, a.symbol, read, written, a.snapshots)
     return 0

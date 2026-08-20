@@ -50,6 +50,34 @@ class TestDateRange(unittest.TestCase):
         self.assertEqual(validate.next_day("2020-02-28"), "2020-02-29")  # leap year
 
 
+class TestSessionWindow(unittest.TestCase):
+    """ITCH timestamps are ns since ET midnight; vendors bucket daily bars by
+    UTC day. Getting this boundary wrong is what made the first real validation
+    look like a parser bug when the parser was right."""
+
+    def test_winter_cuts_at_1900_et(self):
+        self.assertEqual(validate.utc_day_end_ns("2019-12-30"), 19 * 3600 * 10**9)
+
+    def test_summer_cuts_at_2000_et(self):
+        # EDT is UTC-4, so the rollover is an hour later in local terms.
+        self.assertEqual(validate.utc_day_end_ns("2019-07-30"), 20 * 3600 * 10**9)
+
+    def test_matches_the_replay_driver(self):
+        # Two copies of this rule exist; they must not drift apart.
+        from reference import replay
+        for date in ("2019-12-30", "2019-07-30", "2020-03-08", "2020-11-01"):
+            self.assertEqual(validate.utc_day_end_ns(date),
+                             replay.utc_day_end_ns(date), date)
+
+    def test_window_mismatch_is_refused(self):
+        ours = {"session_end_ns": None}
+        self.assertFalse(validate.check_window(ours, "2019-12-30", "x.json"))
+
+    def test_matching_window_is_accepted(self):
+        ours = {"session_end_ns": 19 * 3600 * 10**9}
+        self.assertTrue(validate.check_window(ours, "2019-12-30", "x.json"))
+
+
 class TestCompare(unittest.TestCase):
     def setUp(self):
         self.ours = {"volume": 1000, "open": 100_0000, "high": 101_0000,
@@ -105,15 +133,24 @@ class TestEndToEndOffline(unittest.TestCase):
                                   "--date", "2019-01-30",
                                   "--oracle-json", str(oracle)])
 
+    # 2019-01-30 is EST, so the UTC day rolls over at 19:00 ET.
+    WINDOW = {"session_end_ns": 19 * 3600 * 10**9}
+
     def test_match_exits_zero(self):
-        s = {"volume": 100, "open": 1, "high": 2, "low": 3, "close": 4}
+        s = {"volume": 100, "open": 1, "high": 2, "low": 3, "close": 4, **self.WINDOW}
         self.assertEqual(self._run(s, dict(s)), 0)
 
     def test_mismatch_exits_one(self):
-        s = {"volume": 100, "open": 1, "high": 2, "low": 3, "close": 4}
+        s = {"volume": 100, "open": 1, "high": 2, "low": 3, "close": 4, **self.WINDOW}
         t = dict(s)
         t["volume"] = 99
         self.assertEqual(self._run(s, t), 1)
+
+    def test_unbounded_reconstruction_is_refused(self):
+        # No window recorded means the run went to the end of the file, which
+        # is a different question from the one the oracle answers.
+        s = {"volume": 100, "open": 1, "high": 2, "low": 3, "close": 4}
+        self.assertEqual(self._run(s, dict(s)), 1)
 
 
 class TestReplaySummaryIsComparable(unittest.TestCase):

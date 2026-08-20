@@ -1,7 +1,7 @@
 {
-  "best_ask": null,
-  "best_bid": null,
-  "close": 1576300,
+  "best_ask": 1577700,
+  "best_bid": 1576000,
+  "close": 1575700,
   "cross_prices": {
     "C": 1575900,
     "O": 1589900
@@ -11,18 +11,19 @@
   "hidden_volume": 568546,
   "high": 1593000,
   "low": 1567300,
-  "messages_applied": 1220971,
-  "messages_read": 1221484,
-  "notional": 9705778605500,
+  "messages_applied": 1220285,
+  "messages_read": 1220796,
+  "notional": 9704960519500,
   "open": 1592000,
-  "resting_orders": 0,
-  "resting_shares": 0,
-  "snapshots_written": 61228,
+  "resting_orders": 657,
+  "resting_shares": 183796,
+  "session_end_ns": 68400000000000,
+  "snapshots_written": 57291,
   "symbol": null,
-  "system_event": "C",
-  "trades": 40329,
+  "system_event": "M",
+  "trades": 40321,
   "trading_state": "T",
   "unknown_refs": 0,
-  "volume": 6154797,
-  "vwap": 1576945.3656229442
+  "volume": 6154278,
+  "vwap": 1576945.422273742
 }
