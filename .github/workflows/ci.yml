@@ -64,6 +64,19 @@ jobs:
       - name: Property fuzz the queue model
         run: ./build/fuzz_queue --iterations 200000 --seed 1
 
+      # Phase 3's done-condition at the scale it was stated: "bit-identical
+      # output to the Python oracle across a full trading day. Not 'close.'
+      # Identical." Every other differential in this file runs on tens of
+      # thousands of messages, which catches logic errors and cannot catch
+      # anything that only appears after hours of session — a counter that
+      # drifts, an accumulator that overflows, a path reached twice a day.
+      # 1.2M messages is one liquid name for one day.
+      - name: Full-day differential (1.2M messages, C++ vs the Python oracle)
+        run: |
+          python3 python/make_queue_feed.py data/raw/fullday.gz \
+            --messages 1200000 --gap-ns 20000 --seed 3
+          ./scripts/full-day-differential.sh data/raw/fullday.gz 1000 10
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.
