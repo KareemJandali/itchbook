@@ -70,6 +70,20 @@ jobs:
       - name: Differential test (queue model vs Python oracle)
         run: python3 tests/queue_differential.py --binary build/queue_sim --seeds 2
 
+      # The framing layer must be transparent when nothing is wrong. Unit tests
+      # build their own packets, so only pushing a real feed through the whole
+      # path and comparing bytes catches a receiver that quietly drops one
+      # message in ten thousand.
+      - name: MoldUDP64 round trip (wrap, replay, compare bytes)
+        run: |
+          python3 python/make_queue_feed.py data/raw/rt.gz --seed 5 --messages 30000
+          ./build/mold_wrap data/raw/rt.gz data/raw/rt.mold.gz --heartbeat-ns 1000000000
+          ./build/mold_replay data/raw/rt.mold.gz --unwrap data/raw/rt.back.gz
+          zcat data/raw/rt.gz > /tmp/rt-a.bin
+          zcat data/raw/rt.back.gz > /tmp/rt-b.bin
+          cmp /tmp/rt-a.bin /tmp/rt-b.bin
+          echo "round trip identical: $(wc -c < /tmp/rt-a.bin) bytes"
+
       # A feed with a closed form. Every number below is fixed by construction
       # before the simulator runs, so a disagreement is a defect rather than an
       # opinion — and all four models must agree, because the feed contains no

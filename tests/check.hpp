@@ -7,6 +7,7 @@
 // Exit code 0 = all passed, 1 = at least one failure.
 //
 #include <cstdio>
+#include <string>
 
 namespace itchbook::test {
 
@@ -31,6 +32,25 @@ inline int failures = 0;
                          __FILE__, __LINE__, #a, #b,                           \
                          static_cast<long long>(lhs_),                         \
                          static_cast<long long>(rhs_));                        \
+            ++itchbook::test::failures;                                        \
+        }                                                                      \
+    } while (0)
+
+// CHECK_EQ casts both sides to long long to print them, which is fine for the
+// integers that make up most of this repo's assertions and impossible for a
+// string. Where the thing under test IS a sequence — the exact stream of
+// messages a receiver delivered, say — seeing both sides on failure is the
+// whole value of the assertion, so it gets its own macro rather than being
+// reduced to a bare CHECK that prints nothing useful.
+#define CHECK_STR(a, b)                                                        \
+    do {                                                                       \
+        const std::string lhs_ = (a);                                          \
+        const std::string rhs_ = (b);                                          \
+        if (lhs_ != rhs_) {                                                    \
+            std::fprintf(stderr, "FAIL %s:%d  %s == %s\n    got      \"%s\"\n"  \
+                                 "    expected \"%s\"\n",                       \
+                         __FILE__, __LINE__, #a, #b, lhs_.c_str(),             \
+                         rhs_.c_str());                                        \
             ++itchbook::test::failures;                                        \
         }                                                                      \
     } while (0)
