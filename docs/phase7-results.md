@@ -337,7 +337,9 @@ cancels out. The pre-fix code measures 3.83x for 2x the input against a limit of
 ```
 
 MSFT, 30 December 2019, 1,221,484 messages, the outage at a real 14:00 ET and
-books compared at 90% of the session against a checkpoint holding **318 levels**:
+books compared at 90% of the session against a checkpoint holding **318
+levels**. Ten scenarios below; `halt` and `halt-and-drop` were added afterwards
+and bring the matrix to twelve:
 
 | scenario | verdict | lost | gaps | state |
 |---|---|---:|---:|---|
