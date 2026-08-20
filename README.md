@@ -15,11 +15,13 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > to the pool's slab allocation rather than anything on the hot path — the
 > page-fault count matches the removed 41.9MB slab to 99.5%. Two optimisations
 > the plan predicted measured flat. See [`bench/`](bench/) and
-> [`docs/build-plan.md`](docs/build-plan.md). Phase 6 is the headline: the same
-> maker, the same bytes, four fill models — the naive one claims **3.67x** the
-> P&L of the pessimistic one, and shadowing 200 real orders puts the truth
-> inside the band **200 times out of 200** with the reference-resolving model
-> exact on every one. See [`docs/phase6-results.md`](docs/phase6-results.md).
+> [`docs/build-plan.md`](docs/build-plan.md). Phase 6 is the headline, and it
+> runs on a real day: MSFT, 30 December 2019, 1.2M messages. A symmetric maker
+> at the touch **loses money in all four fill models**, with markouts negative
+> at 100 ms, 1 s and 10 s — it is being picked off. Shadowing 50 real orders
+> that were pulled part-filled puts the truth inside `[pessimistic, optimistic]`
+> **50 times out of 50**, with the reference-resolving model exact on every one.
+> See [`docs/phase6-results.md`](docs/phase6-results.md).
 
 ## What it's for
 
@@ -230,19 +232,26 @@ backtester runs four models over one book in one pass and reports the range:
   the book by order, not by level; it is the check that the band is a band.
 
 ```bash
-./build/queue_backtest data/raw/queue_long.gz --strategy touch-maker     --max-position 1000 --json out.json
-python3 python/analysis/fill_comparison.py out.json --svg fills.svg
+./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 50
 ```
+
+MSFT, 30 December 2019, 1,221,484 messages:
 
 ```
 model            fills    shares     P&L ($)     c/share   edge c/sh
-naive             8624   521,345     8423.15      1.6157      1.3515
-optimistic        3065   207,061     2403.18      1.1606      1.0162
-mbo               2997   204,832     2366.28      1.1552      1.0079
-pessimistic       2960   199,791     2293.93      1.1482      1.0021
+naive            14995   962,594    -2753.09     -0.2860      0.2649
+optimistic       12261   814,786    -3065.75     -0.3763      0.0841
+mbo               9892   709,308    -3425.35     -0.4829     -0.1102
+pessimistic       8548   655,232    -3154.44     -0.4814     -0.2179
 
-naive / pessimistic total P&L: 3.67x
+naive reports $401.35 MORE than pessimistic
 ```
+
+Markouts are negative at every horizon and worsen with it — −0.58 c/share at
+10 s for naive, −0.23 for pessimistic. The maker is adversely selected, which
+is why it loses. On a synthetic feed the same code reports naive at 3.67x
+pessimistic's P&L and *positive* markouts; that generator mean-reverts, and
+`docs/phase6-results.md` says which of the two sets of numbers means anything.
 
 Also modelled: one-way latency, with queue position computed at arrival and
 cancels that are late too, so a fill in the gap between deciding to pull and
@@ -252,10 +261,12 @@ Section 31 and TAF, in integer micro-dollars.
 
 The external check is the one that matters. `leave_one_out.py` replays the feed
 **unchanged** with a simulated order standing exactly where a real order stood,
-and grades the models against what that order actually filled. Over 200 orders
-that were pulled part-filled — the cases where the answer depends on queue
-position — the truth fell inside `[pessimistic, optimistic]` 200 times, and
-`mbo` reproduced all 200 exactly. Full numbers, figures and the limits in
+and grades the models against what that order actually filled. Over 50 real
+MSFT orders that were pulled part-filled — the cases where the answer depends
+on queue position — the truth fell inside `[pessimistic, optimistic]` 50 times
+out of 50. `mbo` reproduced all 50 exactly; naive over-filled 24 and never
+under-filled; pessimistic under-filled 21 and never over-filled. Full numbers,
+figures and the limits in
 [`docs/phase6-results.md`](docs/phase6-results.md).
 
 ## Differential testing
