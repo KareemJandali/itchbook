@@ -370,7 +370,7 @@ public:
     // the hottest lookup in the program. See bench/README.md.
     explicit Book(int32_t tick = 100, int32_t band_pct = 20,
                   size_t refs_capacity = 1u << 20)
-        : tick_(tick), band_pct_(band_pct), refs_(refs_capacity),
+        : band_pct_(band_pct), refs_(refs_capacity),
           bids_('B', tick), asks_('S', tick) {}
 
     // ---- the seven mutating operations ----
@@ -539,7 +539,6 @@ private:
         pool_.deallocate(o);
     }
 
-    int32_t tick_;
     int32_t band_pct_;
     Pool pool_;
     RefMap refs_;

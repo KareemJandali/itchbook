@@ -26,6 +26,7 @@ Then:
 import gzip
 import struct
 import sys
+from pathlib import Path
 
 LOC = 1                 # stock locate code for TEST
 SYMBOL = "TEST"
@@ -185,6 +186,7 @@ def build() -> bytes:
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "data/raw/sample.gz"
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     data = build()
     with gzip.open(path, "wb") as f:
         f.write(data)
