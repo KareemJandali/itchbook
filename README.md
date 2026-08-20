@@ -3,16 +3,18 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phase 4 (performance) underway; phases 1–3 complete and validated
-> on real data. Reconstructs MSFT
+> **Status:** Phases 1–4 complete, validated on real market data and real
+> hardware. Reconstructs MSFT
 > from a real NASDAQ trading day (30 Dec 2019, 1.2M messages) and **matches
 > Databento's published daily bar exactly** — volume, open, high, low and close,
 > to the share and the cent. The C++ book and the Python oracle agree byte for
 > byte across 57,291 snapshot rows, with zero unknown order references. See
-> [Validation](#validation) and [`validation/`](validation/). Phase 4 has a
-> first result: **1.65x fewer cycles per message**, from the pool's slab
-> allocation rather than anything on the hot path — see [`bench/`](bench/). See
-> [`docs/build-plan.md`](docs/build-plan.md) for the roadmap.
+> [Validation](#validation) and [`validation/`](validation/). Phase 4 is done:
+> **1.73x fewer cycles per message** (43.9M msg/s), traced by hardware counter
+> to the pool's slab allocation rather than anything on the hot path — the
+> page-fault count matches the removed 41.9MB slab to 99.5%. Two optimisations
+> the plan predicted measured flat. See [`bench/`](bench/) and
+> [`docs/build-plan.md`](docs/build-plan.md).
 
 ## What it's for
 
