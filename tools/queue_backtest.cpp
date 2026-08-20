@@ -96,8 +96,9 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
 }
 
 template <typename S>
-int run(const char* feed, S strategy, FeeSchedule fees, const char* json_path) {
-    Backtest<S> bt(strategy, fees);
+int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
+        const char* json_path) {
+    Backtest<S> bt(strategy, fees, latency);
     try {
         Reader reader(feed);
         parse(reader, bt);
@@ -106,6 +107,8 @@ int run(const char* feed, S strategy, FeeSchedule fees, const char* json_path) {
         return 1;
     }
     const std::vector<LaneResult> rs = bt.results();
+    std::printf("latency: %" PRIu64 " ns order / %" PRIu64 " ns cancel\n",
+                latency.order_ns, latency.cancel_ns);
     print_results(rs, bt.events(), S::name());
     if (json_path != nullptr) write_json(json_path, rs, bt.events(), S::name());
     return 0;
@@ -119,6 +122,7 @@ int main(int argc, char** argv) {
     std::string fee_tier = "base";
     const char* json_path = nullptr;
     uint32_t size = 100;
+    LatencyModel latency;   // deliberately non-zero by default
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -126,13 +130,18 @@ int main(int argc, char** argv) {
         else if (a == "--fees" && i + 1 < argc) fee_tier = argv[++i];
         else if (a == "--json" && i + 1 < argc) json_path = argv[++i];
         else if (a == "--size" && i + 1 < argc) size = static_cast<uint32_t>(std::atol(argv[++i]));
+        else if (a == "--latency-ns" && i + 1 < argc)
+            latency = LatencyModel::uniform(std::strtoull(argv[++i], nullptr, 10));
+        else if (a == "--cancel-latency-ns" && i + 1 < argc)
+            latency.cancel_ns = std::strtoull(argv[++i], nullptr, 10);
         else if (feed == nullptr) feed = argv[i];
         else { std::fprintf(stderr, "error: unexpected '%s'\n", argv[i]); return 2; }
     }
     if (feed == nullptr) {
         std::fprintf(stderr,
                      "usage: %s <feed.gz> [--strategy touch-maker|crosser|null|far-quoter]\n"
-                     "                    [--size N] [--fees base|top|inverted] [--json out]\n",
+                     "                    [--size N] [--fees base|top|inverted] [--json out]\n"
+                     "                    [--latency-ns N] [--cancel-latency-ns N]\n",
                      argv[0]);
         return 2;
     }
@@ -144,19 +153,19 @@ int main(int argc, char** argv) {
     if (strategy == "touch-maker") {
         TouchMaker s;
         s.size = size;
-        return run(feed, s, fees, json_path);
+        return run(feed, s, fees, latency, json_path);
     }
     if (strategy == "crosser") {
         Crosser s;
         s.size = size;
-        return run(feed, s, fees, json_path);
+        return run(feed, s, fees, latency, json_path);
     }
     if (strategy == "far-quoter") {
         FarQuoter s;
         s.size = size;
-        return run(feed, s, fees, json_path);
+        return run(feed, s, fees, latency, json_path);
     }
-    if (strategy == "null") return run(feed, NullStrategy{}, fees, json_path);
+    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, json_path);
     std::fprintf(stderr, "error: unknown strategy '%s'\n", strategy.c_str());
     return 2;
 }

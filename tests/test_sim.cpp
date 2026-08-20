@@ -83,6 +83,59 @@ void feed_market(Backtester& bt) {
     }
 }
 
+// A market that trades at one bid price in small pieces, so a resting order is
+// filled a little at a time and the exact moment an action lands is visible in
+// the fill count. Steps are 1ms so latencies of interest are neither instant nor
+// unreachable relative to the feed.
+template <typename Backtester>
+void feed_slow_grind(Backtester& bt) {
+    uint64_t ts = 34200000000000ULL;
+    auto send = [&](const std::vector<uint8_t>& v) {
+        bt.on_message(static_cast<char>(v[0]), v.data(), static_cast<uint16_t>(v.size()));
+    };
+    send(sys_event(ts, 'Q'));                     // event 0
+    ts += 1000000;
+    send(add(ts, 1, 'B', 5000, MID - CENT));      // event 1
+    ts += 1000000;
+    send(add(ts, 2, 'S', 5000, MID + CENT));      // event 2
+    for (int i = 0; i < 8; ++i) {                 // events 3..10
+        ts += 1000000;
+        send(exec(ts, 1, 50));
+    }
+}
+
+// Quotes once at a fixed price, then cancels at a fixed event index. Fixed
+// rather than reactive so the decision times are identical across latency
+// settings and the only thing that varies is when those decisions land.
+struct QuoteThenCancel {
+    Price4 price = MID - CENT;
+    uint32_t size = 500;
+    uint64_t cancel_at_event = 4;
+    bool placed = false;
+    bool cancelled = false;
+
+    void on_event(const MarketView& v, Ctx& ctx) {
+        if (!v.tradable) return;
+        if (!placed) {
+            ctx.quote(7777, Side::Buy, price, size);
+            placed = true;
+            return;
+        }
+        if (!cancelled && v.event_index >= cancel_at_event) {
+            ctx.cancel(7777);
+            cancelled = true;
+        }
+    }
+    static const char* name() { return "quote-then-cancel"; }
+};
+
+uint64_t naive_shares_of(const std::vector<LaneResult>& rs) {
+    for (const LaneResult& r : rs) {
+        if (r.model == Model::Naive) return r.shares;
+    }
+    return 0;
+}
+
 void test_a_strategy_that_never_quotes_earns_exactly_nothing() {
     Backtest<NullStrategy> bt{{}, {}};
     feed_market(bt);
@@ -208,6 +261,74 @@ void test_nothing_trades_before_the_market_opens() {
     for (const LaneResult& r : bt.results()) CHECK_EQ(r.fills, 0u);
 }
 
+void test_an_order_that_arrives_after_the_feed_never_fills() {
+    // The simplest statement of the latency model: an order is not at the
+    // exchange until it gets there. With one-way latency longer than the whole
+    // feed, the quote is still in flight when the data runs out, so no model may
+    // report a fill for it. A harness that places at decision time fills here.
+    QuoteThenCancel s;
+    s.cancel_at_event = 1000;   // never, within this feed
+    Backtest<QuoteThenCancel> late{s, {}, LatencyModel::uniform(60ULL * 1000000000ULL)};
+    feed_slow_grind(late);
+    for (const LaneResult& r : late.results()) {
+        CHECK_EQ(r.fills, 0u);
+        CHECK_EQ(r.shares, 0u);
+        CHECK_EQ(r.equity, 0);
+    }
+
+    // ... and the same strategy with the same decisions does fill when its
+    // orders arrive, so the zero above is latency and not a broken feed.
+    Backtest<QuoteThenCancel> instant{s, {}, LatencyModel::zero()};
+    feed_slow_grind(instant);
+    CHECK(naive_shares_of(instant.results()) > 0);
+}
+
+void test_a_cancel_that_arrives_late_still_gets_filled() {
+    // The "cancelled too late" case, and the one-directional loss that makes
+    // zero latency the most flattering assumption available. The decision to
+    // pull the quote is identical in both runs and is taken at the same event;
+    // only the flight time of the cancel differs. Every share filled in between
+    // is a share the strategy asked not to own.
+    QuoteThenCancel s;
+    s.cancel_at_event = 4;
+
+    // Order latency is zero in both runs so the quote's arrival — and therefore
+    // its queue position — is identical, and the cancel is the only variable.
+    Backtest<QuoteThenCancel> prompt{s, {}, LatencyModel{0, 0}};
+    feed_slow_grind(prompt);
+    Backtest<QuoteThenCancel> tardy{s, {}, LatencyModel{0, 60ULL * 1000000000ULL}};
+    feed_slow_grind(tardy);
+
+    const auto prompt_rs = prompt.results();
+    const auto tardy_rs = tardy.results();
+    // Two 50-share prints land at or before the cancel's event (events 3 and 4);
+    // a cancel arriving on event 4's timestamp is applied after that message.
+    CHECK_EQ(naive_shares_of(prompt_rs), 100u);
+    // All eight prints land while the late cancel is still in flight.
+    CHECK_EQ(naive_shares_of(tardy_rs), 400u);
+    for (size_t i = 0; i < prompt_rs.size(); ++i) {
+        CHECK(tardy_rs[i].shares >= prompt_rs[i].shares);
+    }
+}
+
+void test_latency_is_monotone_for_a_resting_quote() {
+    // Longer flight time means a later arrival, and a resting order that shows
+    // up later cannot be reached by prints that have already gone by. Cancelling
+    // is disabled so the only effect measured is the quote's own arrival.
+    QuoteThenCancel s;
+    s.cancel_at_event = 1000;
+    uint64_t previous = ~0ULL;
+    for (uint64_t ns : {0ULL, 4000000ULL, 8000000ULL, 12000000ULL}) {
+        Backtest<QuoteThenCancel> bt{s, {}, LatencyModel::uniform(ns)};
+        feed_slow_grind(bt);
+        const uint64_t shares = naive_shares_of(bt.results());
+        CHECK(shares <= previous);
+        previous = shares;
+    }
+    // The last print is 10ms into the feed, so 12ms of flight time clears it.
+    CHECK_EQ(previous, 0u);
+}
+
 }  // namespace
 
 int main() {
@@ -218,5 +339,8 @@ int main() {
     test_naive_never_fills_less_than_a_queue_model();
     test_a_quote_nobody_can_reach_never_fills();
     test_nothing_trades_before_the_market_opens();
+    test_an_order_that_arrives_after_the_feed_never_fills();
+    test_a_cancel_that_arrives_late_still_gets_filled();
+    test_latency_is_monotone_for_a_resting_quote();
     return REPORT();
 }

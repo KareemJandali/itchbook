@@ -19,6 +19,7 @@
 
 #include "itchbook/book/book.hpp"
 #include "itchbook/book/dispatch.hpp"
+#include "itchbook/sim/latency_model.hpp"
 #include "itchbook/sim/ledger.hpp"
 #include "itchbook/sim/markout.hpp"
 #include "itchbook/sim/queue_model.hpp"
@@ -59,11 +60,18 @@ struct Lane {
     Lane(Model m, QueueConfig c, FeeSchedule f) : model(m), queue(c), ledger(f) {}
 };
 
+// An intent that has been decided but has not yet reached the exchange.
+struct PendingAction {
+    uint64_t arrival_ns = 0;
+    uint64_t seq = 0;      // decision order, so ties resolve deterministically
+    Intent intent;
+};
+
 template <typename Strategy>
 class Backtest {
 public:
-    Backtest(Strategy strategy, FeeSchedule fees)
-        : strategy_(strategy) {
+    Backtest(Strategy strategy, FeeSchedule fees, LatencyModel latency = {})
+        : strategy_(strategy), latency_(latency) {
         for (Model m : {Model::Naive, Model::Optimistic, Model::Mbo, Model::Pessimistic}) {
             QueueConfig c;
             c.model = m;
@@ -125,11 +133,44 @@ public:
         strategy_.on_event(view, ctx_);
 
         for (const Intent& in : ctx_.intents()) {
-            for (Lane& l : lanes_) {
-                switch (in.kind) {
+            const uint64_t arrival = in.kind == IntentKind::Cancel
+                                         ? latency_.arrival_for_cancel(ts)
+                                         : latency_.arrival_for_quote(ts);
+            pending_.push_back(PendingAction{arrival, action_seq_++, in});
+        }
+        // Actions land only once the clock reaches them. Applied AFTER the
+        // message at that timestamp, so a same-nanosecond tie resolves against
+        // us rather than in our favour.
+        apply_arrived(ts);
+        ++event_index_;
+    }
+
+    // Everything that has reached the exchange by `now`.
+    void apply_arrived(uint64_t now) {
+        size_t write = 0;
+        for (size_t i = 0; i < pending_.size(); ++i) {
+            const PendingAction& pa = pending_[i];
+            if (pa.arrival_ns > now) {
+                pending_[write++] = pa;
+                continue;
+            }
+            apply_intent(pa.intent, pa.arrival_ns);
+        }
+        pending_.resize(write);
+    }
+
+private:
+    void apply_intent(const Intent& in, uint64_t arrival_ts) {
+        const Mid mid = last_good_mid_;
+        for (Lane& l : lanes_) {
+            switch (in.kind) {
                     case IntentKind::Quote:
+                        // Queue position is computed from the book as it stands
+                        // NOW, at arrival — not as it stood when the strategy
+                        // decided. Using the decision-time book would be
+                        // look-ahead: the order never met that state.
                         l.queue.place(book_, in.id, in.side, in.price, in.quantity,
-                                      in.display, ts);
+                                      in.display, arrival_ts);
                         break;
                     case IntentKind::Cancel:
                         l.queue.cancel(in.id);
@@ -148,19 +189,18 @@ public:
                         f.side = in.side;
                         f.price = in.price;
                         f.shares = qty;
-                        f.ts = ts;
+                        f.ts = arrival_ts;
                         f.trigger = Trigger::Taking;
                         f.liquidity = Liquidity::Removed;
                         l.ledger.on_fill(f, mid);
                         l.markout.on_fill(f, mid);
                         break;
                     }
-                }
             }
         }
-        ++event_index_;
     }
 
+public:
     std::vector<LaneResult> results() const {
         // The residual is marked at the last usable CONTINUOUS-session mid,
         // never at the closing cross: the cross is a different auction at a
@@ -197,7 +237,10 @@ public:
 
 private:
     Strategy strategy_;
+    LatencyModel latency_;
     Ctx ctx_;
+    std::vector<PendingAction> pending_;
+    uint64_t action_seq_ = 0;
     book::Book book_{100, 20, 1u << 20};
     std::vector<Lane> lanes_;
     uint64_t event_index_ = 0;
