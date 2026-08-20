@@ -117,6 +117,28 @@ jobs:
         run: |
           ./build/restart_check data/raw/rec.gz --snapshot-file /tmp/mid.snap
 
+      # The phase 7 done-condition. Nine scenarios of packet damage over a real
+      # feed, each graded CORRECT / SAFE / CAUTIOUS / WRONG. Any WRONG — the
+      # book diverged while the system called itself trusted — fails the build.
+      - name: Adversarial replay (drops, dups, reorders, truncation, an outage)
+        run: python3 python/analysis/adversarial.py data/raw/rec.gz --build build
+
+      # ...and prove the harness can actually fail, because a grader that only
+      # ever returns CORRECT is worth nothing. Setting the convergence bar to a
+      # single clean reference makes the system call itself trusted while its
+      # book is still missing orders, which is precisely the silently-wrong
+      # state, and the harness must catch it.
+      - name: Adversarial harness self-test (it must detect silent wrongness)
+        run: |
+          if python3 python/analysis/adversarial.py data/raw/rec.gz --build build \
+               --recover-after 1 > /tmp/selftest.txt 2>&1; then
+            cat /tmp/selftest.txt
+            echo "FAIL: the harness passed a run it should have failed"
+            exit 1
+          fi
+          grep -q "WRONG" /tmp/selftest.txt
+          echo "harness correctly reported silent wrongness at a bar of 1"
+
       # A feed with a closed form. Every number below is fixed by construction
       # before the simulator runs, so a disagreement is a defect rather than an
       # opinion — and all four models must agree, because the feed contains no
