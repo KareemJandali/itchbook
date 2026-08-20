@@ -15,8 +15,8 @@
 //   5. price priority is evaluated against the post-mutation book
 //
 // Usage:
-//   queue_sim <feed.gz> --place B:1000000:100:500[:display] [--place ...]
-//             [--fills out.csv] [--json out.json]
+//   queue_sim <feed.gz> --place B:1000000:100:500[:display[:cancel_after]]
+//             [--place ...] [--fills out.csv] [--json out.json]
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -43,8 +43,15 @@ struct Placement {
     uint32_t quantity = 0;
     uint64_t after = 0;      // place once this many messages have been applied
     uint32_t display = 0;
+    // Pull the order once this many messages have been applied. Zero means
+    // never, which is the default and the right one for a sweep; the
+    // leave-one-out oracle needs it, because a replacement order that outlives
+    // the order it replaced keeps filling after that order was gone and every
+    // model reads as over-filling for a reason that is not the model.
+    uint64_t cancel_after = 0;
     uint64_t id = 0;
     bool placed = false;
+    bool cancelled = false;
 };
 
 const char* trigger_name(Trigger t) {
@@ -112,24 +119,32 @@ struct Handler {
             }
             pl.placed = true;
         }
+        for (Placement& pl : *places) {
+            if (!pl.placed || pl.cancelled || pl.cancel_after == 0) continue;
+            if (index < pl.cancel_after) continue;
+            for (Lane& l : *lanes) l.q.cancel(pl.id);
+            pl.cancelled = true;
+        }
     }
 };
 
 bool parse_placement(const char* spec, Placement* out) {
-    // SIDE:PRICE:QTY:AFTER[:DISPLAY]
+    // SIDE:PRICE:QTY:AFTER[:DISPLAY[:CANCEL_AFTER]]
     char side = 0;
     long long price = 0;
     long long qty = 0;
     long long after = 0;
     long long display = 0;
-    const int n = std::sscanf(spec, "%c:%lld:%lld:%lld:%lld", &side, &price, &qty, &after,
-                              &display);
+    long long cancel_after = 0;
+    const int n = std::sscanf(spec, "%c:%lld:%lld:%lld:%lld:%lld", &side, &price, &qty,
+                              &after, &display, &cancel_after);
     if (n < 4) return false;
     out->side = (side == 'B' || side == 'b') ? Side::Buy : Side::Sell;
     out->price = static_cast<Price4>(price);
     out->quantity = static_cast<uint32_t>(qty);
     out->after = static_cast<uint64_t>(after);
     out->display = (n >= 5) ? static_cast<uint32_t>(display) : 0;
+    out->cancel_after = (n >= 6) ? static_cast<uint64_t>(cancel_after) : 0;
     return out->quantity > 0 && out->price > 0;
 }
 
@@ -164,7 +179,8 @@ int main(int argc, char** argv) {
     }
     if (feed == nullptr || places.empty()) {
         std::fprintf(stderr,
-                     "usage: %s <feed.gz> --place SIDE:PRICE:QTY:AFTER[:DISPLAY] ...\n"
+                     "usage: %s <feed.gz> "
+                     "--place SIDE:PRICE:QTY:AFTER[:DISPLAY[:CANCEL_AFTER]] ...\n"
                      "                    [--fills out.csv] [--json out.json]\n",
                      argv[0]);
         return 2;

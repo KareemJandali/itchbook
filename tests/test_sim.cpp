@@ -261,6 +261,58 @@ void test_nothing_trades_before_the_market_opens() {
     for (const LaneResult& r : bt.results()) CHECK_EQ(r.fills, 0u);
 }
 
+// Buys and never sells. Crosser alternates sides, so its position oscillates
+// around zero and never reaches a limit worth testing; a limit is only tested
+// by something that would run through it.
+struct OneSidedTaker {
+    uint32_t size = 100;
+    uint64_t next_id = 1;
+    void on_event(const MarketView& v, Ctx& ctx) {
+        if (!v.tradable || !v.mid.ok()) return;
+        int32_t ask = 0;
+        if (!v.best_ask(&ask)) return;
+        ctx.take(next_id++, Side::Buy, ask, size);
+    }
+    static const char* name() { return "one-sided-taker"; }
+};
+
+void test_a_position_limit_is_never_breached() {
+    // The harness owns risk, so the harness has to be held to it. A limit that
+    // is enforced only on average is not a limit, and a backtest that quietly
+    // ran at ten times the stated size is reporting a different strategy's P&L.
+    OneSidedTaker t;
+    t.size = 100;
+    RiskLimits risk;
+    risk.max_position = 150;   // not a multiple of the order size, on purpose
+    Backtest<OneSidedTaker> bt{t, {}, LatencyModel::zero(), risk};
+    feed_slow_grind(bt);
+    bool any_suppressed = false;
+    for (const LaneResult& r : bt.results()) {
+        CHECK(r.peak_position <= risk.max_position);
+        CHECK(r.residual_position <= risk.max_position);
+        CHECK(r.residual_position >= -risk.max_position);
+        if (r.suppressed_quotes > 0) any_suppressed = true;
+    }
+    // If nothing was ever refused the limit was never reached, and the check
+    // above passed for the wrong reason.
+    CHECK(any_suppressed);
+}
+
+void test_no_limit_means_no_suppression() {
+    // The default has to be inert. A limit that applies when nobody asked for
+    // one silently changes every result in the repository.
+    OneSidedTaker t;
+    t.size = 100;
+    Backtest<OneSidedTaker> bt{t, {}, LatencyModel::zero()};
+    feed_slow_grind(bt);
+    bool traded = false;
+    for (const LaneResult& r : bt.results()) {
+        CHECK_EQ(r.suppressed_quotes, 0u);
+        if (r.shares > 0) traded = true;
+    }
+    CHECK(traded);   // and it really did run past where the limit would have bound
+}
+
 void test_an_order_that_arrives_after_the_feed_never_fills() {
     // The simplest statement of the latency model: an order is not at the
     // exchange until it gets there. With one-way latency longer than the whole
@@ -339,6 +391,8 @@ int main() {
     test_naive_never_fills_less_than_a_queue_model();
     test_a_quote_nobody_can_reach_never_fills();
     test_nothing_trades_before_the_market_opens();
+    test_a_position_limit_is_never_breached();
+    test_no_limit_means_no_suppression();
     test_an_order_that_arrives_after_the_feed_never_fills();
     test_a_cancel_that_arrives_late_still_gets_filled();
     test_latency_is_monotone_for_a_resting_quote();

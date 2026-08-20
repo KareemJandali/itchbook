@@ -9,10 +9,14 @@ deliberately adversarial and hits rare paths far too often.
 Phase 6 measures what happens to an order sitting in a FIFO, so the feed has to
 get the FIFO right:
 
-  * **Executions take from the front.** A real exchange executes the oldest
-    order at a price. A generator that executes a random order produces a tape
-    no book could have produced, and every queue conclusion drawn from it is
-    meaningless.
+  * **Executions take from the front, at the touch.** A real exchange executes
+    the oldest order at the BEST price on that side; both halves matter. A
+    generator that executes a random order at a random level produces a tape no
+    single venue could have produced — a print below a resting bid — and every
+    queue conclusion drawn from it is meaningless. The leave-one-out oracle
+    found this the hard way: with executions scattered across levels, price
+    priority fired on nearly every simulated fill, and a replacement order
+    filled 100 shares where the real order it replaced had filled 23.
   * **Cancels have a controllable position.** `--cancel-front-bias` sets the
     fraction of cancels drawn from the front of the queue rather than uniformly.
     This is the knob the whole phase turns on: at 1.0 every cancel is ahead of
@@ -29,6 +33,15 @@ get the FIFO right:
     where every fill markouts to exactly zero, no quote is ever picked off, and
     the four fill models cannot disagree, because nothing that would separate
     them ever happens.
+
+Halts are real halts. Nothing executes while the symbol is halted — orders can
+still be entered and pulled, which is what a halt is for, but no trade prints
+and the centre does not move. Emitting executions through a halt desynchronises
+every model from the book on purpose: the model correctly ignores messages it
+is told cannot be trading, its idea of what is ahead stops matching reality,
+and it then reports zero fills for the rest of the order's life. Halts are also
+rare and bounded, rather than a coin flip on every message that left the feed
+halted about half the time.
 
 It also emits, by construction, the shapes that break naive implementations: a
 `C` printing at its resting price and another printing away from it, a
@@ -111,6 +124,18 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
     def populated():
         return [k for k, v in levels.items() if not v.empty()]
 
+    def touch(side):
+        """The best price on one side, or None if that side is empty.
+
+        Executions may only happen here. A displayed order at a better price
+        has to trade first, so a print at a worse level while the touch is
+        populated is a tape no single venue produces.
+        """
+        prices = [p for (sd, p) in populated() if sd == side]
+        if not prices:
+            return None
+        return max(prices) if side == b"B" else min(prices)
+
     def move_center(direction):
         """Step the centre one tick, by consuming what stood in the way.
 
@@ -158,14 +183,24 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
 
     emitted = 0
     halted = False
+    resume_at = 0
     while emitted < n_messages:
         t += advance()
+
+        # ---- resume from a halt ----
+        if halted and emitted >= resume_at:
+            emit(gen.trading_action(t, b"T"))
+            halted = False
+            emitted += 1
+            continue
 
         # ---- the centre takes a step ----
         # First, before any other branch, so the executions that move the price
         # carry that message's timestamp and a maker at the touch is filled at
-        # the moment of the move rather than some events later.
-        if rng.random() < drift_prob:
+        # the moment of the move rather than some events later. Not while
+        # halted: a halted symbol does not trade, and the centre only moves
+        # because someone traded through it.
+        if not halted and rng.random() < drift_prob:
             move_center(1 if rng.random() < 0.5 else -1)
             continue
 
@@ -183,12 +218,21 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
                 emitted += 1
             continue
 
-        # ---- halt and resume ----
-        if roll < 0.025:
-            emit(gen.trading_action(t, b"H" if not halted else b"T"))
-            halted = not halted
+        # ---- go into a halt ----
+        if not halted and roll < 0.0006:
+            emit(gen.trading_action(t, b"H"))
+            halted = True
+            resume_at = emitted + rng.randint(40, 200)
             emitted += 1
             continue
+
+        # While halted the book still moves — orders are entered and pulled —
+        # but nothing trades. Redraw into the three branches that do not print
+        # a trade, rather than letting a roll fall through into one that does.
+        if halted:
+            roll = rng.choice([rng.uniform(0.00, 0.45),    # add
+                               rng.uniform(0.70, 0.92),    # cancel
+                               rng.uniform(0.92, 0.96)])   # replace
 
         if roll < 0.45:
             # ---- add ----
@@ -211,7 +255,20 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
         level = levels[(side, price)]
 
         if roll < 0.70:
-            # ---- execute the FRONT order: this is what price-time priority means ----
+            # ---- execute the FRONT order AT THE TOUCH: price-time priority ----
+            # Both halves. Time priority picks the oldest order at the price;
+            # price priority says the price can only be the best one on that
+            # side. Executing a deep level while the touch is populated is the
+            # single most damaging thing this generator could get wrong, because
+            # the simulator would then be right to report a price-priority fill
+            # on flow that no real book would have produced.
+            best = touch(side)
+            if best is None:
+                continue
+            price = best
+            level = levels[(side, price)]
+            if level.empty():
+                continue
             ref = level.queue[0]
             have = level.shares[ref]
             qty = have if rng.random() < 0.6 else rng.randint(1, have)
@@ -285,8 +342,14 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
             emitted += 1
             continue
 
-        # ---- a cross at a populated price ----
-        emit(gen.cross_trade(t, rng.randint(1000, 50000), price, match,
+        # ---- a cross, printed at the touch ----
+        # A cross prints at one price for everybody. Printing it at a random
+        # populated level would put an auction print below resting bids, which
+        # is the same priority violation as a stray execution.
+        cross_px = touch(side)
+        if cross_px is None:
+            continue
+        emit(gen.cross_trade(t, rng.randint(1000, 50000), cross_px, match,
                              rng.choice([b"O", b"C"])))
         match += 1
         emitted += 1
