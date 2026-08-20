@@ -41,7 +41,7 @@ being explicit about.
 
 ### The claim that did not survive
 
-On synthetic data naive reported **3.67×** the P&L of pessimistic. On MSFT the
+On synthetic data naive reported **3.53×** the P&L of pessimistic. On MSFT the
 ratio is 0.87 — and the ratio is the wrong statistic, because both numbers are
 negative and a ratio of two negative numbers says nothing about which one is
 flattering. The tooling printed `0.87x` under a caption claiming it was "the
@@ -49,7 +49,7 @@ cost of assuming you are at the front of every queue", which was simply false.
 It now reports the signed difference, which means the same thing in both
 regimes.
 
-So: the 3.67× in section 2 is a fact about a generator. What survives is the
+So: the 3.53× in section 2 is a fact about a generator. What survives is the
 *direction* — naive over-fills, and its P&L is the most flattering of the four
 — and the direction is confirmed independently in the next subsection. The
 magnitude is not transferable, and this document previously implied it was.
@@ -175,14 +175,22 @@ at all on data whose behaviour is known.
 
 | model | fills | shares | P&L | c/share | edge c/sh | fees c/sh |
 |---|---:|---:|---:|---:|---:|---:|
-| naive | 8,624 | 521,345 | $8,423.15 | 1.6157 | 1.3515 | −0.0903 |
-| optimistic | 3,065 | 207,061 | $2,403.18 | 1.1606 | 1.0162 | −0.0900 |
-| mbo | 2,997 | 204,832 | $2,366.28 | 1.1552 | 1.0079 | −0.0900 |
-| pessimistic | 2,960 | 199,791 | $2,293.93 | 1.1482 | 1.0021 | −0.0900 |
+| naive | 7,538 | 458,904 | $7,262.78 | 1.5826 | 1.3436 | −0.0908 |
+| optimistic | 2,786 | 189,696 | $2,173.15 | 1.1456 | 0.9664 | −0.0911 |
+| mbo | 2,721 | 188,326 | $2,130.51 | 1.1313 | 0.9582 | −0.0911 |
+| pessimistic | 2,683 | 182,535 | $2,052.86 | 1.1246 | 0.9471 | −0.0911 |
 
-**Naive claims 3.67× the P&L of pessimistic** *on this generator*. Section 1
+**Naive claims 3.53× the P&L of pessimistic** *on this generator*. Section 1
 shows that multiple does not transfer to a real day; the direction does. Almost
-all of it is volume: naive reports 2.6× the shares. The rest is worse — naive also claims a third more
+all of it is volume: naive reports 2.5× the shares.
+
+These numbers moved once, and the reason is worth recording rather than
+quietly restating them. Phase 7 added halts to the feed generator, so the same
+seed now produces a different feed and the figures here were regenerated
+against it. The simulator did not change: given the pre-halt generator's feed,
+the current code reproduces the previously published numbers exactly, fill for
+fill. A synthetic result is only ever a result about the generator, and this is
+what that looks like in practice. The rest is worse — naive also claims a third more
 edge *per share*, because the fills it invents happen at moments the queue never
 actually reached, and those are systematically the good moments.
 
@@ -225,16 +233,27 @@ that ended fully executed grades every model perfect and measures nothing:
 
 | model | mean error | mean abs error | over | under | exact |
 |---|---:|---:|---:|---:|---:|
-| naive | +66.3 | 66.3 | 139 | 0 | 61 |
-| optimistic | +27.4 | 27.4 | 61 | 0 | 139 |
+| naive | +57.9 | 57.9 | 152 | 0 | 48 |
+| optimistic | +28.9 | 28.9 | 79 | 0 | 121 |
 | **mbo** | **0.0** | **0.0** | **0** | **0** | **200** |
-| pessimistic | −57.7 | 57.7 | 0 | 98 | 102 |
+| pessimistic | −62.3 | 62.3 | 0 | 108 | 92 |
 
 **Bracketed by [pessimistic, optimistic]: 200/200.** The band is a bound.
 
-`mbo` is exact on every one of the 200. `naive` over-fills by 45% of the average
+`mbo` is exact on every one of the 200. `naive` over-fills by 40% of the average
 order and never under-fills, which is the shape the theory predicts: a model
 that ignores the queue can only ever be at least as filled as one that waits.
+
+This check earned its keep the moment the feed gained halts. Phase 7 taught the
+generator to halt a symbol, and this table immediately went to **189/200**, with
+`mbo` under-filling 42 times having been exact on every one before. The cause
+was a real defect: `commit()` returned outright while a symbol was halted, so
+the models ignored the cancels and deletes that kept arriving through the halt
+and came out of it still believing a queue that had evaporated was in front of
+them. Trading is gated during a halt; bookkeeping is not, and conflating the two
+is easy to do and invisible on a feed that never halts. Both implementations now
+advance on cancels while halted and fill on nothing, which the differential test
+insisted on — the C++ fix alone made the two disagree within one run.
 
 This oracle found two defects in the feed generator before it found anything
 about the models, and both were real:
@@ -294,19 +313,19 @@ Shares filled, by one-way latency:
 
 | model | 0 µs | 100 µs | 250 µs | 500 µs | 1 ms | 2 ms | 5 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| naive | 569,207 | 538,224 | 521,345 | 499,960 | 475,831 | 447,342 | 413,789 |
-| optimistic | 181,857 | 196,596 | 207,061 | 216,973 | 223,577 | 222,206 | 219,574 |
-| mbo | 179,358 | 193,673 | 204,832 | 214,678 | 221,663 | 220,272 | 218,270 |
-| pessimistic | 173,494 | 189,145 | 199,791 | 210,049 | 217,765 | 217,411 | 215,995 |
+| naive | 492,497 | 469,104 | 458,904 | 441,889 | 418,320 | 398,123 | 375,290 |
+| optimistic | 164,166 | 181,200 | 189,578 | 202,817 | 209,496 | 211,208 | 207,317 |
+| mbo | 161,741 | 179,528 | 188,156 | 201,286 | 207,737 | 210,319 | 207,039 |
+| pessimistic | 156,455 | 174,501 | 182,513 | 198,045 | 204,810 | 206,757 | 205,123 |
 
 P&L, by one-way latency:
 
 | model | 0 µs | 100 µs | 250 µs | 500 µs | 1 ms | 2 ms | 5 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| naive | $9,239 | $8,707 | $8,423 | $8,074 | $7,717 | $7,296 | $6,822 |
-| optimistic | $2,080 | $2,256 | $2,403 | $2,520 | $2,646 | $2,686 | $2,660 |
-| mbo | $2,062 | $2,222 | $2,366 | $2,495 | $2,613 | $2,666 | $2,645 |
-| pessimistic | $1,939 | $2,141 | $2,294 | $2,425 | $2,565 | $2,606 | $2,586 |
+| naive | $7,840 | $7,426 | $7,263 | $6,973 | $6,587 | $6,357 | $5,950 |
+| optimistic | $1,862 | $2,083 | $2,169 | $2,312 | $2,415 | $2,402 | $2,363 |
+| mbo | $1,812 | $2,044 | $2,124 | $2,281 | $2,392 | $2,375 | $2,349 |
+| pessimistic | $1,708 | $1,967 | $2,057 | $2,237 | $2,361 | $2,359 | $2,327 |
 
 The two directions are the interesting part.
 
@@ -421,7 +440,9 @@ Established on synthetic data, where the answer was known in advance:
 
 Did **not** survive contact with real data:
 
-* **The 3.67x headline.** It is a property of the generator. On MSFT the gap is
+* **The 3.53x headline** (3.67x before the generator gained halts — it moved
+  because the feed did, which rather makes the point). It is a property of the
+  generator. On MSFT the gap is
   $401 on a $3,000 loss, and the ratio inverts to 0.87 because both numbers are
   negative. The direction transfers; the magnitude does not. The tooling
   reported that ratio under a caption calling it "the cost of assuming you are
