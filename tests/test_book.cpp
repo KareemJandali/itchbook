@@ -22,11 +22,12 @@ constexpr int32_t kMid = 100'0000;   // $10.0000 in Price(4)
 constexpr int32_t kTick = 100;       // a penny
 
 void test_pool() {
-    Pool pool(4);   // a tiny chunk, so growth happens immediately
+    Pool pool(4);   // a tiny first chunk, so growth happens immediately
     std::vector<Order*> handed;
     for (int i = 0; i < 10; ++i) handed.push_back(pool.allocate());
     CHECK_EQ(pool.live(), 10u);
-    CHECK(pool.chunks() >= 3);
+    // Chunks double: 4 then 8 covers 10 allocations in two of them.
+    CHECK(pool.chunks() >= 2);
 
     // Every pointer must still be distinct and usable after the chunk growth
     // that happened underneath them — this is why chunks are never reallocated.
@@ -41,6 +42,39 @@ void test_pool() {
     // Freed nodes are reused rather than growing the pool again.
     for (int i = 0; i < 10; ++i) pool.allocate();
     CHECK_EQ(pool.capacity(), cap);
+}
+
+// Chunk sizes double up to a cap. A single huge first slab is the most
+// expensive thing in a replay — allocating and first-touching 42MB costs more
+// than the entire steady-state cost of a million messages — so the first chunk
+// has to be small, and the chunk count still has to stay O(log n).
+void test_pool_chunks_grow_geometrically() {
+    Pool pool(4, 32);
+    // 4 + 8 + 16 + 32 = 60 orders across four chunks; a fixed size-4 chunk
+    // would have needed fifteen.
+    for (int i = 0; i < 60; ++i) pool.allocate();
+    CHECK_EQ(pool.capacity(), 60u);
+    CHECK_EQ(pool.chunks(), 4u);
+
+    // Past the cap the size stops doubling.
+    for (int i = 0; i < 32; ++i) pool.allocate();
+    CHECK_EQ(pool.capacity(), 92u);
+    CHECK_EQ(pool.chunks(), 5u);
+}
+
+void test_pool_pointers_survive_growth() {
+    // Every chunk is a separate allocation that is never resized, so pointers
+    // handed out before a growth stay valid after it. The price levels hold
+    // raw pointers into this storage and would dangle otherwise.
+    Pool pool(2, 8);
+    std::vector<Order*> handed;
+    for (int i = 0; i < 40; ++i) {
+        Order* o = pool.allocate();
+        o->ref = static_cast<uint64_t>(i);
+        handed.push_back(o);
+    }
+    for (size_t i = 0; i < handed.size(); ++i) CHECK_EQ(handed[i]->ref, i);
+    CHECK(pool.chunks() >= 4);
 }
 
 void test_level_fifo() {
@@ -452,6 +486,8 @@ void test_dispatch_matches_the_wire() {
 
 int main() {
     test_pool();
+    test_pool_chunks_grow_geometrically();
+    test_pool_pointers_survive_growth();
     test_level_fifo();
     test_refmap_basics();
     test_refmap_collision_chain();

@@ -40,7 +40,17 @@ add_executable(itch_slice  tools/itch_slice.cpp)
 # ---- Main driver (Phase 3) ----
 add_executable(book_replay tools/book_replay.cpp)
 
-foreach(t itch_dump itch_census itch_slice book_replay)
+# ---- Benchmark (Phase 4) ----
+# Always built with optimisation: measuring a sanitiser build tells you about
+# the sanitiser, not the book.
+add_executable(book_bench tools/book_bench.cpp)
+target_compile_options(book_bench PRIVATE -O3 -fno-omit-frame-pointer)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  target_compile_options(book_bench PRIVATE -fno-sanitize=all)
+  target_link_options(book_bench PRIVATE -fno-sanitize=all)
+endif()
+
+foreach(t itch_dump itch_census itch_slice book_replay book_bench)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()
 

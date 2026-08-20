@@ -50,6 +50,8 @@ namespace itchbook::book {
 // accumulate until the table degraded into a linear scan.
 class RefMap {
 public:
+    static constexpr size_t npos = static_cast<size_t>(-1);
+
     explicit RefMap(size_t capacity = 1u << 22) {
         size_t cap = 16;
         while (cap < capacity) cap <<= 1;
@@ -58,13 +60,24 @@ public:
     }
 
     Order* find(uint64_t ref) const {
+        size_t i = find_index(ref);
+        return i == npos ? nullptr : slots_[i].ptr;
+    }
+
+    // The probe, exposed. Callers that look an order up and then delete it —
+    // which is every execute, cancel, delete and replace — would otherwise walk
+    // the same chain twice: once to find, once to erase. Deletes are ~45% of a
+    // real feed, so that second walk is not a rounding error.
+    size_t find_index(uint64_t ref) const {
         size_t i = ref & mask_;
         while (slots_[i].ptr != nullptr) {
-            if (slots_[i].ref == ref) return slots_[i].ptr;
+            if (slots_[i].ref == ref) return i;
             i = (i + 1) & mask_;
         }
-        return nullptr;
+        return npos;
     }
+
+    Order* at(size_t i) const { return slots_[i].ptr; }
 
     void insert(uint64_t ref, Order* o) {
         if ((size_ + 1) * 2 > slots_.size()) grow();
@@ -81,12 +94,13 @@ public:
     }
 
     bool erase(uint64_t ref) {
-        size_t i = ref & mask_;
-        while (slots_[i].ptr != nullptr && slots_[i].ref != ref) {
-            i = (i + 1) & mask_;
-        }
-        if (slots_[i].ptr == nullptr) return false;
+        size_t i = find_index(ref);
+        if (i == npos) return false;
+        erase_at(i);
+        return true;
+    }
 
+    void erase_at(size_t i) {
         // Knuth 6.4 Algorithm R. Walk forward from the hole; an entry whose
         // ideal slot is not cyclically inside (hole, j] would become
         // unreachable if left where it is, so shift it back into the hole.
@@ -104,7 +118,6 @@ public:
                 i = j;
             }
         }
-        return true;
     }
 
     size_t size() const { return size_; }
@@ -351,8 +364,14 @@ class Book {
 public:
     // `tick` is the dense grid spacing in Price(4) units — 100 is a penny.
     // `band_pct` is how far either side of the first price the grid reaches.
-    explicit Book(int32_t tick = 100, int32_t band_pct = 20)
-        : tick_(tick), band_pct_(band_pct), bids_('B', tick), asks_('S', tick) {}
+    // `refs_capacity` is the ref map's slot count, rounded up to a power of two.
+    // It is a cache-locality knob, not just a memory one: every message carries
+    // an order reference, so a table too large to sit in cache costs a miss on
+    // the hottest lookup in the program. See bench/README.md.
+    explicit Book(int32_t tick = 100, int32_t band_pct = 20,
+                  size_t refs_capacity = 1u << 20)
+        : tick_(tick), band_pct_(band_pct), refs_(refs_capacity),
+          bids_('B', tick), asks_('S', tick) {}
 
     // ---- the seven mutating operations ----
 
@@ -373,42 +392,44 @@ public:
 
     // 'E' — trades at the resting order's own price.
     void execute(uint64_t ref, uint32_t shares) {
-        Order* o = refs_.find(ref);
-        if (o == nullptr) { ++unknown_ref_; return; }
+        size_t slot = refs_.find_index(ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        Order* o = refs_.at(slot);
         record_trade(o->price, shares);
-        reduce(o, shares);
+        reduce(o, shares, slot);
     }
 
     // 'C' — trades at a stated price. A non-printable execution still removes
     // the shares from the book but must not count toward volume, VWAP or OHLC.
     void execute_with_price(uint64_t ref, uint32_t shares, int32_t price, bool printable) {
-        Order* o = refs_.find(ref);
-        if (o == nullptr) { ++unknown_ref_; return; }
+        size_t slot = refs_.find_index(ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return; }
         if (printable) record_trade(price, shares);
-        reduce(o, shares);
+        reduce(refs_.at(slot), shares, slot);
     }
 
     // 'X' — partial cancel. Not a trade: no volume.
     void cancel(uint64_t ref, uint32_t shares) {
-        Order* o = refs_.find(ref);
-        if (o == nullptr) { ++unknown_ref_; return; }
-        reduce(o, shares);
+        size_t slot = refs_.find_index(ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        reduce(refs_.at(slot), shares, slot);
     }
 
     // 'D' — full removal.
     void remove(uint64_t ref) {
-        Order* o = refs_.find(ref);
-        if (o == nullptr) { ++unknown_ref_; return; }
-        destroy(o);
+        size_t slot = refs_.find_index(ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        destroy(refs_.at(slot), slot);
     }
 
     // 'U' — delete then add. Side is inherited from the original order; the
     // replacement joins the back of its new level, losing queue priority.
     void replace(uint64_t orig_ref, uint64_t new_ref, int32_t price, uint32_t shares) {
-        Order* o = refs_.find(orig_ref);
-        if (o == nullptr) { ++unknown_ref_; return; }
+        size_t slot = refs_.find_index(orig_ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        Order* o = refs_.at(slot);
         char side = static_cast<char>(o->side);
-        destroy(o);
+        destroy(o, slot);
         add(new_ref, side, price, shares);
     }
 
@@ -498,9 +519,9 @@ private:
     // Take `by` shares off an order, removing it if that empties it. Comparing
     // before subtracting matters: shares is unsigned, and an execution larger
     // than the resting size would wrap it to something enormous.
-    void reduce(Order* o, uint32_t by) {
+    void reduce(Order* o, uint32_t by, size_t slot) {
         if (by >= o->shares) {
-            destroy(o);
+            destroy(o, slot);
             return;
         }
         Level* lvl = side_for(static_cast<char>(o->side)).level_of(o);
@@ -509,10 +530,12 @@ private:
         o->shares -= by;
     }
 
-    void destroy(Order* o) {
+    // `slot` is where the caller already found this order, so the ref map is
+    // walked once per message rather than twice.
+    void destroy(Order* o, size_t slot) {
         resting_shares_ -= o->shares;
         side_for(static_cast<char>(o->side)).pop(o);
-        refs_.erase(o->ref);
+        refs_.erase_at(slot);
         pool_.deallocate(o);
     }
 

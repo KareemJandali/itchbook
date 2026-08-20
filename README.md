@@ -3,13 +3,16 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–3 complete, validated on real data. Reconstructs MSFT
+> **Status:** Phase 4 (performance) underway; phases 1–3 complete and validated
+> on real data. Reconstructs MSFT
 > from a real NASDAQ trading day (30 Dec 2019, 1.2M messages) and **matches
 > Databento's published daily bar exactly** — volume, open, high, low and close,
 > to the share and the cent. The C++ book and the Python oracle agree byte for
 > byte across 57,291 snapshot rows, with zero unknown order references. See
-> [Validation](#validation) and [`validation/`](validation/). Next up is phase 4
-> (performance); see [`docs/build-plan.md`](docs/build-plan.md) for the roadmap.
+> [Validation](#validation) and [`validation/`](validation/). Phase 4 has a
+> first result: **1.65x fewer cycles per message**, from the pool's slab
+> allocation rather than anything on the hot path — see [`bench/`](bench/). See
+> [`docs/build-plan.md`](docs/build-plan.md) for the roadmap.
 
 ## What it's for
 
@@ -28,15 +31,17 @@ Four things this project sets out to prove, in priority order:
 ```
 include/itchbook/   public headers (this is a library, not an app)
   itch/             reader (gzip stream), messages (field offsets), parser (framing)
+  bench/            rdtsc timing and latency percentiles
   book/             order (40 bytes), level (intrusive FIFO), pool (slab),
                     book (dense tick array + open-addressing ref map),
                     dispatch (the ITCH -> book seam)
   engine/           phase 5 (matching engine) — stub
   sim/ risk/        phases 6 & 7 (queue backtester, risk) — stubs
-tools/              itch_dump, itch_census, itch_slice, book_replay
+tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench
 python/
   make_sample.py    synthetic spec-shaped feed, so you can run without a download
   fuzz_feed.py      adversarial feed generator, for the differential test
+  make_bench_feed.py  feed with a real day's message mix, for benchmarking
   reference/        the Phase 2 oracle: slow, obvious, and correct
     parser.py       framing + one decoder per message type
     book.py         {price: [refs]} + {ref: order}; the seven mutating handlers
@@ -133,6 +138,20 @@ Three structures carry the book, and the choice for each is the point:
 what will tell you the field reordering in phase 4 actually did something.
 Orders come from a slab allocator in fixed chunks that are never reallocated, so
 every pointer the levels hold stays valid.
+
+## Performance
+
+```bash
+python3 python/make_bench_feed.py data/raw/bench.gz --messages 1000000
+python3 bench/compare.py ./build/book_bench data/raw/bench.gz
+```
+
+`book_bench` reports per-message-type latency percentiles from `rdtsc`, plus an
+uninstrumented throughput figure. `bench/compare.py` pins to a core and
+interleaves variants, because without both this machine's run-to-run noise
+(~19%) is large enough to invent a speedup that isn't there — which it did, on
+the first attempt. [`bench/README.md`](bench/README.md) has the numbers, the
+mechanism, and the two predicted optimisations that measured flat.
 
 ## Differential testing
 
