@@ -56,7 +56,27 @@ if [[ -z "$BIN" ]]; then
         BIN=build-release
     fi
 fi
+# Bring the chosen build up to date rather than trusting whatever binary is
+# sitting there. ITCHBOOK_BUILD pointing at a tree compiled before this script
+# existed is the obvious way to get a confusing failure, and an incremental
+# no-op build costs a second.
+if [[ -f "$BIN/CMakeCache.txt" ]]; then
+    cmake --build "$BIN" --target book_replay -j >/dev/null
+fi
 echo "using $BIN/book_replay"
+
+# ...and if it still cannot do what this script needs, say so plainly instead
+# of letting the tool print a usage message into the middle of a comparison.
+# Captured, not piped: book_replay exits non-zero on an unrecognised flag, and
+# under `set -o pipefail` the pipeline reports THAT status rather than grep's,
+# so a piped check reads as failure even when the flag is present. It did.
+HELP_TEXT="$("$BIN/book_replay" --help 2>&1 || true)"
+if ! printf '%s' "$HELP_TEXT" | grep -q -- '--json'; then
+    echo "error: $BIN/book_replay does not support --json." >&2
+    echo "       It predates this script. Rebuild it, or unset ITCHBOOK_BUILD" >&2
+    echo "       to let this script configure a fresh Release build." >&2
+    exit 1
+fi
 
 echo
 echo "=== the Python oracle ==="
