@@ -60,3 +60,6 @@ jobs:
       # a push does not wait minutes for it.
       - name: Property fuzz the matching engine
         run: ./build/fuzz_matcher --iterations 1000000 --seed 1
+
+      - name: Property fuzz the queue model
+        run: ./build/fuzz_queue --iterations 200000 --seed 1

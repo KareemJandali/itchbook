@@ -75,6 +75,11 @@ struct Entry {
     uint64_t ahead = 0;        // THE state variable: displayed shares in front
     uint64_t ahead0 = 0;       // ahead at arrival, for reporting
     uint64_t arrived_ns = 0;   // arrival, never the decision time
+    // How many times this order's visible slice has been refreshed. The only
+    // event that can legally INCREASE `ahead` — hiding size costs priority, so
+    // a refreshed slice rejoins the back — which makes this the hook a property
+    // test needs to tell a legal increase from a bug.
+    uint32_t refreshes = 0;
     bool live = true;
 
     uint32_t remaining() const { return display + hidden; }
@@ -261,6 +266,7 @@ private:
         const uint32_t slice = std::min<uint32_t>(e.hidden, e.slice_size);
         e.hidden -= slice;
         e.display = slice;
+        ++e.refreshes;
         // Straight to the back of the queue as it stands right now. Reading the
         // post-mutation book matters: the shares this fill just consumed are
         // already gone from it, so we rejoin behind what is genuinely left.
