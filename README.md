@@ -3,25 +3,33 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–6 complete. Reconstruction validated against real market
-> data, performance against hardware counters, and the matching engine against
-> a million random order sequences. Reconstructs MSFT
-> from a real NASDAQ trading day (30 Dec 2019, 1.2M messages) and **matches
-> Databento's published daily bar exactly** — volume, open, high, low and close,
-> to the share and the cent. The C++ book and the Python oracle agree byte for
-> byte across 57,291 snapshot rows, with zero unknown order references. See
-> [Validation](#validation) and [`validation/`](validation/). Phase 4 is done:
-> **1.73x fewer cycles per message** (43.9M msg/s), traced by hardware counter
-> to the pool's slab allocation rather than anything on the hot path — the
-> page-fault count matches the removed 41.9MB slab to 99.5%. Two optimisations
-> the plan predicted measured flat. See [`bench/`](bench/) and
-> [`docs/build-plan.md`](docs/build-plan.md). Phase 6 is the headline, and it
-> runs on a real day: MSFT, 30 December 2019, 1.2M messages. A symmetric maker
-> at the touch **loses money in all four fill models**, with markouts negative
-> at 100 ms, 1 s and 10 s — it is being picked off. Shadowing 50 real orders
-> that were pulled part-filled puts the truth inside `[pessimistic, optimistic]`
-> **50 times out of 50**, with the reference-resolving model exact on every one.
+> **Status:** Phases 1–7 complete. Every claim below is measured on a real
+> NASDAQ trading day — MSFT, 30 December 2019, 1,221,484 messages — not on a
+> generated feed.
+>
+> **Correct.** The C++ book and an independent Python oracle agree byte for
+> byte across **61,228 snapshot rows and 22 summary fields**, VWAP to ten
+> decimal places, zero unknown order references. The reconstruction matches
+> **Databento's published daily bar exactly** — volume, open, high, low, close,
+> to the share and the cent. See [Validation](#validation).
+>
+> **Fast.** **1.73× fewer cycles per message** (43.9M msg/s), traced by
+> hardware counter to the pool's slab allocation rather than anything on the
+> hot path: the page-fault count matches the removed 41.9 MB slab to 99.5%. Two
+> optimisations the plan predicted measured flat. See [`bench/`](bench/).
+>
+> **Honest about fills.** A symmetric maker at the touch **loses money in all
+> four fill models**, with markouts negative at 100 ms, 1 s and 10 s — it is
+> being picked off. Shadowing 200 real orders that were pulled part-filled puts
+> the truth inside `[pessimistic, optimistic]` **200 times out of 200**, with
+> the reference-resolving model exact on every one.
 > See [`docs/phase6-results.md`](docs/phase6-results.md).
+>
+> **Never silently wrong.** Twelve scenarios of packet damage over that day —
+> drops, duplicates, reordering, truncation, a 14:00 outage, an injected halt —
+> and in none of them does the system report a trusted book that differs from
+> the truth. The grader is proven able to fail.
+> See [`docs/phase7-results.md`](docs/phase7-results.md).
 
 ## What it's for
 
@@ -261,11 +269,11 @@ Section 31 and TAF, in integer micro-dollars.
 
 The external check is the one that matters. `leave_one_out.py` replays the feed
 **unchanged** with a simulated order standing exactly where a real order stood,
-and grades the models against what that order actually filled. Over 50 real
+and grades the models against what that order actually filled. Over 200 real
 MSFT orders that were pulled part-filled — the cases where the answer depends
-on queue position — the truth fell inside `[pessimistic, optimistic]` 50 times
-out of 50. `mbo` reproduced all 50 exactly; naive over-filled 24 and never
-under-filled; pessimistic under-filled 21 and never over-filled. Full numbers,
+on queue position — the truth fell inside `[pessimistic, optimistic]` 200 times
+out of 200. `mbo` reproduced all 200 exactly; naive over-filled 89 and never
+under-filled; pessimistic under-filled 96 and never over-filled. Full numbers,
 figures and the limits in
 [`docs/phase6-results.md`](docs/phase6-results.md).
 
@@ -323,9 +331,30 @@ Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
 
 ## Differential testing
 
-The oracle exists to be disagreed with. `tests/differential.py` generates
-adversarial feeds and requires the two implementations to produce identical
-snapshot CSVs *and* identical summaries:
+The oracle exists to be disagreed with. Two independent implementations — a
+slow, obvious Python one and the C++ one — run over the same bytes, so any
+divergence is a bug in one of them.
+
+The headline is a **full trading day**, because that is what the claim was
+about and tens of thousands of messages cannot test it:
+
+```bash
+./scripts/full-day-differential.sh data/sliced/MSFT.gz
+```
+
+```
+OK: 61228 snapshot rows identical
+22 summary fields identical
+```
+
+MSFT, 30 December 2019, 1,221,484 messages. Every sampled instant of the book,
+and every cumulative quantity between them — volume, notional, OHLC, VWAP to
+ten decimal places. The two comparisons fail differently: two books can agree
+at every instant a snapshot samples and still have miscounted in between, which
+only the summary catches.
+
+`tests/differential.py` covers the other direction — generated adversarial
+feeds, requiring identical snapshot CSVs *and* identical summaries:
 
 ```bash
 python3 tests/differential.py --binary build/book_replay --seeds 10
