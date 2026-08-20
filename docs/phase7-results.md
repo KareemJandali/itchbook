@@ -48,8 +48,26 @@ section 3, this was the second bug real data found.
 | disconnect-long | CORRECT | 16,231 | 1 | 0 | 64 | 0 | trusted |
 | everything | SAFE | 1,942 | 11 | 444 | 461 | 4 | recovering |
 | disconnect-to-end | SAFE | 0 | 0 | 0 | 0 | 0 | halted |
+| halt | CORRECT | 0 | 0 | 0 | 0 | 0 | trusted |
+| halt-and-drop | SAFE | 482 | 12 | 0 | 695 | 0 | recovering |
 
-**5 CORRECT, 5 SAFE, 0 WRONG.**
+**6 CORRECT, 6 SAFE, 0 WRONG.**
+
+The last two are the plan's fifth injection. A halt is not damage in the sense
+the others are — nothing is lost — but it is a state transition the whole stack
+has to keep straight, and a real day may simply not contain one: MSFT did not
+halt on 30 December 2019. So it is injected, along with the resume that ends
+it, and each goes in as its own single-message packet, which is what an
+exchange does with a trading action anyway.
+
+Inserting messages into a sequenced stream is the part with a trap in it.
+Every sequence number after an injection shifts, and the stream cannot simply
+be renumbered from one, because a dropped packet has to keep leaving a real
+hole. Each surviving packet therefore carries its original sequence plus
+however many messages were injected ahead of it: gaps stay gaps, and the
+injected messages take their own numbers. The check that this is right is that
+`halt` reports **zero gaps** — get the arithmetic wrong and the sequencer
+invents one immediately.
 
 The two worth pausing on are the outages. `disconnect-long` loses 16,231
 consecutive messages — one hole, no retransmission available — and the book

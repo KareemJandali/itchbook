@@ -96,10 +96,16 @@ SCENARIOS = [
     ("disconnect-to-end", ["--disconnect-for", "100000"], "disconnected",
      "the link dies and never comes back: no later packet reveals the jump, "
      "so nothing announces the loss"),
+    ("halt", ["--halt-for-ns", "60000000000"], "halted",
+     "the plan's fifth injection: a trading halt and its resume, INSERTED into "
+     "the stream, so every sequence number after them shifts"),
+    ("halt-and-drop", ["--halt-for-ns", "60000000000", "--drop", "500"], "halted",
+     "a gap that straddles a halt: recovery has to survive the state change "
+     "as well as the loss"),
 ]
 
 
-def scenarios(seed, outage_ns):
+def scenarios(seed, outage_ns, halt_ns):
     """The matrix, with the seed and the outage moment threaded through.
 
     The outage time is computed from the feed rather than hardcoded. The plan
@@ -112,6 +118,8 @@ def scenarios(seed, outage_ns):
         f = list(flags)
         if "--disconnect-for" in f:
             f = ["--disconnect-at-ns", str(outage_ns)] + f
+        if "--halt-for-ns" in f:
+            f = ["--halt-at-ns", str(halt_ns)] + f
         out.append((name, f + ["--seed", str(seed)], must, why))
     return out
 
@@ -201,6 +209,9 @@ def main():
     tj = json.loads((work / "truth.json").read_text())
     outage_ns, outage_label = pick_outage(tj["first_ts"], tj["last_ts"])
     span = tj["last_ts"] - tj["first_ts"]
+    # The halt goes in before the outage, so a scenario carrying both puts the
+    # gap on the far side of the state change rather than inside it.
+    halt_ns = tj["first_ts"] + span * 4 // 10
     checkpoint_ns = tj["first_ts"] + int(span * a.checkpoint_frac)
 
     # Re-take the truth at the checkpoint rather than at the end of the feed.
@@ -224,7 +235,7 @@ def main():
 
     rows = []
     no_op = []
-    for name, flags, must, why in scenarios(a.seed, outage_ns):
+    for name, flags, must, why in scenarios(a.seed, outage_ns, halt_ns):
         dmg = work / f"{name}.gz"
         report = run([str(b / "mold_damage"), str(packets), str(dmg)] + flags)
         # A scenario that inflicted no damage is not a passing scenario, it is
