@@ -56,10 +56,30 @@ endforeach()
 
 # ---- Tests ----
 enable_testing()
-foreach(t test_parser test_book)
+foreach(t test_parser test_book test_matcher)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
   # tests include "tests/check.hpp"
   target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR})
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
+
+# ---- Property fuzzer (Phase 5) ----
+# Runs a bounded number of sequences under ctest so CI stays quick; run the
+# binary directly with --iterations for a real soak. Builds optimised even in
+# Debug: a sanitiser build manages roughly a tenth the sequences per second,
+# and coverage of random sequences is the point.
+add_executable(fuzz_matcher tests/fuzz/fuzz_matcher.cpp)
+target_link_libraries(fuzz_matcher PRIVATE itchbook)
+target_include_directories(fuzz_matcher PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(fuzz_matcher PRIVATE -O2)
+# Built without sanitizers even in Debug. Under ASan the engine's allocations
+# cost roughly ten times as much wall clock, and what this test buys is
+# coverage of random sequences — the unit tests already exercise the same code
+# under sanitizers. For a sanitized soak, drop these two lines and run fewer
+# iterations.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  target_compile_options(fuzz_matcher PRIVATE -fno-sanitize=all)
+  target_link_options(fuzz_matcher PRIVATE -fno-sanitize=all)
+endif()
+add_test(NAME fuzz_matcher COMMAND fuzz_matcher --iterations 200000)
