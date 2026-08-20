@@ -48,6 +48,7 @@ add_executable(queue_backtest tools/queue_backtest.cpp)
 add_executable(latency_sweep tools/latency_sweep.cpp)
 add_executable(mold_wrap   tools/mold_wrap.cpp)
 add_executable(mold_replay tools/mold_replay.cpp)
+add_executable(mold_damage tools/mold_damage.cpp)
 
 add_executable(book_bench tools/book_bench.cpp)
 target_compile_options(book_bench PRIVATE -O3 -fno-omit-frame-pointer)
@@ -57,14 +58,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
-          latency_sweep mold_wrap mold_replay)
+          latency_sweep mold_wrap mold_replay mold_damage)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()
 
 # ---- Tests ----
 enable_testing()
 foreach(t test_parser test_book test_matcher test_fees test_queue test_ledger test_sim
-          test_kill_switch test_mold)
+          test_kill_switch test_mold test_recover)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
   # tests include "tests/check.hpp"

@@ -394,8 +394,28 @@ public:
     // the hottest lookup in the program. See bench/README.md.
     explicit Book(int32_t tick = 100, int32_t band_pct = 20,
                   size_t refs_capacity = 1u << 20)
-        : band_pct_(band_pct), refs_(refs_capacity),
-          bids_('B', tick), asks_('S', tick) {}
+        : tick_(tick), band_pct_(band_pct), refs_capacity_(refs_capacity),
+          refs_(refs_capacity), bids_('B', tick), asks_('S', tick) {}
+
+    // Throw away every resting order and start again from empty.
+    //
+    // For recovery after a sequence gap. The messages we missed could have
+    // added, cancelled, executed or replaced anything, so no order in the book
+    // can be shown to still be correct — and a book that is wrong in an unknown
+    // way is worse than an empty one, because an empty book at least knows what
+    // it does not know.
+    //
+    // The TAPE statistics survive: volume, VWAP, OHLC and the cross prices are
+    // facts about trades we actually saw printed, and a gap does not make the
+    // prints before it un-happen. They are incomplete after a gap, which is a
+    // different thing from wrong, and `unknown_ref` records the difference.
+    void clear_orders() {
+        pool_ = Pool();
+        refs_ = RefMap(refs_capacity_);
+        bids_ = Side('B', tick_);
+        asks_ = Side('S', tick_);
+        resting_shares_ = 0;
+    }
 
     // ---- the seven mutating operations ----
 
@@ -619,7 +639,9 @@ private:
         pool_.deallocate(o);
     }
 
+    int32_t tick_;
     int32_t band_pct_;
+    size_t refs_capacity_;
     Pool pool_;
     RefMap refs_;
     Side bids_;

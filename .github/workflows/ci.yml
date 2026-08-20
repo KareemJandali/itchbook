@@ -84,6 +84,29 @@ jobs:
           cmp /tmp/rt-a.bin /tmp/rt-b.bin
           echo "round trip identical: $(wc -c < /tmp/rt-a.bin) bytes"
 
+      # Recovery, end to end. Knock a 20-packet hole in a wrapped feed — a
+      # mid-day outage, roughly 800 consecutive messages — and require that
+      # rebuild-forward converges back to a book byte-identical to the
+      # undamaged one, and that the convergence detector notices.
+      - name: Gap recovery (outage, rebuild, converge, compare books)
+        run: |
+          python3 python/make_queue_feed.py data/raw/rec.gz --seed 11 --messages 200000 \
+            --gap-ns 300000
+          ./build/mold_wrap data/raw/rec.gz data/raw/rec.mold.gz
+          ./build/mold_damage data/raw/rec.mold.gz data/raw/rec.dmg.gz \
+            --disconnect-at 5000 --disconnect-for 20
+          ./build/mold_replay data/raw/rec.mold.gz --book-out /tmp/truth.csv --quiet
+          # Exit 3 means messages were lost, which is the point of this run.
+          ./build/mold_replay data/raw/rec.dmg.gz --book-out /tmp/recovered.csv \
+            --quiet --recover-after 20000 > /tmp/recovered.txt || test $? -eq 3
+          cat /tmp/recovered.txt
+          grep -q "state                 trusted" /tmp/recovered.txt \
+            || (echo "FAIL: never converged back to trusted" && exit 1)
+          grep -q "recoveries            1" /tmp/recovered.txt \
+            || (echo "FAIL: expected exactly one recovery" && exit 1)
+          cmp /tmp/truth.csv /tmp/recovered.csv
+          echo "recovered book identical to truth after an 800-message outage"
+
       # A feed with a closed form. Every number below is fixed by construction
       # before the simulator runs, so a disagreement is a defect rather than an
       # opinion — and all four models must agree, because the feed contains no
