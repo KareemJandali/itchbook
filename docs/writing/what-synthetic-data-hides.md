@@ -1,0 +1,239 @@
+# What synthetic data hides
+
+*Notes from building an order-book reconstructor and a queue-position
+backtester against NASDAQ TotalView-ITCH.*
+
+Every result in this project existed twice: once on a feed I generated, and
+once on a real trading day. The two agreed less often than I expected, and the
+disagreements were more instructive than the agreements. This is a list of the
+times a number was true on synthetic data and false on a real day, what the
+mechanism turned out to be, and what I would do differently.
+
+The setup, briefly. A C++20 reconstructor reads raw ITCH and maintains a
+per-order book. A deliberately slow Python implementation does the same thing
+independently, and the two are required to produce byte-identical output. On
+top sits a backtester that answers a question the feed cannot: *if my order had
+been resting there, would it have filled?* Since nothing in a public feed
+resolves whether a cancel was ahead of you or behind you, it runs four fill
+models at once and reports the range.
+
+Real data means MSFT, 30 December 2019 — 1,221,484 messages for that one
+symbol.
+
+---
+
+## 1. The headline number was a fact about my generator
+
+The project's marketing claim, for a while, was this: a naive backtester — one
+that fills you whenever anything trades at your price — reports **3.67×** the
+P&L of a pessimistic one that makes you wait your turn. That is a satisfying
+number. It says queue position is worth a factor of nearly four, and it came
+out of a clean experiment: same strategy, same bytes, four fill models, one
+pass.
+
+On MSFT the same measurement gives **0.87×**.
+
+Worse, the ratio is the wrong statistic entirely. On real data the strategy
+*loses money*, so both numbers are negative, and a ratio of two negative numbers
+says nothing about which one is flattering. My tooling printed `0.87x` under a
+caption reading "the cost of assuming you are at the front of every queue",
+which was simply false. The honest statistic is the signed difference: naive
+reports **$401 more** than pessimistic, so it still flatters, by a margin
+nothing like a factor of four.
+
+What survived was the *direction*. Naive over-fills and never under-fills; that
+is structural, and it held. What did not survive was the magnitude, and the
+magnitude was the part I had been quoting.
+
+**The mechanism.** My generator's price was a driftless random walk whose levels
+refilled after every sweep. A maker filled during a sweep gets marked at the
+bottom of it and then watches the price come back. A real book does not do that.
+
+---
+
+## 2. Three presentation bugs, all on the loss side
+
+When the strategy started losing money, three separate pieces of my analysis
+code began lying, and every one of them lied in the same direction.
+
+The ratio caption above was the first. The second was in the latency sweep: it
+reported "surviving fraction of the zero-latency number", computed as
+`last / first`. With a profit that reads correctly. With a loss that grew by
+77%, it printed **1.77** under a heading where 1.0 meant "flat" — the best
+possible reading of the worst possible outcome.
+
+The third was a chart. Bars for negative values grow leftward from zero,
+straight into the category labels, so the longest bar rendered as
+`mbo3,425.4` — the minus sign hidden behind the word "mbo". The largest loss in
+the figure read as a gain.
+
+None of these were reachable on synthetic data, because there the strategy was
+profitable and every bar pointed the other way. **Every presentation bug I found
+was on the loss side**, which is the side that matters: a backtester that makes
+losses look smaller is failing in the one direction you cannot afford.
+
+---
+
+## 3. A receiver that reported a clean session having lost 40% of the day
+
+The recovery work injects packet damage into a MoldUDP64 stream — drops,
+duplicates, reordering, truncation, a mid-day outage — and grades each run:
+did the book match an undamaged replay, and did the system *say* it was
+trustworthy? The only unacceptable outcome is a book that differs while
+claiming to be trusted.
+
+Ten scenarios, no failures. Then, instead of asking "does it survive this
+list", I asked "how much can it survive", and swept the outage length until
+something broke. At 2,000 packets it did:
+
+```
+0 messages lost, 0 gaps, state: trusted
+```
+
+with **80,235 messages missing — 40% of the session.**
+
+**The mechanism.** A gap in the middle of a stream announces itself: the next
+packet carries a sequence number that has jumped. A stream that *dies* never
+sends that next packet. There is no discontinuity to notice, and every counter
+stays honestly at zero. Nothing was detected because from sequence numbers
+alone nothing was detectable.
+
+MoldUDP64 already carries the answer — an end-of-session marker — so a stream
+that ends without one did not end, it stopped. That is now a halt, not a
+recovery, because there is no bound on what was missed and no further messages
+with which to demonstrate convergence.
+
+The scenario matrix could not have found this. Every outage in it was short
+enough that the feed came back. **A scenario list checks the cases you thought
+of; a sweep finds the edge.**
+
+---
+
+## 4. A recovery criterion that could never fire on a real book
+
+With no retransmission service to ask, recovery from a gap is *rebuild-forward*:
+discard the book and rebuild from the next message. The resulting book contains
+no wrong orders, only missing ones — a subset of the truth, never an invention.
+
+It also converges, and the feed itself supplies the signal. Every message
+deleting or executing an order the book has never heard of is a message about
+the pre-gap world we discarded. As those orders age out, that rate falls to
+zero, and when it has been zero long enough the book is whole again.
+
+I implemented "long enough" as *N consecutive resolvable references, reset to
+zero on any miss*. On the synthetic feed that works: orders churn fast and the
+pre-gap tail dies out in seconds. On MSFT it never fires at all. An order added
+before the gap can rest for **hours**, and one cancel of one such order at 15:45
+wipes out a run that had climbed to nineteen thousand. The book had long since
+converged; the criterion could not say so.
+
+It is now a rate over a sliding window — at most 5 unresolved in the last
+50,000 references. **A consecutive run is a fragile way to measure a rate**, and
+only data with long-lived orders in it shows that.
+
+---
+
+## 5. And then real data broke the fixed version too
+
+Section 4's story has a second half I would rather report than omit. With the
+windowed criterion in place, the synthetic feed converges from a
+16,231-message hole back to a byte-identical book. I wrote that down as the
+recovery property.
+
+On MSFT, **it never converges at all.** Every damaged scenario finishes the
+session still recovering.
+
+This one is not a bug, and the distinction matters. The verdicts are correct:
+the book differs, and the system says so. It is a fact about real books. A
+rebuild at 14:00 discards several thousand orders resting at that moment, and
+on a real name those keep being cancelled and executed for hours — the pre-gap
+tail outlives the session. The synthetic feed converged because it is two
+minutes long and churns its whole book many times over.
+
+So the property is narrower than I first stated it: *no wrong orders, only
+missing ones* holds unconditionally; whether it re-converges within the session
+is a question about the symbol and the hour.
+
+---
+
+## 6. The comparison harness invented a disagreement
+
+The reconstructor's headline claim is byte-identical output against the Python
+oracle across a full trading day. Pointed at MSFT it reported 61,228 snapshot
+rows identical and then failed on two summary fields: `best_bid` and `best_ask`,
+where one implementation said `None` and the other said `-1`.
+
+Both were right. MSFT's book is **empty at the close** — every order cancelled —
+so there is no best bid. One spelled that as null, the other as a sentinel. The
+bug was in the comparison harness, not in either book.
+
+Chasing it turned up four more of the same and one worse: OHLC and VWAP are
+undefined until something trades and got the same sentinel treatment, and
+`trading_state` is `'\0'` until the feed says otherwise, which I printed raw —
+putting a NUL byte inside a JSON string. That file did not merely disagree, it
+did not parse.
+
+None of it was reachable from a generated feed. **They all end with orders still
+resting and something having traded**, so every field has a real value and every
+spelling matches. It took a day that ends the way real days end.
+
+---
+
+## 7. Two quadratics that only a real day made visible
+
+Not every finding was about correctness. A six-point latency sweep over MSFT
+took the better part of an hour. Every test passed throughout, because they are
+all about correctness and a quadratic is not wrong, only ruinous.
+
+Two structures were being walked per message and growing with the run: retired
+orders that were marked dead but never erased from the list they lived in, and
+markout samples awaiting a horizon. The second was 40 of the 47 seconds a single
+backtest took — one frontier index that only advanced when a sample had *all*
+horizons resolved, so with a ten-second horizon it rescanned every fill of the
+last ten seconds, on every message.
+
+The sweep went from ~50 minutes to **4 seconds**, results byte-identical either
+way.
+
+Two things about how this was found. First, I guessed wrong twice — two
+plausible hypotheses both measured flat — and what settled it was sampling the
+stack with `gdb` and letting one rebuild with `-g` name the line. Second, the
+project had a benchmark for the *book* and none for the *simulator*, so nothing
+measured the cost of the thing that got slow. There is now a CI check that
+compares two feed sizes and asserts the ratio: double the input, linear costs
+~2×, quadratic ~4×, and the machine's speed cancels out. The pre-fix code
+measures 3.83× against a limit of 3.0, so the guard is known to catch what it
+exists for rather than assumed to.
+
+---
+
+## What I would do differently
+
+**Generate the failure, not the shape.** My feeds reproduced a real day's
+*message mix* and its *queue structure*. What they did not reproduce was how a
+day *ends* (empty book, nothing trading), how long a real order *rests* (hours,
+not seconds), and how a real price *moves* (not back to where it started). Every
+finding above traces to one of those three.
+
+**Sweep the parameter, don't enumerate the cases.** The scenario matrix found
+nothing the code did not already handle. Walking outage length until it broke
+found the one failure that mattered. A list tests your imagination; a sweep
+tests the system.
+
+**Make the harness fail on purpose.** After the grader had returned only
+CORRECT and SAFE, I had no evidence it *could* return WRONG. Setting the
+convergence bar to a single reference produces four WRONG verdicts and a
+non-zero exit, and that run is in CI alongside the real one. A check that has
+never failed is not a check yet — it is an assertion about a check.
+
+**Distrust the flattering direction specifically.** Three separate bugs
+appeared the moment a strategy started losing money, and all three made the
+loss look smaller. That is not a coincidence: the profitable case is the one you
+develop against, so the loss path is the one that never gets exercised. Run the
+strategy you *know* is bad, early, and read the output as adversarially as you
+would read someone else's.
+
+---
+
+*Source, with every number above reproducible from a clean clone:*
+[github.com/KareemJandali/itchbook](https://github.com/KareemJandali/itchbook)

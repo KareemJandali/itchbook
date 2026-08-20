@@ -536,6 +536,15 @@ Debug roughly in this order:
 | Slightly over | non-printable `C` executions being counted; they move the book but not the volume |
 | OHLC off but volume right | the opening and closing crosses, which set the official open and close |
 
+## Write-up
+
+[**What synthetic data hides**](docs/writing/what-synthetic-data-hides.md) — the
+seven times a number in this project was true on a generated feed and false on
+MSFT, what each mechanism turned out to be, and what I would do differently. The
+3.67× headline that was a fact about my generator; three presentation bugs that
+all lied in the same direction; a receiver reporting a clean session having lost
+40% of the day; a recovery criterion that could never fire on a real book.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
