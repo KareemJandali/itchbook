@@ -59,12 +59,35 @@ def ascii_table(rows, title):
             out.append(f"  {r['model']:<13}|{bar}")
 
     # The headline number: what the flattering assumption is worth.
+    #
+    # A DIFFERENCE, not a ratio. The ratio was here first and it was wrong: on a
+    # strategy that loses money both totals are negative, so naive/pessimistic
+    # came out at 0.87 and read as "naive is more conservative" when naive was
+    # in fact reporting a loss $401 smaller. A ratio of two negative numbers
+    # says nothing about which is flattering; a signed difference says it in
+    # both regimes.
     by = {r["model"]: r for r in rows}
-    if "naive" in by and "pessimistic" in by and by["pessimistic"]["total"]:
-        ratio = by["naive"]["total"] / by["pessimistic"]["total"]
+    if "naive" in by and "pessimistic" in by:
+        gap = by["naive"]["total"] - by["pessimistic"]["total"]
         out.append("")
-        out.append(f"naive / pessimistic total P&L: {ratio:.2f}x  "
-                   f"(the cost of assuming you are at the front of every queue)")
+        if gap > 0:
+            out.append(f"naive reports ${gap:,.2f} MORE than pessimistic — that is "
+                       f"what assuming you are")
+            out.append(f"at the front of every queue is worth, on this data, to "
+                       f"this strategy.")
+        elif gap < 0:
+            out.append(f"naive reports ${-gap:,.2f} LESS than pessimistic. That is "
+                       f"backwards for a model that")
+            out.append(f"fills strictly more, and it means the extra fills are "
+                       f"losing more than they make —")
+            out.append(f"worth understanding before quoting either number.")
+        else:
+            out.append("naive and pessimistic agree exactly, which on real data "
+                       "would be surprising.")
+        if by["pessimistic"]["total"] > 0 and by["naive"]["total"] > 0:
+            # Only meaningful when both are profits; otherwise it inverts.
+            ratio = by["naive"]["total"] / by["pessimistic"]["total"]
+            out.append(f"({ratio:.2f}x)")
     return "\n".join(out)
 
 

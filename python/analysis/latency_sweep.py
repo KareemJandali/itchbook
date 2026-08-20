@@ -69,18 +69,25 @@ def us_labels(lats):
     return [("0" if l == 0 else f"{l / 1000:g}") for l in lats]
 
 
-def sensitivity(vals):
-    """How much of the zero-latency number survives the slowest point.
+def change(vals):
+    """(first, last, delta) from the fastest point to the slowest.
 
-    Reported as a fraction rather than a difference so it can be compared
-    across strategies whose absolute P&L differs by orders of magnitude. A
-    negative ratio means the sign flipped, which is worth saying out loud
-    rather than burying in a percentage.
+    A DIFFERENCE, not a ratio. The ratio was here first and it was wrong. On a
+    strategy that loses money the P&L is negative at both ends, so a loss that
+    grew by 77% came out as "1.77" under a heading that said 1.0 meant flat —
+    the worst possible reading of the worst possible outcome. A signed delta in
+    the metric's own units says the same thing in both regimes and needs no
+    heading to disambiguate it.
     """
-    first, last = vals[0], vals[-1]
-    if first == 0:
-        return None
-    return last / first
+    return vals[0], vals[-1], vals[-1] - vals[0]
+
+
+def ratio(vals):
+    """Last over first, for quantities that cannot be negative.
+
+    Share counts only. Never P&L.
+    """
+    return None if vals[0] == 0 else vals[-1] / vals[0]
 
 
 def ascii_table(strategy, lats, by):
@@ -97,14 +104,21 @@ def ascii_table(strategy, lats, by):
             out.append(f"{name:<13}{cells}")
         out.append("")
 
-    out.append("surviving fraction of the zero-latency number "
-               "(1.0 = flat, 0.0 = the edge was latency)")
+    lo_us, hi_us = us_labels(lats)[0], us_labels(lats)[-1]
+    out.append(f"change from {lo_us}us to {hi_us}us")
+    out.append(f"  {'model':<13}{'c/share':>10}{'delta':>10}{'shares':>10}")
     for name, m in by.items():
-        r_pnl = sensitivity(m["per_share"])
-        r_sh = sensitivity([float(v) for v in m["shares"]])
-        pnl_s = "n/a" if r_pnl is None else f"{r_pnl:+.2f}"
-        sh_s = "n/a" if r_sh is None else f"{r_sh:.2f}"
-        out.append(f"  {name:<13} c/share {pnl_s:>7}   shares {sh_s:>6}")
+        first, last, delta = change(m["per_share"])
+        sh = ratio([float(v) for v in m["shares"]])
+        sh_s = "n/a" if sh is None else f"x{sh:.2f}"
+        out.append(f"  {name:<13}{first:>10.4f}{delta:>+10.4f}{sh_s:>10}")
+    out.append("")
+    out.append("A flat c/share delta means the strategy is not racing anyone. "
+               "Read it WITH the")
+    out.append("share column: for a strategy that loses money, filling more is "
+               "worse, so a")
+    out.append("rising share count and a worsening delta are the same fact "
+               "twice.")
     return "\n".join(out)
 
 
