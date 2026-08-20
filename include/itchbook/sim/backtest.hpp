@@ -42,6 +42,8 @@ struct LaneResult {
     uint64_t priority_anomalies = 0;
     uint64_t lock_fills = 0;
     uint64_t through_fills = 0;
+    uint64_t suppressed_quotes = 0;
+    int64_t peak_position = 0;
     HorizonReport markouts[kNumHorizons];
 };
 
@@ -56,8 +58,43 @@ struct Lane {
     // reader has to be able to see that.
     uint64_t lock_fills = 0;
     uint64_t through_fills = 0;
+    // Orders the risk limit refused, and the largest absolute position the lane
+    // ever carried. Both are reported: a P&L earned while running ten times the
+    // stated limit is not the P&L of the strategy that was described.
+    uint64_t suppressed_quotes = 0;
+    int64_t peak_position = 0;
 
     Lane(Model m, QueueConfig c, FeeSchedule f) : model(m), queue(c), ledger(f) {}
+};
+
+// The one risk control the harness owns.
+//
+// A position limit is by definition a function of fills, so a strategy that
+// enforced one would be reading its own fills and would make different
+// decisions in each lane — which is exactly the feedback path strategy.hpp
+// exists to close. The harness enforces it instead, per lane, after the fact.
+//
+// The cost is worth stating plainly: with a limit in force the four lanes no
+// longer send the same orders. The intent STREAM is still identical, but a lane
+// that has filled more suppresses more quotes, so the comparison stops being
+// "one order stream, four fill models" and becomes "one strategy, four fill
+// models, each with its own risk state". That is the honest version of a
+// market-making backtest — an unlimited maker on a drifting price accumulates
+// inventory until its P&L is a directional bet wearing a market-maker's
+// costume — but it is a different experiment, so the limit is opt-in and off
+// by default.
+struct RiskLimits {
+    // Absolute share position beyond which new quotes on the offending side are
+    // suppressed. Zero means no limit.
+    int64_t max_position = 0;
+
+    bool blocks(int64_t position, Side side, uint32_t quantity) const {
+        if (max_position <= 0) return false;
+        const int64_t after = position + (side == Side::Buy
+                                              ? static_cast<int64_t>(quantity)
+                                              : -static_cast<int64_t>(quantity));
+        return after > max_position || after < -max_position;
+    }
 };
 
 // An intent that has been decided but has not yet reached the exchange.
@@ -70,8 +107,9 @@ struct PendingAction {
 template <typename Strategy>
 class Backtest {
 public:
-    Backtest(Strategy strategy, FeeSchedule fees, LatencyModel latency = {})
-        : strategy_(strategy), latency_(latency) {
+    Backtest(Strategy strategy, FeeSchedule fees, LatencyModel latency = {},
+             RiskLimits risk = {})
+        : strategy_(strategy), latency_(latency), risk_(risk) {
         for (Model m : {Model::Naive, Model::Optimistic, Model::Mbo, Model::Pessimistic}) {
             QueueConfig c;
             c.model = m;
@@ -120,6 +158,10 @@ public:
                 if (f.trigger == Trigger::Through) ++l.through_fills;
             }
             l.markout.observe(ts, mid);
+            const int64_t pos = l.ledger.position();
+            if (pos > l.peak_position || -pos > l.peak_position) {
+                l.peak_position = pos < 0 ? -pos : pos;
+            }
         }
 
         // 5. The strategy sees the market once and its intents go to every lane.
@@ -165,6 +207,13 @@ private:
         for (Lane& l : lanes_) {
             switch (in.kind) {
                     case IntentKind::Quote:
+                        // Checked per lane and at ARRIVAL, because both halves
+                        // of that matter: the position is the lane's own, and
+                        // the limit binds on the state the order actually met.
+                        if (risk_.blocks(l.ledger.position(), in.side, in.quantity)) {
+                            ++l.suppressed_quotes;
+                            break;
+                        }
                         // Queue position is computed from the book as it stands
                         // NOW, at arrival — not as it stood when the strategy
                         // decided. Using the decision-time book would be
@@ -179,6 +228,10 @@ private:
                         // Crossing the spread is not a queue question: we pay
                         // the touch and trade immediately. Capped at what is
                         // actually resting, so a taker cannot invent liquidity.
+                        if (risk_.blocks(l.ledger.position(), in.side, in.quantity)) {
+                            ++l.suppressed_quotes;
+                            break;
+                        }
                         const uint64_t avail =
                             book_.shares_at(to_char(opposite(in.side)), in.price);
                         const uint32_t qty = static_cast<uint32_t>(
@@ -225,6 +278,8 @@ public:
             r.priority_anomalies = l.queue.priority_anomalies();
             r.lock_fills = l.lock_fills;
             r.through_fills = l.through_fills;
+            r.suppressed_quotes = l.suppressed_quotes;
+            r.peak_position = l.peak_position;
             for (size_t h = 0; h < kNumHorizons; ++h) r.markouts[h] = l.markout.report(h);
             out.push_back(r);
         }
@@ -238,6 +293,7 @@ public:
 private:
     Strategy strategy_;
     LatencyModel latency_;
+    RiskLimits risk_;
     Ctx ctx_;
     std::vector<PendingAction> pending_;
     uint64_t action_seq_ = 0;

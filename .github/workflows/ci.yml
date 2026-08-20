@@ -69,3 +69,13 @@ jobs:
       # between them is most of the assurance available before real data.
       - name: Differential test (queue model vs Python oracle)
         run: python3 tests/queue_differential.py --binary build/queue_sim --seeds 2
+
+      # The one EXTERNAL check in phase 6: shadow real orders and grade the
+      # models against what those orders actually filled. Partial fills only,
+      # because an order that ended fully executed grades every model perfect
+      # and measures nothing.
+      - name: Leave-one-out oracle (fill models vs real orders)
+        run: |
+          python3 python/make_queue_feed.py data/raw/queue.gz --seed 3 --messages 40000
+          python3 python/analysis/leave_one_out.py data/raw/queue.gz \
+            --binary build/queue_sim --samples 40 --partial-only

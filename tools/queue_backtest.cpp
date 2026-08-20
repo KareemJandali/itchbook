@@ -65,6 +65,17 @@ void print_results(const std::vector<LaneResult>& rs, uint64_t events,
                     to_string(r.model), r.lock_fills, r.through_fills, r.clamp_events,
                     r.priority_anomalies);
     }
+
+    // Inventory, because a maker's P&L is only a maker's P&L if the inventory
+    // stayed small. A large peak means most of the number is a directional bet.
+    std::printf("\ninventory (a maker's P&L is only a maker's P&L if this stayed small)\n");
+    std::printf("%-12s %14s %14s %14s\n", "model", "peak position", "residual",
+                "quotes refused");
+    std::printf("--------------------------------------------------------\n");
+    for (const LaneResult& r : rs) {
+        std::printf("%-12s %14" PRId64 " %14" PRId64 " %14" PRIu64 "\n", to_string(r.model),
+                    r.peak_position, r.residual_position, r.suppressed_quotes);
+    }
 }
 
 void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t events,
@@ -84,12 +95,15 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
                      ", \"priority_anomalies\": %" PRIu64
                      ", \"drift_100ms\": %" PRId64 ", \"drift_1s\": %" PRId64
                      ", \"drift_10s\": %" PRId64
-                     ", \"unresolved_10s\": %" PRIu64 "}",
+                     ", \"unresolved_10s\": %" PRIu64
+                     ", \"peak_position\": %" PRId64
+                     ", \"suppressed_quotes\": %" PRIu64 "}",
                      first ? "" : ",", to_string(r.model), r.fills, r.shares, r.equity,
                      r.equity_per_share, r.edge, r.fees, r.residual_position, r.lock_fills,
                      r.through_fills, r.clamp_events, r.priority_anomalies,
                      r.markouts[0].drift_per_share, r.markouts[1].drift_per_share,
-                     r.markouts[2].drift_per_share, r.markouts[2].unresolved_fills);
+                     r.markouts[2].drift_per_share, r.markouts[2].unresolved_fills,
+                     r.peak_position, r.suppressed_quotes);
         first = false;
     }
     std::fprintf(f, "\n  }\n}\n");
@@ -98,8 +112,8 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
 
 template <typename S>
 int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
-        const char* json_path) {
-    Backtest<S> bt(strategy, fees, latency);
+        RiskLimits risk, const char* json_path) {
+    Backtest<S> bt(strategy, fees, latency, risk);
     try {
         Reader reader(feed);
         parse(reader, bt);
@@ -124,6 +138,7 @@ int main(int argc, char** argv) {
     const char* json_path = nullptr;
     uint32_t size = 100;
     LatencyModel latency;   // deliberately non-zero by default
+    RiskLimits risk;        // no position limit unless asked for
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -135,6 +150,8 @@ int main(int argc, char** argv) {
             latency = LatencyModel::uniform(std::strtoull(argv[++i], nullptr, 10));
         else if (a == "--cancel-latency-ns" && i + 1 < argc)
             latency.cancel_ns = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--max-position" && i + 1 < argc)
+            risk.max_position = std::strtoll(argv[++i], nullptr, 10);
         else if (feed == nullptr) feed = argv[i];
         else { std::fprintf(stderr, "error: unexpected '%s'\n", argv[i]); return 2; }
     }
@@ -142,7 +159,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]\n"
                      "                    [--size N] [--fees base|top|inverted] [--json out]\n"
-                     "                    [--latency-ns N] [--cancel-latency-ns N]\n",
+                     "                    [--latency-ns N] [--cancel-latency-ns N]\n"
+                     "                    [--max-position N]\n",
                      argv[0]);
         return 2;
     }
@@ -154,24 +172,24 @@ int main(int argc, char** argv) {
     if (strategy == "touch-maker") {
         TouchMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, json_path);
+        return run(feed, s, fees, latency, risk, json_path);
     }
     if (strategy == "patient-maker") {
         PatientMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, json_path);
+        return run(feed, s, fees, latency, risk, json_path);
     }
     if (strategy == "crosser") {
         Crosser s;
         s.size = size;
-        return run(feed, s, fees, latency, json_path);
+        return run(feed, s, fees, latency, risk, json_path);
     }
     if (strategy == "far-quoter") {
         FarQuoter s;
         s.size = size;
-        return run(feed, s, fees, latency, json_path);
+        return run(feed, s, fees, latency, risk, json_path);
     }
-    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, json_path);
+    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, json_path);
     std::fprintf(stderr, "error: unknown strategy '%s'\n", strategy.c_str());
     return 2;
 }
