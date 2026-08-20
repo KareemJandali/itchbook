@@ -77,6 +77,33 @@ jobs:
             --messages 1200000 --gap-ns 20000 --seed 3
           ./scripts/full-day-differential.sh data/raw/fullday.gz 1000 10
 
+      # The degenerate day: orders entered and pulled, nothing ever trades, and
+      # the book is empty at the close. Every quantity the summary reports is
+      # then UNDEFINED — no touch, no OHLC, no VWAP — and the two
+      # implementations have to spell that the same way. They did not: the C++
+      # side wrote its -1 sentinels and a raw NUL for the trading state, which
+      # is not merely a different value but an unparseable JSON file. Only a
+      # real day surfaced it, because a generated feed ends with orders still
+      # resting and something having traded.
+      - name: Degenerate-day differential (empty book, no trades)
+        run: |
+          python3 -c "
+          import gzip, sys
+          sys.path.insert(0, 'python')
+          import make_sample as gen
+          t = gen.T0
+          out = bytearray()
+          for p in (gen.system_event(t, b'O'), gen.stock_directory(t, gen.SYMBOL),
+                    gen.system_event(t, b'Q'),
+                    gen.add_order(t + 1000, 1, b'B', 100, 1000000),
+                    gen.add_order(t + 2000, 2, b'S', 100, 1000200),
+                    gen.order_delete(t + 3000, 1), gen.order_delete(t + 4000, 2),
+                    gen.system_event(t + 5000, b'M'), gen.system_event(t + 6000, b'C')):
+              out.extend(gen.frame(p))
+          gzip.open('data/raw/degenerate.gz', 'wb').write(bytes(out))
+          "
+          ./scripts/full-day-differential.sh data/raw/degenerate.gz 1000 10
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.

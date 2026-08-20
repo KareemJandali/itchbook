@@ -182,15 +182,44 @@ void write_json(const Replayer& r, const char* path) {
         std::fprintf(stderr, "error: cannot write %s\n", path);
         return;
     }
-    int32_t bid = -1;
-    int32_t ask = -1;
-    if (!b.best_bid(&bid)) bid = -1;
-    if (!b.best_ask(&ask)) ask = -1;
+    // An absent touch is null, not a sentinel. The Python oracle writes None
+    // and JSON has a way to say "there isn't one", so a -1 here would be the
+    // comparison harness inventing a disagreement out of two spellings of the
+    // same fact. It did: on MSFT the book is empty at the close — every order
+    // cancelled — and the two implementations were reported as differing on
+    // best_bid and best_ask while agreeing there was no bid and no ask.
+    //
+    // Only a real day shows this. A generated feed ends with orders still
+    // resting, so both sides print a price and match.
+    int32_t bid = 0;
+    int32_t ask = 0;
+    const bool have_bid = b.best_bid(&bid);
+    const bool have_ask = b.best_ask(&ask);
 
     std::fprintf(f, "{\n");
-    std::fprintf(f, "  \"best_ask\": %" PRId32 ",\n", ask);
-    std::fprintf(f, "  \"best_bid\": %" PRId32 ",\n", bid);
-    std::fprintf(f, "  \"close\": %" PRId32 ",\n", b.close());
+    if (have_ask) {
+        std::fprintf(f, "  \"best_ask\": %" PRId32 ",\n", ask);
+    } else {
+        std::fprintf(f, "  \"best_ask\": null,\n");
+    }
+    if (have_bid) {
+        std::fprintf(f, "  \"best_bid\": %" PRId32 ",\n", bid);
+    } else {
+        std::fprintf(f, "  \"best_bid\": null,\n");
+    }
+    // OHLC and VWAP are undefined until something trades, and the book marks
+    // that with -1. The oracle writes null. Every one of these is the same
+    // mistake as best_bid: a sentinel is not a value, and a comparison that
+    // treats it as one manufactures a disagreement between two implementations
+    // that agree there is nothing to report.
+    auto price_field = [&f](const char* key, int32_t v) {
+        if (v < 0) {
+            std::fprintf(f, "  \"%s\": null,\n", key);
+        } else {
+            std::fprintf(f, "  \"%s\": %" PRId32 ",\n", key, v);
+        }
+    };
+    price_field("close", b.close());
     std::fprintf(f, "  \"cross_prices\": {");
     bool first = true;
     for (const auto& kv : b.cross_prices()) {
@@ -201,21 +230,35 @@ void write_json(const Replayer& r, const char* path) {
     std::fprintf(f, "  \"cross_volume\": %" PRIu64 ",\n", b.cross_volume());
     std::fprintf(f, "  \"crossed\": %s,\n", b.strictly_crossed() ? "true" : "false");
     std::fprintf(f, "  \"hidden_volume\": %" PRIu64 ",\n", b.hidden_volume());
-    std::fprintf(f, "  \"high\": %" PRId32 ",\n", b.high());
-    std::fprintf(f, "  \"low\": %" PRId32 ",\n", b.low());
+    price_field("high", b.high());
+    price_field("low", b.low());
     std::fprintf(f, "  \"messages_applied\": %" PRIu64 ",\n", r.applied);
     std::fprintf(f, "  \"messages_read\": %" PRIu64 ",\n", r.read);
     std::fprintf(f, "  \"notional\": %" PRIu64 ",\n", b.notional());
-    std::fprintf(f, "  \"open\": %" PRId32 ",\n", b.open());
+    price_field("open", b.open());
     std::fprintf(f, "  \"resting_orders\": %zu,\n", b.resting_orders());
     std::fprintf(f, "  \"resting_shares\": %" PRIu64 ",\n", b.resting_shares());
     std::fprintf(f, "  \"snapshots_written\": %" PRIu64 ",\n", r.written);
-    std::fprintf(f, "  \"system_event\": \"%c\",\n", b.system_event());
+    // Same principle as the touch, and the same trap: these are '\0' until the
+    // feed says otherwise, and printing that raw emits a NUL byte inside a JSON
+    // string — not a wrong value, an unparseable file. The oracle writes null.
+    auto char_field = [&f](const char* key, char c, bool comma) {
+        if (c == '\0') {
+            std::fprintf(f, "  \"%s\": null%s\n", key, comma ? "," : "");
+        } else {
+            std::fprintf(f, "  \"%s\": \"%c\"%s\n", key, c, comma ? "," : "");
+        }
+    };
+    char_field("system_event", b.system_event(), true);
     std::fprintf(f, "  \"trades\": %" PRIu64 ",\n", b.trades());
-    std::fprintf(f, "  \"trading_state\": \"%c\",\n", b.trading_state());
+    char_field("trading_state", b.trading_state(), true);
     std::fprintf(f, "  \"unknown_refs\": %" PRIu64 ",\n", b.unknown_ref());
     std::fprintf(f, "  \"volume\": %" PRIu64 ",\n", b.volume());
-    std::fprintf(f, "  \"vwap\": %.10f\n", b.vwap());
+    if (b.volume() == 0) {
+        std::fprintf(f, "  \"vwap\": null\n");   // no trades, no average
+    } else {
+        std::fprintf(f, "  \"vwap\": %.10f\n", b.vwap());
+    }
     std::fprintf(f, "}\n");
     std::fclose(f);
 }
