@@ -34,7 +34,18 @@ get the FIFO right:
     the four fill models cannot disagree, because nothing that would separate
     them ever happens.
 
-Halts are real halts. Nothing executes while the symbol is halted — orders can
+During a halt the book is allowed to CROSS, because that is what really
+happens: the quotation-only period exists so that a reopening price can be
+discovered, orders keep arriving on both sides, and nothing executes to clear
+them. A generator that keeps the book uncrossed through a halt cannot produce
+the one shape that breaks "bid < ask" validators, which is the shape they exist
+to be tested against. At the resume a halt cross prints — a 'Q' with cross type
+'H' — and the crossing orders leave the book. (Simplified: they leave as
+deletes rather than as individual executions. The book effect is identical and
+the auction volume is on the tape, which is what the reconstruction is checked
+against.)
+
+Halts are real halts otherwise. Nothing executes while the symbol is halted — orders can
 still be entered and pulled, which is what a halt is for, but no trade prints
 and the centre does not move. Emitting executions through a halt desynchronises
 every model from the book on purpose: the model correctly ignores messages it
@@ -91,7 +102,8 @@ class Level:
         return not self.queue
 
 
-def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
+def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob,
+          halt_prob):
     rng = random.Random(seed)
     out = bytearray()
     t = gen.T0
@@ -188,7 +200,29 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
         t += advance()
 
         # ---- resume from a halt ----
+        # The reopening auction: one cross print, then the orders that crossed
+        # are gone. This is what uncrosses a book that a halt was allowed to
+        # cross, and it has to happen BEFORE the 'T' or the symbol resumes
+        # trading with a crossed book, which is the defect the tracker counts.
         if halted and emitted >= resume_at:
+            crossing = []
+            for (sd, px), level in list(levels.items()):
+                if level.empty():
+                    continue
+                if (sd == b"B" and px >= center) or (sd == b"S" and px <= center):
+                    crossing.extend(level.queue)
+            if crossing:
+                emit(gen.cross_trade(t, sum(1 for _ in crossing) * 100, center,
+                                     match, b"H"))
+                match += 1
+                emitted += 1
+                for ref in crossing:
+                    for (sd, px), level in levels.items():
+                        if ref in level.shares:
+                            emit(gen.order_delete(t, ref))
+                            level.remove(ref)
+                            emitted += 1
+                            break
             emit(gen.trading_action(t, b"T"))
             halted = False
             emitted += 1
@@ -202,6 +236,22 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
         # because someone traded through it.
         if not halted and rng.random() < drift_prob:
             move_center(1 if rng.random() < 0.5 else -1)
+            continue
+
+        # ---- go into a halt ----
+        # Its own draw, not a slice of `roll`. It used to be a branch of the
+        # ladder below, at `roll < 0.0006`, sitting AFTER the tie-burst branch
+        # at `roll < 0.02` — so every roll that would have started a halt was
+        # consumed by the tie burst first and the branch was dead code. The
+        # feed contained no 'H' messages at all, and nothing noticed until a
+        # halt tracker went looking for them and found zero. A rate that is
+        # only reachable if no earlier branch claims the same range is a rate
+        # that will be silently zeroed by the next reordering.
+        if not halted and rng.random() < halt_prob:
+            emit(gen.trading_action(t, b"H"))
+            halted = True
+            resume_at = emitted + rng.randint(40, 200)
+            emitted += 1
             continue
 
         roll = rng.random()
@@ -218,13 +268,6 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
                 emitted += 1
             continue
 
-        # ---- go into a halt ----
-        if not halted and roll < 0.0006:
-            emit(gen.trading_action(t, b"H"))
-            halted = True
-            resume_at = emitted + rng.randint(40, 200)
-            emitted += 1
-            continue
 
         # While halted the book still moves — orders are entered and pulled —
         # but nothing trades. Redraw into the three branches that do not print
@@ -233,6 +276,18 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
             roll = rng.choice([rng.uniform(0.00, 0.45),    # add
                                rng.uniform(0.70, 0.92),    # cancel
                                rng.uniform(0.92, 0.96)])   # replace
+            # One add in five during a halt is aggressive enough to cross. This
+            # is the shape a "bid < ask" assertion trips over, and it is legal.
+            if roll < 0.45 and rng.random() < 0.2:
+                side = b"B" if rng.random() < 0.5 else b"S"
+                step = rng.randint(0, LEVELS)
+                price = center + step * TICK if side == b"B" else center - step * TICK
+                shares = rng.choice([100, 200, 300])
+                emit(gen.add_order(t, next_ref, side, shares, price))
+                lvl(side, price).add(next_ref, shares)
+                next_ref += 1
+                emitted += 1
+                continue
 
         if roll < 0.45:
             # ---- add ----
@@ -371,6 +426,9 @@ def main():
                     help="fraction of cancels taken from the front of the queue; "
                          "1.0 makes the optimistic model correct, 0.0 the pessimistic one")
     ap.add_argument("--no-tie-burst", action="store_true")
+    ap.add_argument("--halt-prob", type=float, default=0.0006,
+                    help="per-message chance of a halt, which then runs for "
+                         "40-200 messages with nothing trading")
     ap.add_argument("--drift-prob", type=float, default=0.004,
                     help="per-message chance the centre takes a one-tick step, "
                          "consuming the touch on its way (0 pins the price and "
@@ -381,7 +439,7 @@ def main():
     a = ap.parse_args()
 
     data = build(a.seed, a.messages, a.cancel_front_bias, not a.no_tie_burst,
-                 a.gap_ns, a.drift_prob)
+                 a.gap_ns, a.drift_prob, a.halt_prob)
     Path(a.path).parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(a.path, "wb", compresslevel=1) as f:
         f.write(data)
