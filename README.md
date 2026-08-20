@@ -269,6 +269,53 @@ under-filled; pessimistic under-filled 21 and never over-filled. Full numbers,
 figures and the limits in
 [`docs/phase6-results.md`](docs/phase6-results.md).
 
+## Recovery
+
+A feed is not a file. NASDAQ ships the daily samples already de-MoldUDP'd —
+every message present, in order, exactly once — so a book built only against
+them has never met a dropped packet, and "it works on the sample file" is not
+evidence that it would work on the wire.
+
+So the framing goes back on. `mold_wrap` packages a plain ITCH file into real
+MoldUDP64 packets; on a 200k-message feed that is ~4,900 datagrams of about
+forty messages each, which is why packet loss differs in kind from message
+loss. Then `mold_damage` does to them what a network does, and every scenario
+is graded:
+
+```bash
+python3 python/analysis/adversarial.py data/sliced/MSFT.gz --build build
+```
+
+```
+scenario             verdict     lost   gaps    dup  reord        state
+clean                CORRECT        0      0      0      0      trusted
+drop-1-in-100           SAFE    2,388     58      0   2263   recovering
+duplicate-1-in-100   CORRECT        0      0   2388      0      trusted
+reorder-1-in-100     CORRECT        0      0      0     56      trusted
+disconnect-long      CORRECT   16,231      1      0     64      trusted
+disconnect-to-end       SAFE        0      0      0      0       halted
+
+CAUTIOUS=1  CORRECT=5  SAFE=4        (0 WRONG)
+```
+
+**CORRECT** means the book matched an undamaged replay and the system said so.
+**SAFE** means it did not match and the system said *that*. **WRONG** — a book
+that differs while claiming to be trusted — is the one outcome the phase exists
+to make impossible, and CI fails on any occurrence.
+
+Losing 16,231 consecutive messages and converging back to a byte-identical book
+is the interesting row. There is no retransmission service to ask, so recovery
+is rebuild-forward, and its guarantee is narrow and precise: the rebuilt book
+contains **no wrong orders, only missing ones**. It converges because the feed
+itself supplies the signal — every message referencing an order the book never
+saw is a message about the world before the gap, and that rate falls to zero.
+
+The harness also has to be able to fail. Set the convergence bar to a single
+clean reference and three scenarios go WRONG; that run is in CI too, and must
+fail. It found two real bugs, including a stream that *stopped* rather than
+ended: 80,235 messages missing, every counter honestly zero, reported clean.
+Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
+
 ## Differential testing
 
 The oracle exists to be disagreed with. `tests/differential.py` generates

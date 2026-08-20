@@ -93,6 +93,8 @@ struct GapStats {
     uint64_t recoveries = 0;         // times the book came back to Trusted
     uint64_t unknown_refs_after_gap = 0;
     uint64_t messages_untrusted = 0; // messages applied while not Trusted
+    uint64_t stream_ends = 0;
+    uint64_t truncated_streams = 0;  // ended with no end-of-session marker
 };
 
 // Tracks recovery state. Deliberately owns no book: the caller applies the
@@ -137,6 +139,31 @@ public:
             ++stats_.recoveries;
             clean_run_ = 0;
         }
+    }
+
+    // The stream is over. `saw_end_of_session` is whether MoldUDP64's
+    // end-of-session marker actually arrived.
+    //
+    // Without it the feed did not end, it STOPPED — and the two are worlds
+    // apart. A gap in the middle announces itself, because the next packet
+    // carries a sequence number that has jumped. A stream that dies never
+    // sends that next packet, so there is no discontinuity to notice and every
+    // counter stays at zero while the book quietly misses the rest of the day.
+    //
+    // This was found by sweeping outage lengths past the point where the feed
+    // resumes: a 2,000-packet outage at 60% through swallowed 80,235 messages,
+    // 40% of the session, and the receiver reported itself trusted with no
+    // gaps. The adversarial matrix missed it because every outage in it was
+    // short enough that the stream came back.
+    //
+    // Halted rather than Recovering, because there is nothing to recover
+    // toward: no bound on what was missed, and no more messages coming to
+    // demonstrate convergence.
+    void on_stream_end(bool saw_end_of_session) {
+        ++stats_.stream_ends;
+        if (saw_end_of_session) return;
+        ++stats_.truncated_streams;
+        state_ = State::Halted;
     }
 
     // May the book be used to make decisions?
