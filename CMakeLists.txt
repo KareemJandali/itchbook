@@ -44,6 +44,7 @@ add_executable(book_replay tools/book_replay.cpp)
 # Always built with optimisation: measuring a sanitiser build tells you about
 # the sanitiser, not the book.
 add_executable(queue_sim tools/queue_sim.cpp)
+add_executable(queue_backtest tools/queue_backtest.cpp)
 
 add_executable(book_bench tools/book_bench.cpp)
 target_compile_options(book_bench PRIVATE -O3 -fno-omit-frame-pointer)
@@ -52,13 +53,13 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(book_bench PRIVATE -fno-sanitize=all)
 endif()
 
-foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim)
+foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()
 
 # ---- Tests ----
 enable_testing()
-foreach(t test_parser test_book test_matcher test_fees test_queue test_ledger)
+foreach(t test_parser test_book test_matcher test_fees test_queue test_ledger test_sim)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
   # tests include "tests/check.hpp"
