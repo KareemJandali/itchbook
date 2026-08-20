@@ -21,6 +21,14 @@ get the FIFO right:
     bound a real day sits near.
   * **Ties.** `--tie-burst` emits several orders at one price and one timestamp,
     which is where arrival-order bugs hide.
+  * **The price moves, and it moves for the right reason.** `--drift-prob` sets
+    how often the centre takes a one-tick step, and a step is not a relabelling:
+    the touch on the consumed side is executed out of existence first, so the
+    price moves because someone took the liquidity resting at it. A generator
+    with a pinned centre — which is what this one used to be — produces a feed
+    where every fill markouts to exactly zero, no quote is ever picked off, and
+    the four fill models cannot disagree, because nothing that would separate
+    them ever happens.
 
 It also emits, by construction, the shapes that break naive implementations: a
 `C` printing at its resting price and another printing away from it, a
@@ -70,12 +78,13 @@ class Level:
         return not self.queue
 
 
-def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns):
+def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob):
     rng = random.Random(seed)
     out = bytearray()
     t = gen.T0
     match = 1
     next_ref = 1
+    center = MID              # the price the book is currently built around
     # (side, price) -> Level
     levels = {}
 
@@ -94,12 +103,43 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns):
         return levels.setdefault((side, price), Level())
 
     def pick_price(side):
-        # Bids below the mid, asks above, so the book stays uncrossed.
+        # Bids below the centre, asks above, so the book stays uncrossed
+        # wherever the centre currently is.
         step = rng.randint(1, LEVELS)
-        return MID - step * TICK if side == b"B" else MID + step * TICK
+        return center - step * TICK if side == b"B" else center + step * TICK
 
     def populated():
         return [k for k, v in levels.items() if not v.empty()]
+
+    def move_center(direction):
+        """Step the centre one tick, by consuming what stood in the way.
+
+        The messages emitted here are ordinary executions, because that is what
+        a price move IS on this feed: the resting queue at the touch is taken
+        out and the next level becomes the touch. Anyone sitting in that queue
+        — including the simulated order — is filled immediately before the
+        price moves away from them, which is the entire adverse-selection
+        effect this phase measures. Relabelling the centre without emitting the
+        executions would move the price for free and hand every maker a profit.
+
+        Everything on the wrong side of the new centre is cleared, not just the
+        touch, so the book cannot cross when the centre walks back over levels
+        it left behind earlier.
+        """
+        nonlocal center, match, emitted
+        new_center = center + direction * TICK
+        for (sd, px), level in list(levels.items()):
+            if level.empty():
+                continue
+            if not ((sd == b"S" and px <= new_center) or (sd == b"B" and px >= new_center)):
+                continue
+            while not level.empty():
+                ref = level.queue[0]
+                emit(gen.order_executed(t, ref, level.shares[ref], match))
+                match += 1
+                level.remove(ref)
+                emitted += 1
+        center = new_center
 
     emit(gen.system_event(t, b"O"))
     emit(gen.stock_directory(t, gen.SYMBOL))
@@ -120,6 +160,15 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns):
     halted = False
     while emitted < n_messages:
         t += advance()
+
+        # ---- the centre takes a step ----
+        # First, before any other branch, so the executions that move the price
+        # carry that message's timestamp and a maker at the touch is filled at
+        # the moment of the move rather than some events later.
+        if rng.random() < drift_prob:
+            move_center(1 if rng.random() < 0.5 else -1)
+            continue
+
         roll = rng.random()
 
         # ---- a burst of ties: several adds at one price and one timestamp ----
@@ -259,18 +308,22 @@ def main():
                     help="fraction of cancels taken from the front of the queue; "
                          "1.0 makes the optimistic model correct, 0.0 the pessimistic one")
     ap.add_argument("--no-tie-burst", action="store_true")
+    ap.add_argument("--drift-prob", type=float, default=0.004,
+                    help="per-message chance the centre takes a one-tick step, "
+                         "consuming the touch on its way (0 pins the price and "
+                         "makes every markout identically zero)")
     ap.add_argument("--gap-ns", type=int, default=200000,
                     help="typical inter-message gap in nanoseconds (default 200us, so "
                          "20k messages span a few seconds and markout horizons resolve)")
     a = ap.parse_args()
 
     data = build(a.seed, a.messages, a.cancel_front_bias, not a.no_tie_burst,
-                 a.gap_ns)
+                 a.gap_ns, a.drift_prob)
     Path(a.path).parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(a.path, "wb", compresslevel=1) as f:
         f.write(data)
     print(f"wrote {len(data):,} bytes (~{a.messages:,} messages, seed {a.seed}, "
-          f"front-bias {a.cancel_front_bias}) to {a.path}")
+          f"front-bias {a.cancel_front_bias}, drift {a.drift_prob}) to {a.path}")
 
 
 if __name__ == "__main__":

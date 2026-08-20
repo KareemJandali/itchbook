@@ -13,12 +13,16 @@ because both audiences matter and neither should need the other's tooling.
 
 Chart decisions worth stating, because each is a rule rather than a taste:
 
-  * P&L per share is ONE measure across four categories, so every bar is ONE
-    colour. Colouring each bar differently would imply the models are four
-    series, and reads as decoration.
-  * Per SHARE, never total. Totals reward whichever model fills most, which is
-    exactly the difference under study, so a total would fold the answer into
-    the axis.
+  * Whatever the metric, it is ONE measure across four categories, so every bar
+    is ONE colour. Colouring each bar differently would imply the models are
+    four series, and reads as decoration.
+  * The default panel is TOTAL P&L, because on this data that is where the
+    difference lives. The four models agree to within about a tenth of a cent
+    per share and disagree by 60% on how many shares were filled at all, so a
+    per-share panel on its own shows four identical bars and hides the entire
+    result. `--metric per_share` and `--metric shares` are the two halves of
+    that total and both are worth drawing; the ASCII table always prints all
+    three, so no single chart choice can bury a column.
   * Every bar is directly labelled. Two of the palette's hues sit under 3:1
     against the light surface, and the rule for that is visible labels or a
     table view; this ships both.
@@ -28,170 +32,39 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from svgchart import fmt_for, svg_bars   # noqa: E402
+
 MODEL_ORDER = ["naive", "optimistic", "mbo", "pessimistic"]
-
-# The validated categorical palette, slots 1-4 (light / dark). Only the line
-# chart uses more than slot 1: a bar chart of one measure is one series.
-SERIES = [("#2a78d6", "#3987e5"), ("#eb6834", "#d95926"),
-          ("#1baf7a", "#199e70"), ("#eda100", "#c98500")]
-
-STYLE = """
-  .surface { fill: #fcfcfb; }
-  .ink     { fill: #0b0b0b; }
-  .muted   { fill: #52514e; }
-  .grid    { stroke: #d8d7d2; stroke-width: 1; }
-  .axis    { stroke: #52514e; stroke-width: 1; }
-  .s1 { fill: #2a78d6; stroke: #2a78d6; }
-  .s2 { fill: #eb6834; stroke: #eb6834; }
-  .s3 { fill: #1baf7a; stroke: #1baf7a; }
-  .s4 { fill: #eda100; stroke: #eda100; }
-  @media (prefers-color-scheme: dark) {
-    .surface { fill: #1a1a19; }
-    .ink     { fill: #ffffff; }
-    .muted   { fill: #c3c2b7; }
-    .grid    { stroke: #3a3a38; }
-    .axis    { stroke: #c3c2b7; }
-    .s1 { fill: #3987e5; stroke: #3987e5; }
-    .s2 { fill: #d95926; stroke: #d95926; }
-    .s3 { fill: #199e70; stroke: #199e70; }
-    .s4 { fill: #c98500; stroke: #c98500; }
-  }
-"""
-
-
-def esc(s):
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def svg_bars(labels, values, title, subtitle, unit="c/share"):
-    """One measure across categories: horizontal bars, one colour, all labelled."""
-    W, H = 720, 90 + 46 * len(labels)
-    left, right = 130, 90
-    plot_w = W - left - right
-    lo = min(0.0, min(values)) if values else 0.0
-    hi = max(0.0, max(values)) if values else 1.0
-    span = (hi - lo) or 1.0
-    pad = span * 0.12
-    lo, hi = lo - pad, hi + pad
-    span = hi - lo
-
-    def x(v):
-        return left + (v - lo) / span * plot_w
-
-    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
-         f'width="{W}" height="{H}" role="img" aria-label="{esc(title)}">',
-         f"<style>{STYLE}</style>",
-         f'<rect class="surface" width="{W}" height="{H}"/>',
-         f'<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" '
-         f'font-size="15" font-weight="600">{esc(title)}</text>',
-         f'<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" '
-         f'font-size="11.5">{esc(subtitle)}</text>']
-
-    zero = x(0.0)
-    top = 62
-    bar_h, gap = 26, 20   # a 2px+ surface gap between adjacent bars
-    for i, (lab, v) in enumerate(zip(labels, values)):
-        y = top + i * (bar_h + gap)
-        x0, x1 = (zero, x(v)) if v >= 0 else (x(v), zero)
-        w = max(abs(x1 - x0), 1.5)
-        # 4px rounded data-end, square against the zero baseline.
-        p.append(f'<rect class="s1" x="{x0:.1f}" y="{y}" width="{w:.1f}" '
-                 f'height="{bar_h}" rx="4"/>')
-        if v >= 0:
-            p.append(f'<rect class="s1" x="{zero:.1f}" y="{y}" width="4" height="{bar_h}"/>')
-        else:
-            p.append(f'<rect class="s1" x="{zero - 4:.1f}" y="{y}" width="4" height="{bar_h}"/>')
-        p.append(f'<text class="ink" x="{left - 12}" y="{y + bar_h * 0.68:.0f}" '
-                 f'text-anchor="end" font-family="system-ui,sans-serif" '
-                 f'font-size="12.5">{esc(lab)}</text>')
-        tx = (x1 + 8) if v >= 0 else (x0 - 8)
-        anchor = "start" if v >= 0 else "end"
-        p.append(f'<text class="ink" x="{tx:.1f}" y="{y + bar_h * 0.68:.0f}" '
-                 f'text-anchor="{anchor}" font-family="ui-monospace,monospace" '
-                 f'font-size="12">{v:+.4f}</text>')
-
-    p.append(f'<line class="axis" x1="{zero:.1f}" y1="{top - 8}" x2="{zero:.1f}" '
-             f'y2="{top + len(labels) * (bar_h + gap) - gap + 6}"/>')
-    p.append(f'<text class="muted" x="{zero:.1f}" y="{H - 12}" text-anchor="middle" '
-             f'font-family="system-ui,sans-serif" font-size="11">0 {esc(unit)}</text>')
-    p.append("</svg>")
-    return "\n".join(p)
-
-
-def svg_lines(xs, series, title, subtitle, x_label, y_label):
-    """Change over a continuous x, one line per model — here colour IS identity."""
-    W, H = 760, 420
-    left, right, top, bottom = 76, 130, 66, 58
-    plot_w, plot_h = W - left - right, H - top - bottom
-    all_y = [v for _, vals in series for v in vals]
-    lo, hi = min(all_y + [0.0]), max(all_y + [0.0])
-    span = (hi - lo) or 1.0
-    lo, hi = lo - span * 0.12, hi + span * 0.12
-    span = hi - lo
-    n = len(xs)
-
-    def px(i):
-        return left + (i / max(n - 1, 1)) * plot_w
-
-    def py(v):
-        return top + plot_h - (v - lo) / span * plot_h
-
-    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
-         f'width="{W}" height="{H}" role="img" aria-label="{esc(title)}">',
-         f"<style>{STYLE}</style>",
-         f'<rect class="surface" width="{W}" height="{H}"/>',
-         f'<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" '
-         f'font-size="15" font-weight="600">{esc(title)}</text>',
-         f'<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" '
-         f'font-size="11.5">{esc(subtitle)}</text>']
-
-    for k in range(5):
-        v = lo + span * k / 4
-        y = py(v)
-        p.append(f'<line class="grid" x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" y2="{y:.1f}"/>')
-        p.append(f'<text class="muted" x="{left - 10}" y="{y + 4:.1f}" text-anchor="end" '
-                 f'font-family="ui-monospace,monospace" font-size="10.5">{v:.3f}</text>')
-    for i, xv in enumerate(xs):
-        p.append(f'<text class="muted" x="{px(i):.1f}" y="{top + plot_h + 20}" '
-                 f'text-anchor="middle" font-family="ui-monospace,monospace" '
-                 f'font-size="10.5">{esc(xv)}</text>')
-    p.append(f'<text class="muted" x="{left + plot_w / 2:.0f}" y="{H - 16}" '
-             f'text-anchor="middle" font-family="system-ui,sans-serif" '
-             f'font-size="11">{esc(x_label)}</text>')
-    p.append(f'<text class="muted" x="14" y="{top - 12}" '
-             f'font-family="system-ui,sans-serif" font-size="11">{esc(y_label)}</text>')
-
-    for si, (name, vals) in enumerate(series):
-        cls = f"s{si + 1}"
-        pts = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(vals))
-        p.append(f'<polyline class="{cls}" fill="none" stroke-width="2" '
-                 f'stroke-linejoin="round" points="{pts}"/>')
-        for i, v in enumerate(vals):
-            p.append(f'<circle class="{cls}" cx="{px(i):.1f}" cy="{py(v):.1f}" r="4"/>')
-        # Direct label at the line end: identity is never colour alone.
-        p.append(f'<text class="ink" x="{left + plot_w + 10}" y="{py(vals[-1]) + 4:.1f}" '
-                 f'font-family="system-ui,sans-serif" font-size="11.5">{esc(name)}</text>')
-    p.append("</svg>")
-    return "\n".join(p)
-
 
 def ascii_table(rows, title):
     out = [title, ""]
-    out.append(f"{'model':<14}{'fills':>8}{'shares':>10}{'c/share':>12}"
-               f"{'edge c/sh':>12}{'fees c/sh':>12}")
-    out.append("-" * 68)
-    width = 34
-    vals = [r["per_share"] for r in rows]
-    scale = max((abs(v) for v in vals), default=1.0) or 1.0
+    out.append(f"{'model':<14}{'fills':>8}{'shares':>10}{'P&L ($)':>12}"
+               f"{'c/share':>12}{'edge c/sh':>12}{'fees c/sh':>12}")
+    out.append("-" * 80)
     for r in rows:
-        out.append(f"{r['model']:<14}{r['fills']:>8}{r['shares']:>10}"
-                   f"{r['per_share']:>12.4f}{r['edge']:>12.4f}{r['fees']:>12.4f}")
-    out.append("")
-    out.append("P&L per share")
-    for r in rows:
-        n = int(round(abs(r["per_share"]) / scale * width))
-        bar = ("#" * n) if r["per_share"] >= 0 else ("-" * n)
-        out.append(f"  {r['model']:<13}|{bar}")
+        out.append(f"{r['model']:<14}{r['fills']:>8}{r['shares']:>10,.0f}"
+                   f"{r['total']:>12.2f}{r['per_share']:>12.4f}"
+                   f"{r['edge']:>12.4f}{r['fees']:>12.4f}")
+
+    # Both halves, because either alone can be read as the whole answer.
+    for metric, label in (("total", "total P&L"), ("shares", "shares filled")):
+        out.append("")
+        out.append(label)
+        scale = max((abs(r[metric]) for r in rows), default=1.0) or 1.0
+        for r in rows:
+            n = int(round(abs(r[metric]) / scale * 34))
+            bar = ("#" * n) if r[metric] >= 0 else ("-" * n)
+            out.append(f"  {r['model']:<13}|{bar}")
+
+    # The headline number: what the flattering assumption is worth.
+    by = {r["model"]: r for r in rows}
+    if "naive" in by and "pessimistic" in by and by["pessimistic"]["total"]:
+        ratio = by["naive"]["total"] / by["pessimistic"]["total"]
+        out.append("")
+        out.append(f"naive / pessimistic total P&L: {ratio:.2f}x  "
+                   f"(the cost of assuming you are at the front of every queue)")
     return "\n".join(out)
 
 
@@ -207,8 +80,9 @@ def load(path):
         rows.append({
             "model": name,
             "fills": m["fills"],
-            "shares": m["shares"],
+            "shares": float(m["shares"]),
             "per_share": m["per_share_micros"] / 10000.0,
+            "total": m["equity_micros"] / 1000000.0,
             "edge": m["edge_micros"] / shares / 10000.0,
             "fees": m["fees_micros"] / shares / 10000.0,
             "drift_1s": m["drift_1s"] / 10000.0,
@@ -221,6 +95,11 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("results", help="queue_backtest --json output")
     ap.add_argument("--svg", help="write the headline bar chart here")
+    ap.add_argument("--metric", default="total",
+                    choices=["total", "per_share", "shares"],
+                    help="what the bars encode (default total; per_share alone "
+                         "can show four identical bars while the models "
+                         "disagree by 60%% on fill volume)")
     ap.add_argument("--no-ascii", action="store_true")
     a = ap.parse_args()
 
@@ -228,7 +107,12 @@ def main():
     if not rows:
         raise SystemExit("error: no model results in that file")
 
-    title = f"P&L per share by fill model — {d.get('strategy', '?')}"
+    heading = {"total": "Total P&L by fill model",
+               "per_share": "P&L per share by fill model",
+               "shares": "Shares filled by fill model"}[a.metric]
+    unit = {"total": "dollars", "per_share": "cents/share",
+            "shares": "shares"}[a.metric]
+    title = f"{heading} — {d.get('strategy', '?')}"
     sub = (f"{d.get('events', 0):,} events. The gap between naive and pessimistic "
            f"is the queue assumption; mbo should sit inside it.")
 
@@ -237,9 +121,10 @@ def main():
 
     if a.svg:
         Path(a.svg).parent.mkdir(parents=True, exist_ok=True)
+        values = [r[a.metric] for r in rows]
         Path(a.svg).write_text(
-            svg_bars([r["model"] for r in rows], [r["per_share"] for r in rows],
-                     title, sub))
+            svg_bars([r["model"] for r in rows], values, title, sub,
+                     unit=unit, value_fmt=fmt_for(values)))
         print(f"\nwrote {a.svg}")
     return 0
 

@@ -69,6 +69,58 @@ struct TouchMaker {
     static const char* name() { return "touch-maker"; }
 };
 
+// Joins the touch once and stays there. Requotes only when the touch has walked
+// more than `patience_ticks` away, so a quote can sit through thousands of
+// messages and actually advance in the queue.
+//
+// This is the strategy the four fill models were built to disagree about.
+// TouchMaker requotes on every touch move, and a replaced order goes to the
+// back, so it spends its life near the back of a queue it never climbs — which
+// makes naive and pessimistic answer almost the same thing and hides the very
+// gap the phase measures. Patience is what turns queue position into a
+// quantity with consequences.
+//
+// It is also where latency reads correctly. The quote is placed once, so flight
+// time buys or costs a fixed number of positions in one queue rather than
+// reshuffling a churn of replacements; a flat P&L-vs-latency curve here is a
+// real statement that the strategy is not racing anyone.
+struct PatientMaker {
+    uint32_t size = 100;
+    int32_t patience_ticks = 5;
+    int32_t tick = 100;                 // $0.0100, the standard US equity tick
+    bool two_sided = true;
+
+    uint64_t next_id = 1;
+    int32_t quoted_bid = 0;
+    int32_t quoted_ask = 0;
+    uint64_t bid_id = 0;
+    uint64_t ask_id = 0;
+
+    void on_event(const MarketView& v, Ctx& ctx) {
+        if (!v.tradable || !v.mid.ok()) return;
+        int32_t bid = 0;
+        int32_t ask = 0;
+        if (!v.best_bid(&bid) || !v.best_ask(&ask)) return;
+        if (bid >= ask) return;
+
+        const int32_t slack = patience_ticks * tick;
+        if (bid_id == 0 || bid - quoted_bid > slack || quoted_bid - bid > slack) {
+            if (bid_id != 0) ctx.cancel(bid_id);
+            bid_id = next_id++;
+            ctx.quote(bid_id, Side::Buy, bid, size);
+            quoted_bid = bid;
+        }
+        if (!two_sided) return;
+        if (ask_id == 0 || ask - quoted_ask > slack || quoted_ask - ask > slack) {
+            if (ask_id != 0) ctx.cancel(ask_id);
+            ask_id = next_id++;
+            ctx.quote(ask_id, Side::Sell, ask, size);
+            quoted_ask = ask;
+        }
+    }
+    static const char* name() { return "patient-maker"; }
+};
+
 // Crosses the spread every N events, alternating side. A known loser with an
 // analytically predictable magnitude: it pays the spread plus the taker fee on
 // every round trip and captures nothing. If a backtester cannot reproduce that,
