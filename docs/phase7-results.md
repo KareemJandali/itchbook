@@ -33,10 +33,13 @@ matches an undamaged replay, and whether the system said it was trustworthy.
 answers "untrusted" is trivially never wrong and also useless. If that column
 fills up, the convergence bar is set too high to be worth anything.
 
+Books are compared **mid-session**, at 90% of the feed's time span — see
+section 3, this was the second bug real data found.
+
 | scenario | verdict | lost | gaps | dup | reord | trunc | state |
 |---|---|---:|---:|---:|---:|---:|---|
 | clean | CORRECT | 0 | 0 | 0 | 0 | 0 | trusted |
-| drop-1-in-1000 | CAUTIOUS | 199 | 5 | 0 | 320 | 0 | recovering |
+| drop-1-in-1000 | SAFE | 199 | 5 | 0 | 320 | 0 | recovering |
 | drop-1-in-100 | SAFE | 2,388 | 58 | 0 | 2,263 | 0 | recovering |
 | duplicate-1-in-100 | CORRECT | 0 | 0 | 2,388 | 0 | 0 | trusted |
 | reorder-1-in-100 | CORRECT | 0 | 0 | 0 | 56 | 0 | trusted |
@@ -46,7 +49,7 @@ fills up, the convergence bar is set too high to be worth anything.
 | everything | SAFE | 1,942 | 11 | 444 | 461 | 4 | recovering |
 | disconnect-to-end | SAFE | 0 | 0 | 0 | 0 | 0 | halted |
 
-**5 CORRECT, 4 SAFE, 1 CAUTIOUS, 0 WRONG.**
+**5 CORRECT, 5 SAFE, 0 WRONG.**
 
 The two worth pausing on are the outages. `disconnect-long` loses 16,231
 consecutive messages — one hole, no retransmission available — and the book
@@ -71,8 +74,8 @@ python3 python/analysis/adversarial.py data/raw/queue_long.gz --build build \
 
 | bar | outcome |
 |---|---|
-| 20,000 clean references | correct or safe in every scenario |
-| 1 | **WRONG in three scenarios**, exit 1 |
+| a 20,000-reference window | correct or safe in every scenario |
+| 1 | **WRONG in four scenarios**, exit 1 |
 
 Both runs are in CI: the first must pass, the second must fail. The number is
 not derived from anything. It is the line between those two rows, which is why
@@ -129,6 +132,45 @@ to demonstrate convergence.
 The adversarial matrix missed this because every outage in it was short enough
 that the feed resumed. `disconnect-to-end` is now a scenario, and two unit
 tests pin the rule.
+
+---
+
+## 3b. Two more bugs, both found by real data
+
+Phase 6's lesson, repeating: the synthetic feed agreed with everything, and
+MSFT did not.
+
+### The comparison compared nothing
+
+Pointed at a real day the harness printed `truth: 0 levels` and then graded ten
+scenarios against it. A real trading day ends with every order cancelled, so
+the end-of-day book is empty — and comparing two empty books matches trivially.
+Every verdict in that run was unearned.
+
+Books are now sampled mid-session, at 90% of the feed's span: well after the
+outage, well before the close. And a run whose checkpoint book is empty fails
+outright rather than passing vacuously, on the same principle as the no-op
+scenario check — a comparison with nothing in it is not a passing comparison.
+
+The stricter comparison is also more sensitive: the self-test in section 2 now
+catches four scenarios where it caught three.
+
+### Recovery that could never happen
+
+The real run showed `recoveries: 0` in every damaged scenario, including ones
+where the book had visibly converged. The criterion was N *consecutive*
+resolvable references, resetting to zero on any miss.
+
+On the synthetic feed that works, because orders churn fast and the pre-gap
+tail dies out in seconds. On a real MSFT day it never fires: an order added
+before the gap can rest for **hours**, and one cancel of one such order at
+15:45 wipes out a run that had climbed to nineteen thousand. The book had long
+since converged; the criterion could not say so.
+
+It is now a rate over a sliding window — at most 5 unresolved in the last
+50,000 references, one straggler per ten thousand. Two tests pin both halves:
+a lone straggler every few hundred messages must not block recovery forever,
+and a sustained 2% unresolved rate must still block it.
 
 ---
 

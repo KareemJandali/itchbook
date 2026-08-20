@@ -34,6 +34,30 @@ using namespace itchbook;
 
 namespace {
 
+// The whole book, every level, both sides. Two runs that produce identical
+// files held identical books — the only way to check "converged back to the
+// truth" without trusting summary totals that could coincide by accident.
+inline uint64_t dump_book(const book::Book& bk, const char* path) {
+    std::FILE* f = std::fopen(path, "w");
+    if (f == nullptr) {
+        std::fprintf(stderr, "error: cannot write %s\n", path);
+        return 0;
+    }
+    std::fprintf(f, "side,price,shares,orders\n");
+    uint64_t levels = 0;
+    for (char side : {'B', 'S'}) {
+        std::vector<book::LevelView> ls;
+        bk.top(side, 1u << 20, &ls);
+        for (const book::LevelView& lv : ls) {
+            std::fprintf(f, "%c,%" PRId32 ",%" PRIu64 ",%" PRIu32 "\n", side,
+                         lv.price, lv.shares, lv.count);
+            ++levels;
+        }
+    }
+    std::fclose(f);
+    return levels;
+}
+
 struct Recovered {
     gzFile out = nullptr;
     uint64_t messages = 0;
@@ -48,6 +72,15 @@ struct Recovered {
 
     uint64_t first_ts = 0;
     uint64_t last_ts = 0;
+    // The checkpoint. A real trading day ends with every order cancelled, so
+    // the end-of-day book is empty and comparing two empty books compares
+    // nothing — every scenario "matches" and the whole matrix becomes
+    // vacuous. Sampling mid-session compares a book with something in it.
+    uint64_t book_at_ns = 0;
+    const char* book_path = nullptr;
+    bool book_written = false;
+    book::Book* book_ref = nullptr;
+    uint64_t book_levels = 0;
 
     void on_message(char type, const uint8_t* p, uint16_t len) {
         ++messages;
@@ -56,6 +89,11 @@ struct Recovered {
             if (ts > 0) {
                 if (first_ts == 0) first_ts = ts;
                 last_ts = ts;
+                if (book_at_ns > 0 && !book_written && ts >= book_at_ns &&
+                    book_ref != nullptr && book_path != nullptr) {
+                    book_levels = dump_book(*book_ref, book_path);
+                    book_written = true;
+                }
             }
         }
         if (out != nullptr) {
@@ -109,6 +147,7 @@ int main(int argc, char** argv) {
     bool build_book = false;
     const char* book_out = nullptr;
     const char* json_out = nullptr;
+    uint64_t book_at_ns = 0;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -121,9 +160,16 @@ int main(int argc, char** argv) {
         else if (a == "--book") build_book = true;
         else if (a == "--book-out" && i + 1 < argc) { book_out = argv[++i]; build_book = true; }
         else if (a == "--json" && i + 1 < argc) json_out = argv[++i];
+        // Compare books HERE rather than at the end of the feed. A real
+        // trading day ends with every order cancelled, so an end-of-day book
+        // is empty and comparing two empty books compares nothing.
+        else if (a == "--book-at-ns" && i + 1 < argc) {
+            book_at_ns = std::strtoull(argv[++i], nullptr, 10);
+            build_book = true;
+        }
         else if (a == "--halt-on-gap") gcfg.policy = recover::Policy::Halt;
         else if (a == "--recover-after" && i + 1 < argc)
-            gcfg.clean_messages_to_recover = std::strtoull(argv[++i], nullptr, 10);
+            gcfg.recovery_window = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--max-gaps" && i + 1 < argc)
             gcfg.max_gaps_before_halt = std::strtoull(argv[++i], nullptr, 10);
         else if (in_path == nullptr) in_path = argv[i];
@@ -135,7 +181,8 @@ int main(int argc, char** argv) {
                      "                       [--reorder-patience N] [--quiet]\n"
                      "                       [--book] [--halt-on-gap]\n"
                      "                       [--recover-after N] [--max-gaps N]\n"
-                     "                       [--book-out levels.csv] [--json out.json]\n",
+                     "                       [--book-out levels.csv] [--json out.json]\n"
+                     "                       [--book-at-ns NS]\n",
                      argv[0]);
         return 2;
     }
@@ -151,6 +198,9 @@ int main(int argc, char** argv) {
     }
 
     book::Book bk;
+    sink.book_at_ns = book_at_ns;
+    sink.book_path = book_out;
+    sink.book_ref = &bk;
     recover::GapTracker gap{gcfg};
     if (build_book) {
         sink.bk = &bk;
@@ -203,31 +253,18 @@ int main(int argc, char** argv) {
         std::printf("recoveries            %" PRIu64 "\n", g.recoveries);
         std::printf("unknown refs post-gap %" PRIu64 "\n", g.unknown_refs_after_gap);
         std::printf("messages untrusted    %" PRIu64 "\n", g.messages_untrusted);
-        std::printf("clean run at end      %" PRIu64 "\n", gap.clean_run());
+        std::printf("refs since last gap   %" PRIu64 "\n", gap.refs_since_gap());
+        std::printf("unresolved in window  %" PRIu64 "\n", gap.window_unknown());
         std::printf("\nA book in `recovering` holds no wrong orders, only missing "
                     "ones.\nIt is a subset of the truth, and it is never to be "
                     "quoted from.\n");
 
-        // The whole final book, every level, both sides. Two runs that end
-        // with identical files ended with identical books — which is the only
-        // way to check "converged back to the truth" without trusting a pair
-        // of summary totals that could coincide by accident.
-        if (book_out != nullptr) {
-            std::FILE* f = std::fopen(book_out, "w");
-            if (f == nullptr) {
-                std::fprintf(stderr, "error: cannot write %s\n", book_out);
-                return 1;
-            }
-            std::fprintf(f, "side,price,shares,orders\n");
-            for (char side : {'B', 'S'}) {
-                std::vector<book::LevelView> levels;
-                bk.top(side, 1u << 20, &levels);
-                for (const book::LevelView& lv : levels) {
-                    std::fprintf(f, "%c,%" PRId32 ",%" PRIu64 ",%" PRIu32 "\n", side,
-                                 lv.price, lv.shares, lv.count);
-                }
-            }
-            std::fclose(f);
+        // Written at the checkpoint if one was asked for, otherwise at the end.
+        // See dump_book(); the checkpoint exists because a real trading day
+        // ends with an empty book.
+        if (book_out != nullptr && !sink.book_written) {
+            sink.book_levels = dump_book(bk, book_out);
+            sink.book_written = true;
         }
     }
 
@@ -260,6 +297,7 @@ int main(int argc, char** argv) {
                      "  \"recoveries\": %" PRIu64 ",\n"
                      "  \"unknown_refs_after_gap\": %" PRIu64 ",\n"
                      "  \"truncated_stream\": %s,\n"
+                     "  \"book_levels\": %" PRIu64 ",\n"
                      "  \"resting_orders\": %zu,\n"
                      "  \"resting_shares\": %" PRIu64 ",\n"
                      "  \"first_ts\": %" PRIu64 ",\n"
@@ -271,7 +309,8 @@ int main(int argc, char** argv) {
                      recover::to_string(gap.state()),
                      gap.trusted() ? "true" : "false", g.rebuilds, g.recoveries,
                      g.unknown_refs_after_gap,
-                     g.truncated_streams > 0 ? "true" : "false", bk.resting_orders(),
+                     g.truncated_streams > 0 ? "true" : "false", sink.book_levels,
+                     bk.resting_orders(),
                      bk.resting_shares(), sink.first_ts, sink.last_ts);
         std::fclose(jf);
     }

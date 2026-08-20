@@ -74,12 +74,24 @@ enum class Policy : uint8_t {
 
 struct GapConfig {
     Policy policy = Policy::RebuildForward;
-    // Consecutive reference-carrying messages that must all resolve before the
-    // book is called trusted again. This is the convergence bar and it is a
-    // judgement, not a derivation: too low and a quiet minute is mistaken for
-    // recovery, too high and a book that is already whole stays sidelined.
-    // 50,000 is roughly a busy minute on a liquid name.
-    uint64_t clean_messages_to_recover = 50000;
+    // The convergence bar: at most `recovery_tolerance` unresolved references
+    // in a sliding window of `recovery_window` reference-carrying messages.
+    //
+    // A RATE over a window, not a consecutive run, and real data is what
+    // settled that. The first version required N consecutive resolvable
+    // references and reset to zero on any miss. On the synthetic feed that
+    // works, because orders churn fast and the pre-gap tail dies out in
+    // seconds. On a real MSFT day it never recovers at all: an order added
+    // before the gap can rest for hours, and one cancel of one such order at
+    // 15:45 wipes out a run that had climbed to nineteen thousand. The book had
+    // long since converged; the criterion could not say so.
+    //
+    // Both numbers are judgement. Too loose and a book still missing orders is
+    // called whole; too tight and a book that is already whole stays sidelined.
+    // 50,000 references with 5 permitted is one straggler per ten thousand,
+    // which is the point at which the pre-gap world has effectively gone.
+    uint64_t recovery_window = 50000;
+    uint64_t recovery_tolerance = 5;
     // Give up after this many gaps. A feed losing packets steadily is not a
     // feed you are recovering from, it is a feed you are not receiving, and a
     // system that resyncs forever looks healthy while being blind.
@@ -111,7 +123,7 @@ public:
         ++stats_.gaps;
         stats_.messages_lost += count;
         last_gap_at_ = first_missing;
-        clean_run_ = 0;
+        reset_window();
 
         if (cfg_.policy == Policy::Halt || stats_.gaps > cfg_.max_gaps_before_halt) {
             state_ = State::Halted;
@@ -129,15 +141,32 @@ public:
     void on_reference(bool resolved) {
         if (state_ != State::Recovering) return;
         ++stats_.messages_untrusted;
+        ++refs_since_gap_;
         if (!resolved) {
             ++stats_.unknown_refs_after_gap;
-            clean_run_ = 0;
-            return;
+            ++buckets_[head_];
+            ++window_unknown_;
         }
-        if (++clean_run_ >= cfg_.clean_messages_to_recover) {
+
+        // Advance the ring one bucket at a time, dropping the oldest. Bucketing
+        // rather than keeping every reference costs a little precision at the
+        // window edge and turns an unbounded history into sixteen counters.
+        const uint64_t per_bucket = bucket_size();
+        if (++in_bucket_ >= per_bucket) {
+            in_bucket_ = 0;
+            head_ = (head_ + 1) % kBuckets;
+            window_unknown_ -= buckets_[head_];
+            buckets_[head_] = 0;
+        }
+
+        // The window has to be FULL before it means anything: judging a rate
+        // over the first hundred references after a gap would call almost any
+        // quiet moment a recovery.
+        if (refs_since_gap_ >= cfg_.recovery_window &&
+            window_unknown_ <= cfg_.recovery_tolerance) {
             state_ = State::Trusted;
             ++stats_.recoveries;
-            clean_run_ = 0;
+            reset_window();
         }
     }
 
@@ -171,15 +200,38 @@ public:
     bool halted() const { return state_ == State::Halted; }
     State state() const { return state_; }
     const GapStats& stats() const { return stats_; }
-    uint64_t clean_run() const { return clean_run_; }
     uint64_t last_gap_at() const { return last_gap_at_; }
+    // References seen since the last gap, and how many of those in the current
+    // window did not resolve. Reported so a run that never recovers can be
+    // told apart from one that never got the chance.
+    uint64_t refs_since_gap() const { return refs_since_gap_; }
+    uint64_t window_unknown() const { return window_unknown_; }
 
 private:
+    static constexpr size_t kBuckets = 16;
+
+    uint64_t bucket_size() const {
+        const uint64_t n = cfg_.recovery_window / kBuckets;
+        return n == 0 ? 1 : n;
+    }
+
+    void reset_window() {
+        for (uint64_t& b : buckets_) b = 0;
+        head_ = 0;
+        in_bucket_ = 0;
+        window_unknown_ = 0;
+        refs_since_gap_ = 0;
+    }
+
     GapConfig cfg_;
     GapStats stats_;
     State state_ = State::Trusted;
-    uint64_t clean_run_ = 0;
     uint64_t last_gap_at_ = 0;
+    uint64_t buckets_[kBuckets] = {};
+    size_t head_ = 0;
+    uint64_t in_bucket_ = 0;
+    uint64_t window_unknown_ = 0;
+    uint64_t refs_since_gap_ = 0;
 };
 
 }  // namespace itchbook::recover

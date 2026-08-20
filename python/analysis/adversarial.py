@@ -39,11 +39,20 @@ outage never fired. A test that does not fire is indistinguishable from a
 test that passes, so every damaging scenario now has to prove it damaged
 something before its verdict is allowed to count.
 
-The comparison is the whole final book — every level, both sides, price and
-shares and order count — not top-of-book and not a summary total. Two books
-that differ only deep in the tail are two different books, and a harness that
-compares totals would report a pass while the thing under test was broken in
-exactly the place a maker rests.
+The comparison is the whole book — every level, both sides, price and shares
+and order count — not top-of-book and not a summary total. Two books that
+differ only deep in the tail are two different books, and a harness comparing
+totals would report a pass while the thing under test was broken in exactly the
+place a maker rests.
+
+It is sampled MID-SESSION, not at the end, and real data is what settled that.
+A real trading day ends with every order cancelled, so the end-of-day book is
+empty — and comparing two empty books compares nothing. Pointed at MSFT the
+first version printed `truth: 0 levels` and then graded ten scenarios against
+it, every one of them trivially matching. The verdicts were unearned and the
+matrix was decorative. The checkpoint is taken well after the outage and well
+before the close, and a run whose checkpoint book is empty fails outright
+rather than passing vacuously.
 """
 import argparse
 import json
@@ -158,8 +167,11 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--mtu", type=int, default=1400)
     ap.add_argument("--recover-after", type=int, default=20000,
-                    help="consecutive clean references before the book is trusted "
-                         "again")
+                    help="references in the convergence window before the book "
+                         "is trusted again")
+    ap.add_argument("--checkpoint-frac", type=float, default=0.9,
+                    help="where in the feed's time span to compare books "
+                         "(default 0.9 — after the outage, before the close)")
     ap.add_argument("--keep", metavar="DIR",
                     help="keep the damaged feeds and books here instead of a "
                          "temporary directory")
@@ -188,9 +200,27 @@ def main():
     truth = truth_book.read_text()
     tj = json.loads((work / "truth.json").read_text())
     outage_ns, outage_label = pick_outage(tj["first_ts"], tj["last_ts"])
-    print(f"truth: {len(truth.splitlines()) - 1} levels, "
+    span = tj["last_ts"] - tj["first_ts"]
+    checkpoint_ns = tj["first_ts"] + int(span * a.checkpoint_frac)
+
+    # Re-take the truth at the checkpoint rather than at the end of the feed.
+    run([str(b / "mold_replay"), str(packets), "--book-out", str(truth_book),
+         "--quiet", "--json", str(work / "truth.json"),
+         "--book-at-ns", str(checkpoint_ns)])
+    truth = truth_book.read_text()
+    tj = json.loads((work / "truth.json").read_text())
+    print(f"truth: {tj['book_levels']} levels at the checkpoint, "
           f"{tj['messages']:,} messages")
-    print(f"outage scheduled at {outage_label}\n")
+    print(f"outage at {outage_label}, books compared at "
+          f"{a.checkpoint_frac:.0%} of the session\n")
+    if tj["book_levels"] == 0:
+        print("FAIL: the checkpoint book is empty, so every comparison would "
+              "match trivially")
+        print("and no verdict below would mean anything. Move --checkpoint-frac "
+              "to a point")
+        print("where the book has orders in it — later than the open, earlier "
+              "than the close.")
+        return 1
 
     rows = []
     no_op = []
@@ -206,7 +236,8 @@ def main():
         js = work / f"{name}.json"
         # Exit 3 means messages were lost, which is the point of most of these.
         run([str(b / "mold_replay"), str(dmg), "--book-out", str(book), "--quiet",
-             "--json", str(js), "--recover-after", str(a.recover_after)],
+             "--json", str(js), "--recover-after", str(a.recover_after),
+             "--book-at-ns", str(checkpoint_ns)],
             allow=(0, 3))
         st = json.loads(js.read_text())
         matches = book.read_text() == truth
