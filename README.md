@@ -31,6 +31,13 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > the truth. The grader is proven able to fail.
 > See [`docs/phase7-results.md`](docs/phase7-results.md).
 
+Reconstructing an order book from a raw exchange feed is not hard because the
+format is complicated. It is hard because **nothing tells you when you are
+wrong**: every message is individually valid, a book that has quietly diverged
+looks exactly like one that has not, and the errors are cumulative — a single
+mishandled message at 09:31 poisons every number for the rest of the day. So
+most of this repository is not the book. It is the machinery for finding out.
+
 ## What it's for
 
 Four things this project sets out to prove, in priority order:
@@ -43,119 +50,6 @@ Four things this project sets out to prove, in priority order:
    the gap between a fill you'd *actually* get and one you'd *like* to have.
 4. **Systems that fail safely** — gap detection, resync, kill switches.
 
-## Layout
-
-```
-include/itchbook/   public headers (this is a library, not an app)
-  itch/             reader (gzip stream), messages (field offsets), parser (framing)
-  bench/            rdtsc timing and latency percentiles
-  book/             order (40 bytes), level (intrusive FIFO), pool (slab),
-                    book (dense tick array + open-addressing ref map),
-                    dispatch (the ITCH -> book seam)
-  engine/           order types, states, and price-time matching
-  sim/ risk/        phases 6 & 7 (queue backtester, risk) — stubs
-tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench
-python/
-  make_sample.py    synthetic spec-shaped feed, so you can run without a download
-  fuzz_feed.py      adversarial feed generator, for the differential test
-  make_bench_feed.py  feed with a real day's message mix, for benchmarking
-  reference/        the Phase 2 oracle: slow, obvious, and correct
-    parser.py       framing + one decoder per message type
-    book.py         {price: [refs]} + {ref: order}; the seven mutating handlers
-    replay.py       driver — snapshot CSV + daily volume/OHLC/VWAP
-  analysis/
-    book_diff.py    diffs two snapshot CSVs — the differential test
-    validate.py     grades a reconstruction against Databento — Phase 2's gate
-tests/  bench/      unit/property tests, Google Benchmark
-data/               gitignored — raw .gz feeds and per-symbol slices
-```
-
-## Build
-
-Requires a C++20 compiler, CMake ≥ 3.20, and zlib.
-
-```bash
-# macOS:  brew install cmake zlib
-# Ubuntu: sudo apt install build-essential cmake ninja-build zlib1g-dev
-
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug   # Debug turns on ASan + UBSan
-cmake --build build
-ctest --test-dir build --output-on-failure     # run the unit tests
-```
-
-For a release build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` (add
-`-DNATIVE=ON` for `-march=native`).
-
-## Run it
-
-You don't need a multi-GB NASDAQ download to try the tools. Generate a small,
-spec-shaped synthetic feed first:
-
-```bash
-python3 python/make_sample.py data/raw/sample.gz
-
-./build/itch_census data/raw/sample.gz            # message-type histogram
-./build/itch_dump   data/raw/sample.gz 10         # first 10 messages, decoded
-./build/itch_slice  data/raw/sample.gz TEST data/sliced/TEST.gz   # per-symbol extract
-```
-
-Then reconstruct the book with the Python reference implementation:
-
-```bash
-python3 python/reference/replay.py data/raw/sample.gz --symbol TEST \
-    --snapshots data/sliced/TEST_book.csv --interval-ms 5
-```
-
-It prints the daily summary — volume (split into displayed, hidden `P` and cross
-`Q`), OHLC, VWAP, the resting book, and a crossed-book check that should always
-say `no` — and writes periodic top-of-book snapshots to CSV.
-
-Snapshot rows land on a fixed grid of multiples of `--interval-ms`, anchored at
-midnight, starting at the first grid point after the first message; each row is
-the state as of just before the first message at or past that point. The columns
-follow LOBSTER's orderbook layout (`ask_px_1,ask_sz_1,bid_px_1,bid_sz_1,...`,
-with LOBSTER's dummy fills for levels a thin book doesn't reach) so a slice of
-this CSV diffs straight against a LOBSTER file. Phase 3's C++ `book_replay` must
-emit a byte-identical file.
-
-The C++ book reconstructs the same thing from the same feed:
-
-```bash
-./build/book_replay data/raw/sample.gz --symbol TEST \
-    --snapshots data/sliced/TEST_book_cpp.csv --interval-ms 5
-
-python3 python/analysis/book_diff.py \
-    data/sliced/TEST_book.csv data/sliced/TEST_book_cpp.csv
-```
-
-Run the tests with:
-
-```bash
-ctest --test-dir build --output-on-failure                  # C++
-python3 -m unittest discover -s tests -p 'test_*.py' -v     # Python oracle
-python3 tests/differential.py --binary build/book_replay    # C++ vs oracle
-```
-
-## Architecture
-
-The parser knows nothing about books; the book knows nothing about strategies.
-`dispatch.hpp` is the only file that knows both, and it mirrors the oracle's
-`apply()` case for case so the two can be read side by side.
-
-Three structures carry the book, and the choice for each is the point:
-
-| Problem | Choice | Why |
-|---|---|---|
-| `ref -> Order*` | open addressing, linear probing, backward-shift deletion | every E/C/X/D/U carries only a reference, so this is the hottest lookup in the program. A node-based map costs a cache miss per message; tombstones would rot as a day's worth of orders is deleted |
-| FIFO at a price | intrusive doubly-linked list | cancel-by-reference is `unlink()` — two pointer writes, no search, no allocation |
-| `price -> level` | dense array indexed by tick offset | the few levels near the touch are hit millions of times and stay in L1. Off-band and off-tick prices fall through to a cold `std::map` |
-| best bid / ask | index cursor per side | never scanned for; the touch moves one tick at a time, so walking outward is amortised O(1) |
-
-`Order` is 40 bytes with a `static_assert` to keep it that way — that assert is
-what will tell you the field reordering in phase 4 actually did something.
-Orders come from a slab allocator in fixed chunks that are never reallocated, so
-every pointer the levels hold stays valid.
-
 ## Performance
 
 ```bash
@@ -163,12 +57,134 @@ python3 python/make_bench_feed.py data/raw/bench.gz --messages 1000000
 python3 bench/compare.py ./build/book_bench data/raw/bench.gz
 ```
 
-`book_bench` reports per-message-type latency percentiles from `rdtsc`, plus an
-uninstrumented throughput figure. `bench/compare.py` pins to a core and
-interleaves variants, because without both this machine's run-to-run noise
-(~19%) is large enough to invent a speedup that isn't there — which it did, on
-the first attempt. [`bench/README.md`](bench/README.md) has the numbers, the
-mechanism, and the two predicted optimisations that measured flat.
+1,000,000 messages with a real day's message mix (47% `A`, 45% `D`, 4.5% `U`,
+2.9% `E`). Per-message figures come from an `rdtsc` pair around each handler,
+with the harness's own overhead (~40 cycles, comparable to the work itself)
+measured and subtracted. Throughput comes from a separate, completely
+uninstrumented replay, so it is the honest end-to-end number.
+
+| | cycles/msg | p50 | p99 | p99.9 | worst single message |
+|---|---:|---:|---:|---:|---:|
+| baseline | 131.0 | 66 | 368 | 752 | 53,508,092 |
+| geometric chunks | **79.6** | 58 | 366 | 728 | **551,020** |
+
+**1.65× faster on this machine, 1.73× on the PMU machine** (142.31 → 82.04
+cycles/msg, 25.3M → 43.9M messages/second), and the worst message improves 97×.
+
+### The counter behind it
+
+Weighted by share, the per-type p50s come to ~62 cycles/msg. Throughput said
+**131**. Less than half the time was in the steady state, so the steady state
+was not the problem.
+
+The largest single sample was **53 million cycles** — on a one-million-message
+replay, one message was 40% of total runtime. That was the pool allocating its
+first slab: `1<<20` orders × 40 bytes = **42 MB**, allocated and page-faulted on
+the very first `A`. Cost tracks slab size almost exactly and p50 barely moves
+across the whole sweep, which is what identifies it as first-touch cost rather
+than work:
+
+| first chunk | slab | cycles/msg | worst sample |
+|---|---:|---:|---:|
+| 2^20 | 41.9 MB | 132.2 | 53,470,476 |
+| 2^18 | 10.5 MB | 87.5 | 13,360,790 |
+| 2^16 | 2.6 MB | 81.8 | 3,471,238 |
+| 2^14 | 0.7 MB | 80.6 | 1,085,922 |
+| 2^12 | 0.2 MB | **63.3** | 485,252 |
+
+On hardware with a working PMU the page-fault count **matches the removed
+41.9 MB slab to 99.5%**. Chunks now start at 4,096 orders and double to a cap of
+262,144: the first allocation is trivial, the chunk count stays O(log n), and
+the bulk of orders still land in a few large contiguous blocks. Smallest is not
+the answer either — tiny chunks scatter orders across many blocks and cost
+locality on a day with hundreds of thousands of live ones.
+
+### Two predicted wins that were not
+
+The build plan named likely optimisations. Two were tried and measured **flat**:
+hoisting `A` and `D` ahead of the dispatch switch (−1.5%, slightly *worse* — the
+compiler already builds a jump table) and single-probe delete (−0.5%, nothing —
+the second probe hits the same cache line). Both reverted. The one that mattered
+was not on the list.
+
+### The measurement mistake that came first
+
+The first round of results was wrong, and how it was wrong is the point.
+Unpinned, `book_bench` varies **19.3%** between identical invocations —
+enough to produce a convincing **12% "speedup" from a change that does
+nothing**. Pinned with `taskset`, the spread is **2.0%**, and `bench/compare.py`
+now also interleaves the variants (A, B, A, B, never all of A then all of B) so
+drift cannot be attributed to the change under test. Anything under ~5% on this
+hardware is not a result. Full numbers in [`bench/`](bench/).
+
+## Queue-position backtesting
+
+A public feed tells you a cancel happened at your price. It does not tell you
+whether it was ahead of your order or behind it. Ahead means you moved up the
+queue; behind means you did not, and nothing in the data resolves it. So the
+backtester runs four models over one book in one pass and reports the range:
+
+- **naive** — filled whenever anything trades at your price. What most
+  backtests do, and it is the number to distrust.
+- **optimistic** — every cancel at your level was ahead of you.
+- **pessimistic** — every cancel was behind you; only executions advance you.
+- **mbo** — resolve the reference and know. Available because we reconstruct
+  the book by order, not by level; it is the check that the band is a band.
+
+```bash
+./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 50
+```
+
+MSFT, 30 December 2019, 1,221,484 messages:
+
+```
+model            fills    shares     P&L ($)     c/share   edge c/sh
+naive            14995   962,594    -2753.09     -0.2860      0.2649
+optimistic       12261   814,786    -3065.75     -0.3763      0.0841
+mbo               9892   709,308    -3425.35     -0.4829     -0.1102
+pessimistic       8548   655,232    -3154.44     -0.4814     -0.2179
+
+naive reports $401.35 MORE than pessimistic
+```
+
+![Total P&L by fill model, MSFT](docs/figures/MSFT-fills-total.svg)
+![Shares filled by fill model, MSFT](docs/figures/MSFT-fills-shares.svg)
+
+Both panels, because either alone misleads. Per share the four models agree
+closely; they disagree by **47%** on how many shares were filled at all, and a
+per-share chart on its own would show four near-identical bars while hiding the
+entire result.
+
+![Post-fill drift, MSFT](docs/figures/MSFT-markout.svg)
+
+The markout chart is the one worth staring at. Four lines, all below zero, all
+sloping down: the fills arrive disproportionately just before the price moves
+against them. That is adverse selection measured on a real market, and it is
+why the strategy loses. On a synthetic feed the same code draws this chart
+*above* zero — the generator mean-reverts — which is a reminder of what a
+synthetic result is a result about.
+
+Markouts are negative at every horizon and worsen with it — −0.58 c/share at
+10 s for naive, −0.23 for pessimistic. The maker is adversely selected, which
+is why it loses. On a synthetic feed the same code reports naive at 3.53x
+pessimistic's P&L and *positive* markouts; that generator mean-reverts, and
+`docs/phase6-results.md` says which of the two sets of numbers means anything.
+
+Also modelled: one-way latency, with queue position computed at arrival and
+cancels that are late too, so a fill in the gap between deciding to pull and
+actually pulling still happens; markouts at 100 ms / 1 s / 10 s with unresolved
+fills counted rather than dropped; and the NASDAQ maker-taker schedule with
+Section 31 and TAF, in integer micro-dollars.
+
+The external check is the one that matters. `leave_one_out.py` replays the feed
+**unchanged** with a simulated order standing exactly where a real order stood,
+and grades the models against what that order actually filled. Over 200 real
+MSFT orders that were pulled part-filled — the cases where the answer depends
+on queue position — the truth fell inside `[pessimistic, optimistic]` 200 times
+out of 200. `mbo` reproduced all 200 exactly; naive over-filled 89 and never
+under-filled; pessimistic under-filled 96 and never over-filled. Full numbers,
+figures and the limits in
+[`docs/phase6-results.md`](docs/phase6-results.md).
 
 ## Matching engine
 
@@ -225,58 +241,6 @@ clang++ -fsanitize=fuzzer,address -DITCHBOOK_LIBFUZZER \
     -Iinclude tests/fuzz/fuzz_matcher.cpp -o fuzz_libfuzzer
 ```
 
-## Queue-position backtesting
-
-A public feed tells you a cancel happened at your price. It does not tell you
-whether it was ahead of your order or behind it. Ahead means you moved up the
-queue; behind means you did not, and nothing in the data resolves it. So the
-backtester runs four models over one book in one pass and reports the range:
-
-- **naive** — filled whenever anything trades at your price. What most
-  backtests do, and it is the number to distrust.
-- **optimistic** — every cancel at your level was ahead of you.
-- **pessimistic** — every cancel was behind you; only executions advance you.
-- **mbo** — resolve the reference and know. Available because we reconstruct
-  the book by order, not by level; it is the check that the band is a band.
-
-```bash
-./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 50
-```
-
-MSFT, 30 December 2019, 1,221,484 messages:
-
-```
-model            fills    shares     P&L ($)     c/share   edge c/sh
-naive            14995   962,594    -2753.09     -0.2860      0.2649
-optimistic       12261   814,786    -3065.75     -0.3763      0.0841
-mbo               9892   709,308    -3425.35     -0.4829     -0.1102
-pessimistic       8548   655,232    -3154.44     -0.4814     -0.2179
-
-naive reports $401.35 MORE than pessimistic
-```
-
-Markouts are negative at every horizon and worsen with it — −0.58 c/share at
-10 s for naive, −0.23 for pessimistic. The maker is adversely selected, which
-is why it loses. On a synthetic feed the same code reports naive at 3.53x
-pessimistic's P&L and *positive* markouts; that generator mean-reverts, and
-`docs/phase6-results.md` says which of the two sets of numbers means anything.
-
-Also modelled: one-way latency, with queue position computed at arrival and
-cancels that are late too, so a fill in the gap between deciding to pull and
-actually pulling still happens; markouts at 100 ms / 1 s / 10 s with unresolved
-fills counted rather than dropped; and the NASDAQ maker-taker schedule with
-Section 31 and TAF, in integer micro-dollars.
-
-The external check is the one that matters. `leave_one_out.py` replays the feed
-**unchanged** with a simulated order standing exactly where a real order stood,
-and grades the models against what that order actually filled. Over 200 real
-MSFT orders that were pulled part-filled — the cases where the answer depends
-on queue position — the truth fell inside `[pessimistic, optimistic]` 200 times
-out of 200. `mbo` reproduced all 200 exactly; naive over-filled 89 and never
-under-filled; pessimistic under-filled 96 and never over-filled. Full numbers,
-figures and the limits in
-[`docs/phase6-results.md`](docs/phase6-results.md).
-
 ## Recovery
 
 A feed is not a file. NASDAQ ships the daily samples already de-MoldUDP'd —
@@ -328,6 +292,119 @@ clean reference and three scenarios go WRONG; that run is in CI too, and must
 fail. It found two real bugs, including a stream that *stopped* rather than
 ended: 80,235 messages missing, every counter honestly zero, reported clean.
 Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
+
+## Architecture
+
+The parser knows nothing about books; the book knows nothing about strategies.
+`dispatch.hpp` is the only file that knows both, and it mirrors the oracle's
+`apply()` case for case so the two can be read side by side.
+
+Three structures carry the book, and the choice for each is the point:
+
+| Problem | Choice | Why |
+|---|---|---|
+| `ref -> Order*` | open addressing, linear probing, backward-shift deletion | every E/C/X/D/U carries only a reference, so this is the hottest lookup in the program. A node-based map costs a cache miss per message; tombstones would rot as a day's worth of orders is deleted |
+| FIFO at a price | intrusive doubly-linked list | cancel-by-reference is `unlink()` — two pointer writes, no search, no allocation |
+| `price -> level` | dense array indexed by tick offset | the few levels near the touch are hit millions of times and stay in L1. Off-band and off-tick prices fall through to a cold `std::map` |
+| best bid / ask | index cursor per side | never scanned for; the touch moves one tick at a time, so walking outward is amortised O(1) |
+
+`Order` is 40 bytes with a `static_assert` to keep it that way — that assert is
+what will tell you the field reordering in phase 4 actually did something.
+Orders come from a slab allocator in fixed chunks that are never reallocated, so
+every pointer the levels hold stays valid.
+
+## Reproduce it
+
+Verified from a clean clone on a machine with nothing cached. Requires a C++20
+compiler, CMake ≥ 3.20, zlib and Python 3.9+.
+
+```bash
+# macOS:  brew install cmake zlib
+# Ubuntu: sudo apt install build-essential cmake ninja-build zlib1g-dev
+
+git clone https://github.com/KareemJandali/itchbook && cd itchbook
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug    # Debug turns on ASan + UBSan
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+That builds everything and runs the unit and property tests. No market data is
+needed for any of it — the generators produce spec-shaped feeds:
+
+```bash
+# a small feed, and the tools that read it
+python3 python/make_sample.py data/raw/sample.gz
+./build/itch_census data/raw/sample.gz
+./build/itch_dump   data/raw/sample.gz 10
+
+# the C++ book and the Python oracle over the same bytes, compared
+python3 python/make_queue_feed.py data/raw/day.gz --messages 1200000 --gap-ns 20000
+./scripts/full-day-differential.sh data/raw/day.gz
+
+# the queue-position backtest, four fill models in one pass
+./build/queue_backtest data/raw/day.gz --strategy touch-maker --max-position 1000 \
+    --json out.json
+python3 python/analysis/fill_comparison.py out.json
+
+# packet damage, graded
+python3 python/analysis/adversarial.py data/raw/day.gz --build build
+```
+
+For a release build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`, plus
+`-DNATIVE=ON` for `-march=native`. Debug is ~10× slower — it has the sanitizers
+on — so use Release for anything you intend to time.
+
+### With real data
+
+One command does the whole thing on a NASDAQ day, slicing the symbol out first
+because the tools take a single-symbol feed:
+
+```bash
+./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 200
+```
+
+Nothing under `data/` or `out/` is committed — both are gitignored, because both
+derive from licensed data.
+
+## Layout
+
+```
+include/itchbook/   public headers (this is a library, not an app)
+  itch/             reader (gzip stream), messages (field offsets), parser (framing)
+  book/             order (40 bytes), level (intrusive FIFO), pool (slab),
+                    book (dense tick array + open-addressing ref map),
+                    dispatch (the ITCH -> book seam)
+  engine/           order types, states, and price-time matching
+  sim/              queue models, ledger, markouts, fees, latency, backtest
+  mold/             MoldUDP64 packet framing and the gap/duplicate/reorder sequencer
+  recover/          gap policy, book snapshot, halt tracking
+  risk/             the kill switch
+  bench/            rdtsc timing and latency percentiles
+tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
+                    queue_sim, queue_backtest, latency_sweep, restart_check,
+                    mold_wrap, mold_replay, mold_damage
+python/
+  make_sample.py       synthetic spec-shaped feed, so you can run without a download
+  make_queue_feed.py   feed with real queue structure, halts and a moving price
+  make_bench_feed.py   feed with a real day's message mix, for benchmarking
+  make_toxic_feed.py   a feed with a closed form: every fill adverse by exactly 2 ticks
+  fuzz_feed.py         adversarial feed generator, for the differential test
+  reference/           the oracle: slow, obvious, and correct
+    parser.py          framing + one decoder per message type
+    book.py            {price: [refs]} + {ref: order}; the seven mutating handlers
+    replay.py          driver — snapshot CSV + daily volume/OHLC/VWAP
+    queue_sim.py       the queue models again, independently
+  analysis/
+    book_diff.py       diffs two snapshot CSVs — the differential test
+    validate.py        grades a reconstruction against Databento
+    leave_one_out.py   shadows real orders and grades the fill models against them
+    adversarial.py     packet damage, graded CORRECT / SAFE / CAUTIOUS / WRONG
+    scaling_check.py   asserts the backtester stays linear in feed length
+    fill_comparison.py, markout.py, latency_sweep.py, svgchart.py
+scripts/            real-data-run.sh, full-day-differential.sh
+tests/              unit, property fuzzers, and the cross-implementation differentials
+data/  out/         gitignored — raw feeds, per-symbol slices, generated results
+```
 
 ## Differential testing
 
