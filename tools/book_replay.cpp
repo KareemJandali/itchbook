@@ -33,6 +33,7 @@ struct Options {
     const char* feed = nullptr;
     std::string symbol;
     const char* snapshots = nullptr;
+    const char* json = nullptr;
     uint64_t interval_ns = 60ULL * 1000 * 1000 * 1000;   // 1 minute
     size_t levels = 10;
     uint64_t limit = 0;         // 0 = no limit
@@ -169,6 +170,56 @@ struct Replayer {
     }
 };
 
+// The same fields the Python oracle writes, with the same names and the same
+// types, so the two can be compared key by key instead of eyeballed. The
+// snapshot CSV proves the two books agree at the instants it samples; this
+// proves they agree on everything cumulative in between, which is a different
+// failure and the one a sampled comparison cannot see.
+void write_json(const Replayer& r, const char* path) {
+    const auto& b = r.book;
+    std::FILE* f = std::fopen(path, "w");
+    if (f == nullptr) {
+        std::fprintf(stderr, "error: cannot write %s\n", path);
+        return;
+    }
+    int32_t bid = -1;
+    int32_t ask = -1;
+    if (!b.best_bid(&bid)) bid = -1;
+    if (!b.best_ask(&ask)) ask = -1;
+
+    std::fprintf(f, "{\n");
+    std::fprintf(f, "  \"best_ask\": %" PRId32 ",\n", ask);
+    std::fprintf(f, "  \"best_bid\": %" PRId32 ",\n", bid);
+    std::fprintf(f, "  \"close\": %" PRId32 ",\n", b.close());
+    std::fprintf(f, "  \"cross_prices\": {");
+    bool first = true;
+    for (const auto& kv : b.cross_prices()) {
+        std::fprintf(f, "%s\"%c\": %" PRId32, first ? "" : ", ", kv.first, kv.second);
+        first = false;
+    }
+    std::fprintf(f, "},\n");
+    std::fprintf(f, "  \"cross_volume\": %" PRIu64 ",\n", b.cross_volume());
+    std::fprintf(f, "  \"crossed\": %s,\n", b.strictly_crossed() ? "true" : "false");
+    std::fprintf(f, "  \"hidden_volume\": %" PRIu64 ",\n", b.hidden_volume());
+    std::fprintf(f, "  \"high\": %" PRId32 ",\n", b.high());
+    std::fprintf(f, "  \"low\": %" PRId32 ",\n", b.low());
+    std::fprintf(f, "  \"messages_applied\": %" PRIu64 ",\n", r.applied);
+    std::fprintf(f, "  \"messages_read\": %" PRIu64 ",\n", r.read);
+    std::fprintf(f, "  \"notional\": %" PRIu64 ",\n", b.notional());
+    std::fprintf(f, "  \"open\": %" PRId32 ",\n", b.open());
+    std::fprintf(f, "  \"resting_orders\": %zu,\n", b.resting_orders());
+    std::fprintf(f, "  \"resting_shares\": %" PRIu64 ",\n", b.resting_shares());
+    std::fprintf(f, "  \"snapshots_written\": %" PRIu64 ",\n", r.written);
+    std::fprintf(f, "  \"system_event\": \"%c\",\n", b.system_event());
+    std::fprintf(f, "  \"trades\": %" PRIu64 ",\n", b.trades());
+    std::fprintf(f, "  \"trading_state\": \"%c\",\n", b.trading_state());
+    std::fprintf(f, "  \"unknown_refs\": %" PRIu64 ",\n", b.unknown_ref());
+    std::fprintf(f, "  \"volume\": %" PRIu64 ",\n", b.volume());
+    std::fprintf(f, "  \"vwap\": %.10f\n", b.vwap());
+    std::fprintf(f, "}\n");
+    std::fclose(f);
+}
+
 void print_summary(const Replayer& r) {
     const auto& b = r.book;
     int32_t bid = -1;
@@ -225,6 +276,8 @@ bool parse_args(int argc, char** argv, Options* opt) {
             opt->symbol = next("--symbol");
         } else if (a == "--snapshots") {
             opt->snapshots = next("--snapshots");
+        } else if (a == "--json") {
+            opt->json = next("--json");
         } else if (a == "--interval-ms") {
             double ms = std::atof(next("--interval-ms"));
             if (ms <= 0) { std::fprintf(stderr, "error: --interval-ms must be positive\n"); return false; }
@@ -263,7 +316,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <feed.gz> [--symbol SYM] [--snapshots out.csv]\n"
                      "           [--interval-ms N] [--levels N] [--limit N]\n"
-                     "           [--tick N] [--end-ns N] [--quiet]\n",
+                     "           [--tick N] [--end-ns N] [--json out.json] [--quiet]\n",
                      argv[0]);
         return 2;
     }
@@ -291,6 +344,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (!opt.quiet) print_summary(r);
+        if (opt.json != nullptr) write_json(r, opt.json);
     } catch (const std::exception& e) {
         if (r.out != nullptr) std::fclose(r.out);
         std::fprintf(stderr, "error: %s\n", e.what());
