@@ -70,7 +70,7 @@ class Level:
         return not self.queue
 
 
-def build(seed, n_messages, cancel_front_bias, tie_burst):
+def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns):
     rng = random.Random(seed)
     out = bytearray()
     t = gen.T0
@@ -81,6 +81,14 @@ def build(seed, n_messages, cancel_front_bias, tie_burst):
 
     def emit(payload):
         out.extend(gen.frame(payload))
+
+    def advance():
+        # Bursty, like a real feed: mostly tight, occasionally idle. The scale
+        # matters — markout horizons are 100ms/1s/10s, so a feed that spans
+        # microseconds can never resolve one.
+        if rng.random() < 0.9:
+            return rng.randint(1, gap_ns)
+        return rng.randint(gap_ns, gap_ns * 40)
 
     def lvl(side, price):
         return levels.setdefault((side, price), Level())
@@ -102,7 +110,7 @@ def build(seed, n_messages, cancel_front_bias, tie_burst):
         for step in range(1, LEVELS + 1):
             price = MID - step * TICK if side == b"B" else MID + step * TICK
             for _ in range(rng.randint(2, 5)):
-                t += rng.randint(1, 20)
+                t += advance()
                 shares = rng.choice([100, 100, 200, 300, 500])
                 emit(gen.add_order(t, next_ref, side, shares, price))
                 lvl(side, price).add(next_ref, shares)
@@ -111,7 +119,7 @@ def build(seed, n_messages, cancel_front_bias, tie_burst):
     emitted = 0
     halted = False
     while emitted < n_messages:
-        t += rng.randint(1, 40)
+        t += advance()
         roll = rng.random()
 
         # ---- a burst of ties: several adds at one price and one timestamp ----
@@ -212,7 +220,18 @@ def build(seed, n_messages, cancel_front_bias, tie_burst):
 
         if roll < 0.985:
             # ---- hidden trade: real volume, never in the displayed queue ----
-            emit(gen.trade(t, next_ref, b"B", rng.randint(1, 300), price, match))
+            # Placed at or inside the spread, which is where non-displayed
+            # interest actually sits (midpoint pegs above all). Scattering it
+            # across the book instead makes prints land strictly through resting
+            # quotes constantly, which fires price priority on nearly every fill
+            # and drowns out the queue effect the phase exists to measure.
+            best_bid = max((p for (sd, p) in populated() if sd == b"B"), default=MID - TICK)
+            best_ask = min((p for (sd, p) in populated() if sd == b"S"), default=MID + TICK)
+            if best_ask - best_bid >= 2 * TICK:
+                hidden_price = rng.randint(best_bid + 1, best_ask - 1)
+            else:
+                hidden_price = rng.choice([best_bid, best_ask])
+            emit(gen.trade(t, next_ref, b"B", rng.randint(1, 300), hidden_price, match))
             match += 1
             emitted += 1
             continue
@@ -240,9 +259,13 @@ def main():
                     help="fraction of cancels taken from the front of the queue; "
                          "1.0 makes the optimistic model correct, 0.0 the pessimistic one")
     ap.add_argument("--no-tie-burst", action="store_true")
+    ap.add_argument("--gap-ns", type=int, default=200000,
+                    help="typical inter-message gap in nanoseconds (default 200us, so "
+                         "20k messages span a few seconds and markout horizons resolve)")
     a = ap.parse_args()
 
-    data = build(a.seed, a.messages, a.cancel_front_bias, not a.no_tie_burst)
+    data = build(a.seed, a.messages, a.cancel_front_bias, not a.no_tie_burst,
+                 a.gap_ns)
     Path(a.path).parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(a.path, "wb", compresslevel=1) as f:
         f.write(data)
