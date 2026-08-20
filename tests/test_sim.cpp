@@ -313,6 +313,37 @@ void test_no_limit_means_no_suppression() {
     CHECK(traded);   // and it really did run past where the limit would have bound
 }
 
+void test_a_tripped_kill_switch_stops_the_lane_and_pulls_its_quotes() {
+    // The end-to-end claim. A limit declines one order; a switch ends the
+    // session. Both halves are asserted, because stopping new orders while
+    // leaving the resting ones in the market is not stopping.
+    QuoteThenCancel s;
+    s.cancel_at_event = 1000;              // never; the switch is what stops it
+    itchbook::risk::KillSwitchConfig kill;
+    kill.max_position = 60;                // below one fill of the 500-share quote
+    Backtest<QuoteThenCancel> bt{s, {}, LatencyModel::zero(), {}, kill};
+    feed_slow_grind(bt);
+
+    for (const LaneResult& r : bt.results()) {
+        CHECK(r.trip == itchbook::risk::Trip::Position);
+        CHECK(r.trip_limit == 60);
+        CHECK(r.trip_observed > 60);
+        // Eight 50-share prints land in this feed. Unstopped the quote takes
+        // all of them; the switch trips on the second and the quote is pulled,
+        // so the position must not reach the full 400.
+        CHECK(r.residual_position < 400);
+    }
+
+    // ...and the same run with no switch configured does take all eight, which
+    // is what says the number above is the switch and not the feed.
+    Backtest<QuoteThenCancel> loose{s, {}, LatencyModel::zero()};
+    feed_slow_grind(loose);
+    for (const LaneResult& r : loose.results()) {
+        CHECK(r.trip == itchbook::risk::Trip::None);
+    }
+    CHECK_EQ(naive_shares_of(loose.results()), 400u);
+}
+
 void test_an_order_that_arrives_after_the_feed_never_fills() {
     // The simplest statement of the latency model: an order is not at the
     // exchange until it gets there. With one-way latency longer than the whole
@@ -392,6 +423,7 @@ int main() {
     test_a_quote_nobody_can_reach_never_fills();
     test_nothing_trades_before_the_market_opens();
     test_a_position_limit_is_never_breached();
+    test_a_tripped_kill_switch_stops_the_lane_and_pulls_its_quotes();
     test_no_limit_means_no_suppression();
     test_an_order_that_arrives_after_the_feed_never_fills();
     test_a_cancel_that_arrives_late_still_gets_filled();
