@@ -22,7 +22,7 @@
 //
 // Usage:
 //   latency_sweep <feed.gz> [--strategy touch-maker|patient-maker|crosser|far-quoter]
-//                 [--size N] [--fees base|top|inverted]
+//                 [--size N] [--fees base|top|inverted] [--max-position N]
 //                 [--points 0,100000,250000,1000000,...] [--csv out.csv]
 #include <cinttypes>
 #include <cstdint>
@@ -74,11 +74,11 @@ struct Point {
 };
 
 template <typename S>
-std::vector<Point> sweep(const Feed& feed, S strategy, FeeSchedule fees,
+std::vector<Point> sweep(const Feed& feed, S strategy, FeeSchedule fees, RiskLimits risk,
                          const std::vector<uint64_t>& latencies) {
     std::vector<Point> out;
     for (uint64_t ns : latencies) {
-        Backtest<S> bt(strategy, fees, LatencyModel::uniform(ns));
+        Backtest<S> bt(strategy, fees, LatencyModel::uniform(ns), risk);
         for (size_t i = 0; i < feed.size(); ++i) {
             const uint8_t* p = feed.bytes.data() + feed.offset[i];
             bt.on_message(static_cast<char>(*p), p, feed.length[i]);
@@ -188,6 +188,9 @@ int main(int argc, char** argv) {
     // where a retail path actually lives. Zero is included so the curve shows
     // exactly how much the flattering assumption was worth.
     std::vector<uint64_t> latencies{0, 100000, 250000, 500000, 1000000, 5000000};
+    // Matching the driver's default: no limit unless asked for. A sweep run
+    // unlimited beside a headline run that was limited is two experiments.
+    RiskLimits risk;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -196,6 +199,8 @@ int main(int argc, char** argv) {
         else if (a == "--csv" && i + 1 < argc) csv_path = argv[++i];
         else if (a == "--size" && i + 1 < argc) size = static_cast<uint32_t>(std::atol(argv[++i]));
         else if (a == "--points" && i + 1 < argc) latencies = parse_points(argv[++i]);
+        else if (a == "--max-position" && i + 1 < argc)
+            risk.max_position = std::strtoll(argv[++i], nullptr, 10);
         else if (feed_path == nullptr) feed_path = argv[i];
         else { std::fprintf(stderr, "error: unexpected '%s'\n", argv[i]); return 2; }
     }
@@ -203,7 +208,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <feed.gz> [--strategy touch-maker|patient-maker|crosser|far-quoter]\n"
                      "                    [--size N] [--fees base|top|inverted]\n"
-                     "                    [--points ns,ns,...] [--csv out.csv]\n",
+                     "                    [--points ns,ns,...] [--max-position N]\n"
+                     "                    [--csv out.csv]\n",
                      argv[0]);
         return 2;
     }
@@ -227,19 +233,19 @@ int main(int argc, char** argv) {
     if (strategy == "touch-maker") {
         TouchMaker s;
         s.size = size;
-        pts = sweep(feed, s, fees, latencies);
+        pts = sweep(feed, s, fees, risk, latencies);
     } else if (strategy == "patient-maker") {
         PatientMaker s;
         s.size = size;
-        pts = sweep(feed, s, fees, latencies);
+        pts = sweep(feed, s, fees, risk, latencies);
     } else if (strategy == "crosser") {
         Crosser s;
         s.size = size;
-        pts = sweep(feed, s, fees, latencies);
+        pts = sweep(feed, s, fees, risk, latencies);
     } else if (strategy == "far-quoter") {
         FarQuoter s;
         s.size = size;
-        pts = sweep(feed, s, fees, latencies);
+        pts = sweep(feed, s, fees, risk, latencies);
     } else {
         std::fprintf(stderr, "error: unknown strategy '%s'\n", strategy.c_str());
         return 2;

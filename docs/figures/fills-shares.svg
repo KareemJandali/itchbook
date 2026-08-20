@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 274" width="720" height="274" role="img" aria-label="Shares filled by fill model — touch-maker">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="720" height="274"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Shares filled by fill model — touch-maker</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">200,056 events. The gap between naive and pessimistic is the queue assumption; mbo should sit inside it.</text>
+<rect class="s1" x="178.4" y="62" width="403.2" height="26" rx="4"/>
+<rect class="s1" x="178.4" y="62" width="4" height="26"/>
+<text class="ink" x="118" y="80" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">naive</text>
+<text class="ink" x="589.6" y="80" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">521,345</text>
+<rect class="s1" x="178.4" y="108" width="160.1" height="26" rx="4"/>
+<rect class="s1" x="178.4" y="108" width="4" height="26"/>
+<text class="ink" x="118" y="126" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">optimistic</text>
+<text class="ink" x="346.5" y="126" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">207,061</text>
+<rect class="s1" x="178.4" y="154" width="158.4" height="26" rx="4"/>
+<rect class="s1" x="178.4" y="154" width="4" height="26"/>
+<text class="ink" x="118" y="172" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">mbo</text>
+<text class="ink" x="344.8" y="172" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">204,832</text>
+<rect class="s1" x="178.4" y="200" width="154.5" height="26" rx="4"/>
+<rect class="s1" x="178.4" y="200" width="4" height="26"/>
+<text class="ink" x="118" y="218" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">pessimistic</text>
+<text class="ink" x="340.9" y="218" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">199,791</text>
+<line class="axis" x1="178.4" y1="54" x2="178.4" y2="232"/>
+<text class="muted" x="178.4" y="262" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">0 shares</text>
+</svg>

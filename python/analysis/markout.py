@@ -114,7 +114,7 @@ def main():
             "Positive is in your favour. Negative and worsening with the horizon "
             "means you are being picked off.",
             "horizon after the fill (three separate measurements)",
-            "cents/share"))
+            "cents/share", include_zero=True))
         print(f"\nwrote {a.svg}")
     return 0
 

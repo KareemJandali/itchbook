@@ -137,17 +137,21 @@ def svg_bars(labels, values, title, subtitle, unit="c/share", value_fmt=None):
     return "\n".join(p)
 
 
-def svg_lines(xs, series, title, subtitle, x_label, y_label):
+def svg_lines(xs, series, title, subtitle, x_label, y_label, include_zero=False):
     """Change over a continuous x, one line per model — here colour IS identity.
 
     Two deliberate departures from the bar chart:
 
-      * **The y axis is not forced through zero.** A bar encodes magnitude by
-        length and must start at zero or it lies; a line encodes change, and
-        padding a 1.5-to-1.9 range down to zero throws away nine tenths of the
-        plot to show an axis nobody was asking about. When zero falls outside
-        the range the axis label says so, so a truncated axis is never a
-        truncated axis the reader had to notice for themselves.
+      * **The y axis is not forced through zero, unless the caller says the
+        sign is the question.** A bar encodes magnitude by length and must
+        start at zero or it lies; a line encodes change, and padding a
+        1.5-to-1.9 range down to zero throws away nine tenths of the plot to
+        show an axis nobody was asking about. But a markout is read by its
+        SIGN — picked off or not — and a chart of it that crops zero off the
+        bottom makes a small positive number look like a large one. Pass
+        `include_zero` there. When zero still falls outside the range the axis
+        label says so, so a truncated axis is never a truncated axis the
+        reader had to notice for themselves.
       * **End labels are pushed apart.** Four lines that converge would stack
         four labels on one pixel row. They are separated by the minimum that
         keeps them legible, in the drawing only — the lines and markers stay
@@ -158,6 +162,8 @@ def svg_lines(xs, series, title, subtitle, x_label, y_label):
     plot_w, plot_h = W - left - right, H - top - bottom
     all_y = [v for _, vals in series for v in vals]
     lo, hi = min(all_y), max(all_y)
+    if include_zero:
+        lo, hi = min(lo, 0.0), max(hi, 0.0)
     if lo == hi:
         lo, hi = lo - 1.0, hi + 1.0
     span = hi - lo
@@ -197,8 +203,13 @@ def svg_lines(xs, series, title, subtitle, x_label, y_label):
         p.append(f'<text class="muted" x="{left - 10}" y="{y + 4:.1f}" text-anchor="end" '
                  f'font-family="ui-monospace,monospace" font-size="10.5">{esc(tick(v))}</text>')
     if zero_shown:
+        # The one gridline that means something, so it gets the axis stroke and
+        # its own label rather than being left as an unexplained dark rule.
         p.append(f'<line class="axis" x1="{left}" y1="{py(0.0):.1f}" '
                  f'x2="{left + plot_w}" y2="{py(0.0):.1f}"/>')
+        p.append(f'<text class="ink" x="{left - 10}" y="{py(0.0) + 4:.1f}" '
+                 f'text-anchor="end" font-family="ui-monospace,monospace" '
+                 f'font-size="10.5">0</text>')
 
     for i, xv in enumerate(xs):
         p.append(f'<text class="muted" x="{px(i):.1f}" y="{top + plot_h + 20}" '
