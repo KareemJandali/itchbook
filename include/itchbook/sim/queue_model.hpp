@@ -161,7 +161,28 @@ public:
     // the level's new size. `r` was resolved BEFORE it, because the message's own
     // side and price no longer exist afterwards.
     void commit(const Resolved& r, const book::Book& post, std::vector<SimFill>* fills) {
-        if (!tradable_) return;
+        // A halted symbol cannot fill us, so no fill path runs. But BOOKKEEPING
+        // is not gated, and returning here outright was a real bug: orders
+        // ahead of us are still cancelled and deleted while a symbol is halted
+        // — that is precisely what the quotation-only period is for — and a
+        // model that ignores every message until the resume comes out of the
+        // halt still believing a queue that no longer exists is in front of it.
+        //
+        // The clamp is what repairs it: it bounds `ahead` by what is actually
+        // resting at our price, so a level emptied during the halt pulls our
+        // estimate down with it. Found by the leave-one-out oracle after phase
+        // 7 taught the generator to emit halts — 189/200 bracketed where it had
+        // been 200/200, with mbo under-filling 42 times having previously been
+        // exact on every one.
+        if (!tradable_) {
+            for (Entry& e : entries_) {
+                if (!e.live || e.display == 0) continue;
+                halted_commit(e, r);
+            }
+            if (cfg_.clamp) clamp_all(post);
+            reap();
+            return;
+        }
 
         for (Entry& e : entries_) {
             if (!e.live || e.display == 0) continue;
@@ -295,6 +316,24 @@ private:
     }
 
     // ---- per-model commit ---------------------------------------------------
+
+    // What a halted symbol still does to your queue position.
+    //
+    // Nothing trades, so no fill path runs here at all. But cancels and deletes
+    // do not stop — the quotation-only period exists so orders can be entered
+    // and pulled while the reopening price is found — and every one of them
+    // that was ahead of us moves us up. Skipping them means coming out of the
+    // halt believing a queue that has since evaporated is still in front.
+    //
+    // Trades are ignored rather than applied: a print while the symbol is
+    // halted is anomalous, and inventing a fill from one would be exactly the
+    // over-eagerness the queue models exist to avoid.
+    void halted_commit(Entry& e, const Resolved& r) {
+        if (!r.known || r.side != e.side || r.resting_price != e.price) return;
+        if (r.cls != Class::Cancel) return;
+        if (cfg_.model == Model::Naive) return;   // naive tracks no queue at all
+        cancel_class(e, r.shares, cancel_is_ahead(e, r));
+    }
 
     void queued_commit(Entry& e, const Resolved& r, std::vector<SimFill>* fills,
                        const book::Book* post) {

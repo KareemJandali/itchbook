@@ -41,19 +41,19 @@
 <rect class="s1" x="178.4" y="62" width="403.2" height="26" rx="4"/>
 <rect class="s1" x="178.4" y="62" width="4" height="26"/>
 <text class="ink" x="118" y="80" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">naive</text>
-<text class="ink" x="589.6" y="80" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">8,423.2</text>
-<rect class="s1" x="178.4" y="108" width="115.0" height="26" rx="4"/>
+<text class="ink" x="589.6" y="80" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">7,262.8</text>
+<rect class="s1" x="178.4" y="108" width="120.7" height="26" rx="4"/>
 <rect class="s1" x="178.4" y="108" width="4" height="26"/>
 <text class="ink" x="118" y="126" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">optimistic</text>
-<text class="ink" x="301.4" y="126" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">2,403.2</text>
-<rect class="s1" x="178.4" y="154" width="113.3" height="26" rx="4"/>
+<text class="ink" x="307.0" y="126" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">2,173.1</text>
+<rect class="s1" x="178.4" y="154" width="118.3" height="26" rx="4"/>
 <rect class="s1" x="178.4" y="154" width="4" height="26"/>
 <text class="ink" x="118" y="172" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">mbo</text>
-<text class="ink" x="299.7" y="172" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">2,366.3</text>
-<rect class="s1" x="178.4" y="200" width="109.8" height="26" rx="4"/>
+<text class="ink" x="304.7" y="172" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">2,130.5</text>
+<rect class="s1" x="178.4" y="200" width="114.0" height="26" rx="4"/>
 <rect class="s1" x="178.4" y="200" width="4" height="26"/>
 <text class="ink" x="118" y="218" text-anchor="end" font-family="system-ui,sans-serif" font-size="12.5">pessimistic</text>
-<text class="ink" x="296.2" y="218" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">2,293.9</text>
+<text class="ink" x="300.4" y="218" text-anchor="start" font-family="ui-monospace,monospace" font-size="12">2,052.9</text>
 <line class="axis" x1="178.4" y1="54" x2="178.4" y2="232"/>
 <text class="muted" x="178.4" y="262" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">0 dollars</text>
 </svg>

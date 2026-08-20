@@ -174,7 +174,29 @@ class QueueModel:
     # ---- commit ----
 
     def commit(self, r, book):
+        # Nothing trades while the symbol is halted, so no fill path runs. But
+        # bookkeeping is not gated: cancels and deletes keep arriving through a
+        # halt — that is what the quotation-only period is for — and every one
+        # ahead of us moves us up the queue. Returning outright here meant
+        # coming out of the halt still believing an evaporated queue was in
+        # front of us. Mirrors queue_model.hpp's halted_commit(); the two
+        # implementations have to make the same choice or the differential
+        # test catches it, which is how this one was kept honest.
         if not self.tradable:
+            for e in self.entries:
+                if not e.live or e.display == 0:
+                    continue
+                if self.model == NAIVE:
+                    continue
+                if (not r["known"] or r["side"] != e.side
+                        or r["resting_price"] != e.price):
+                    continue
+                if r["cls"] != CANCEL:
+                    continue
+                self._cancel_class(e, r["shares"], self._cancel_is_ahead(e, r))
+            if self.clamp:
+                self._clamp(book)
+            self._reap()
             return
         for e in self.entries:
             if not e.live or e.display == 0:

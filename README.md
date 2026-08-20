@@ -249,7 +249,7 @@ naive reports $401.35 MORE than pessimistic
 
 Markouts are negative at every horizon and worsen with it — −0.58 c/share at
 10 s for naive, −0.23 for pessimistic. The maker is adversely selected, which
-is why it loses. On a synthetic feed the same code reports naive at 3.67x
+is why it loses. On a synthetic feed the same code reports naive at 3.53x
 pessimistic's P&L and *positive* markouts; that generator mean-reverts, and
 `docs/phase6-results.md` says which of the two sets of numbers means anything.
 
