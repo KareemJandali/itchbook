@@ -70,6 +70,17 @@ jobs:
       - name: Differential test (queue model vs Python oracle)
         run: python3 tests/queue_differential.py --binary build/queue_sim --seeds 2
 
+      # A feed with a closed form. Every number below is fixed by construction
+      # before the simulator runs, so a disagreement is a defect rather than an
+      # opinion — and all four models must agree, because the feed contains no
+      # queue ambiguity for them to differ about.
+      - name: Closed-form check (toxic feed)
+        run: |
+          python3 python/make_toxic_feed.py data/raw/toxic.gz --episodes 40
+          ./build/queue_backtest data/raw/toxic.gz --strategy touch-maker \
+            --json data/raw/toxic.json
+          python3 python/make_toxic_feed.py --check data/raw/toxic.json --episodes 40
+
       # The one EXTERNAL check in phase 6: shadow real orders and grade the
       # models against what those orders actually filled. Partial fills only,
       # because an order that ended fully executed grades every model perfect
