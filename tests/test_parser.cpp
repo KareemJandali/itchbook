@@ -1,26 +1,12 @@
 // test_parser — unit tests for the big-endian field readers and framing.
 //
-// Tiny hand-rolled harness (no GoogleTest dependency yet — added in Phase 3).
-// Exit code 0 = all passed, 1 = a failure.
+// Shared harness lives in tests/check.hpp.
 #include <cstdint>
 #include <cstdio>
 #include <vector>
 
 #include "itchbook/itch/messages.hpp"
-
-namespace {
-
-int failures = 0;
-
-#define CHECK(cond)                                                       \
-    do {                                                                  \
-        if (!(cond)) {                                                    \
-            std::fprintf(stderr, "FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); \
-            ++failures;                                                   \
-        }                                                                 \
-    } while (0)
-
-}  // namespace
+#include "tests/check.hpp"
 
 int main() {
     using namespace itchbook::itch;
@@ -64,10 +50,5 @@ int main() {
     CHECK(add_order::shares(a.data()) == 100u);
     CHECK(add_order::price(a.data()) == 100);
 
-    if (failures == 0) {
-        std::printf("all tests passed\n");
-        return 0;
-    }
-    std::fprintf(stderr, "%d test(s) failed\n", failures);
-    return 1;
+    return REPORT();
 }

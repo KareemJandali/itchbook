@@ -37,12 +37,19 @@ add_executable(itch_dump   tools/itch_dump.cpp)
 add_executable(itch_census tools/itch_census.cpp)
 add_executable(itch_slice  tools/itch_slice.cpp)
 
-foreach(t itch_dump itch_census itch_slice)
+# ---- Main driver (Phase 3) ----
+add_executable(book_replay tools/book_replay.cpp)
+
+foreach(t itch_dump itch_census itch_slice book_replay)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()
 
 # ---- Tests ----
 enable_testing()
-add_executable(test_parser tests/test_parser.cpp)
-target_link_libraries(test_parser PRIVATE itchbook)
-add_test(NAME test_parser COMMAND test_parser)
+foreach(t test_parser test_book)
+  add_executable(${t} tests/${t}.cpp)
+  target_link_libraries(${t} PRIVATE itchbook)
+  # tests include "tests/check.hpp"
+  target_include_directories(${t} PRIVATE ${CMAKE_SOURCE_DIR})
+  add_test(NAME ${t} COMMAND ${t})
+endforeach()

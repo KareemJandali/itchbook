@@ -155,7 +155,7 @@ def print_summary(book, symbol, read, written, snapshots):
         ("resting shares", f"{book.total_shares():,}"),
         ("best bid", px(bid)),
         ("best ask", px(ask)),
-        ("book crossed", "YES — BUG" if book.crossed() else "no"),
+        ("book crossed", "YES - BUG" if book.crossed() else "no"),
         ("last system event", book.system_event or "-"),
         ("trading state", book.trading_state or "-"),
     ]

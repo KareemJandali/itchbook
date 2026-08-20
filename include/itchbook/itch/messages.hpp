@@ -114,4 +114,64 @@ namespace system_event {  // 'S'
 inline char code(const uint8_t* p) { return static_cast<char>(p[11]); }  // 'O','S','Q','M','E','C'
 }  // namespace system_event
 
+namespace add_order_mpid {  // 'F' — identical to 'A', plus attribution
+inline uint64_t ref(const uint8_t* p)    { return be64(p + 11); }
+inline char     side(const uint8_t* p)   { return static_cast<char>(p[19]); }
+inline uint32_t shares(const uint8_t* p) { return be32(p + 20); }
+inline const uint8_t* stock(const uint8_t* p) { return p + 24; }
+inline int32_t  price(const uint8_t* p)  { return static_cast<int32_t>(be32(p + 32)); }
+inline const uint8_t* attribution(const uint8_t* p) { return p + 36; }  // 4 chars
+}  // namespace add_order_mpid
+
+namespace order_executed_price {  // 'C'
+inline uint64_t ref(const uint8_t* p)             { return be64(p + 11); }
+inline uint32_t executed_shares(const uint8_t* p) { return be32(p + 19); }
+inline uint64_t match_number(const uint8_t* p)    { return be64(p + 23); }
+// A non-printable execution still removes shares from the book, but must not
+// count toward volume, VWAP or OHLC.
+inline bool     printable(const uint8_t* p)       { return p[31] == 'Y'; }
+inline int32_t  price(const uint8_t* p)           { return static_cast<int32_t>(be32(p + 32)); }
+}  // namespace order_executed_price
+
+namespace order_replace {  // 'U'
+// Side and stock are not on the wire — they are inherited from the original
+// order. The replacement goes to the back of its level: a replace loses queue
+// priority, which is the whole reason phase 6 exists.
+inline uint64_t original_ref(const uint8_t* p) { return be64(p + 11); }
+inline uint64_t new_ref(const uint8_t* p)      { return be64(p + 19); }
+inline uint32_t shares(const uint8_t* p)       { return be32(p + 27); }
+inline int32_t  price(const uint8_t* p)        { return static_cast<int32_t>(be32(p + 31)); }
+}  // namespace order_replace
+
+namespace trade {  // 'P' — non-cross trade against hidden liquidity. No book effect.
+inline uint64_t ref(const uint8_t* p)    { return be64(p + 11); }
+inline char     side(const uint8_t* p)   { return static_cast<char>(p[19]); }
+inline uint32_t shares(const uint8_t* p) { return be32(p + 20); }
+inline const uint8_t* stock(const uint8_t* p) { return p + 24; }
+inline int32_t  price(const uint8_t* p)  { return static_cast<int32_t>(be32(p + 32)); }
+inline uint64_t match_number(const uint8_t* p) { return be64(p + 36); }
+}  // namespace trade
+
+namespace cross_trade {  // 'Q' — opening / closing cross. No book effect.
+// Note the 8-byte share count: a cross is far bigger than any single order.
+inline uint64_t shares(const uint8_t* p) { return be64(p + 11); }
+inline const uint8_t* stock(const uint8_t* p) { return p + 19; }
+inline int32_t  price(const uint8_t* p)  { return static_cast<int32_t>(be32(p + 27)); }
+inline uint64_t match_number(const uint8_t* p) { return be64(p + 31); }
+inline char     cross_type(const uint8_t* p) { return static_cast<char>(p[39]); }  // 'O','C','H','I'
+}  // namespace cross_trade
+
+namespace trading_action {  // 'H'
+inline const uint8_t* stock(const uint8_t* p) { return p + 11; }
+inline char state(const uint8_t* p) { return static_cast<char>(p[19]); }  // 'H','P','Q','T'
+inline const uint8_t* reason(const uint8_t* p) { return p + 21; }         // 4 chars
+}  // namespace trading_action
+
+namespace stock_directory {  // 'R'
+inline const uint8_t* stock(const uint8_t* p) { return p + 11; }
+inline char     market_category(const uint8_t* p)  { return static_cast<char>(p[19]); }
+inline char     financial_status(const uint8_t* p) { return static_cast<char>(p[20]); }
+inline uint32_t round_lot_size(const uint8_t* p)   { return be32(p + 21); }
+}  // namespace stock_directory
+
 }  // namespace itchbook::itch
