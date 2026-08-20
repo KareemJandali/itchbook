@@ -1674,6 +1674,76 @@ struct FeeSchedule {
 struct FeeBreakdown { Money exchange = 0; Money regulatory = 0; };
 inline FeeBreakdown fee_for(const FeeSchedule&, const SimFill&);
 
+// ---- sim/mid.hpp -----------------------------------------------------------
+enum class MidStatus : uint8_t {
+    Empty = 0, Ok, Locked, OneSided, StrictlyCrossed, Halted, OutsideContinuous,
+};
+inline bool usable(MidStatus s) { return s == MidStatus::Ok || s == MidStatus::Locked; }
+
+// two_mid is only readable through an accessor that refuses on an unusable status,
+// so a 0 sentinel cannot reach the ledger and mis-attribute a whole trade's notional
+// to spread capture (see 5.5).
+class Mid {
+public:
+    static Mid observe(const book::Book&);          // const-only; gates on phase first
+    MidStatus status() const { return status_; }
+    bool ok() const { return usable(status_); }
+    int64_t two_mid() const {                       // best_bid + best_ask, Price(4)
+        ITCHBOOK_SIM_CHECK(ok());                   // never `assert` — see trap 27
+        return two_mid_;
+    }
+    int32_t bid() const; int32_t ask() const;
+private:
+    int64_t two_mid_ = 0; int32_t bid_ = 0, ask_ = 0;
+    MidStatus status_ = MidStatus::Empty;
+};
+
+// ---- sim/event.hpp ---------------------------------------------------------
+using OrderId = uint32_t;
+inline constexpr OrderId kNoOrder = UINT32_MAX;
+
+// The one signed helper every fill decision in every model goes through, so a
+// direction error cannot hide in one branch (trap 15).
+inline bool at_or_through(Side s, int32_t limit, int32_t px) {
+    return s == Side::Buy ? px <= limit : px >= limit;
+}
+inline bool better_than_ours(Side s, int32_t limit, int32_t px) {
+    return s == Side::Buy ? px > limit : px < limit;
+}
+
+// mbo only: ref -> recorded shares still ahead of us. Open-addressed, sized to the
+// level's `count` at arrival. Decrement on a partial removal; erase only on a total
+// one (trap 9). O(1) membership — never a vector scan.
+class AheadSet {
+public:
+    void build(const book::Book&, Side, int32_t price, uint32_t hint);
+    bool contains(uint64_t ref) const;
+    void reduce(uint64_t ref, uint32_t by, bool total);
+    uint64_t recorded_shares() const;               // for the conditional I3b
+    void clear();
+};
+
+// Level-scoped counters live here, NOT on Entry: incrementing them inside the
+// per-Entry loop multiplies every one of them by the number of our orders at a
+// level, and `cancel_shares_ahead / cancels_seen` is a ratio the write-up quotes
+// (trap: stats multiplied per entry).
+struct Stats {
+    uint64_t fills = 0, fill_shares = 0;
+    uint64_t cancels_seen = 0, cancel_shares_ahead = 0;
+    uint64_t exec_shares_at_our_levels = 0;         // the share-weighted at-touch ratio
+    uint64_t cancel_shares_at_our_levels = 0;       //   numerator/denominator, 7.2
+    uint64_t lock_fills = 0, lock_shares = 0, lock_dwell_ns = 0;
+    uint64_t through_fills = 0, through_shares = 0;
+    uint64_t hidden_ahead_shares = 0, hidden_at_price_shares = 0,
+             hidden_inside_shares = 0;
+    uint64_t naive_fills_from_hidden = 0, naive_shares_from_hidden = 0;
+    uint64_t repriced_c = 0, nonprintable_c = 0;
+    uint64_t priority_anomalies = 0, anomaly_shares = 0;   // mbo
+    uint64_t clamp_events = 0, clamp_shares = 0;
+    uint64_t unknown_ref = 0;
+    uint64_t counterfactual_overruns = 0;           // a trade ate past us AND past our qty
+};
+
 // ---- sim/queue_model.hpp ---------------------------------------------------
 enum class Model : uint8_t { Naive = 0, Optimistic = 1, Mbo = 2, Pessimistic = 3 };
 inline constexpr int kModels = 4;

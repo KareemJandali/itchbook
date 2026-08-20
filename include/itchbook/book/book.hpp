@@ -226,7 +226,22 @@ public:
         return level_at(px);
     }
 
+    const Level* best_level() const {
+        int32_t px = 0;
+        if (!best(&px)) return nullptr;
+        return level_at(px);
+    }
+
     Level* level_at(int32_t price) {
+        uint32_t idx = index_of(price);
+        if (idx != kOverflowLevel) {
+            return dense_[idx].empty() ? nullptr : &dense_[idx];
+        }
+        auto it = overflow_.find(price);
+        return it == overflow_.end() ? nullptr : &it->second;
+    }
+
+    const Level* level_at(int32_t price) const {
         uint32_t idx = index_of(price);
         if (idx != kOverflowLevel) {
             return dense_[idx].empty() ? nullptr : &dense_[idx];
@@ -464,6 +479,25 @@ public:
         (side == 'B' ? bids_ : asks_).top(levels, out);
     }
 
+    // A locked book (bid == ask) is legal on a real feed for brief moments;
+    // a strictly crossed one (bid > ask) is not. crossed() lumps them together
+    // and is left alone because the matching engine's fuzz invariant is written
+    // against it — the simulator needs to tell them apart, because an incoming
+    // order that *locks* our resting quote takes us out, and that is a fill.
+    bool locked() const {
+        int32_t b = 0;
+        int32_t a = 0;
+        if (!bids_.best(&b) || !asks_.best(&a)) return false;
+        return b == a;
+    }
+
+    bool strictly_crossed() const {
+        int32_t b = 0;
+        int32_t a = 0;
+        if (!bids_.best(&b) || !asks_.best(&a)) return false;
+        return b > a;
+    }
+
     // Best bid >= best ask. Never legal in a correct book.
     bool crossed() const {
         int32_t b = 0;
@@ -476,6 +510,20 @@ public:
     // trades next. nullptr when that side is empty.
     const Order* best_order(char side) {
         Level* lvl = (side == 'B' ? bids_ : asks_).best_level();
+        return lvl == nullptr ? nullptr : lvl->head;
+    }
+
+    const Order* best_order(char side) const {
+        const Level* lvl = (side == 'B' ? bids_ : asks_).best_level();
+        return lvl == nullptr ? nullptr : lvl->head;
+    }
+
+    // Front of the queue at an arbitrary price, not just the best one. The
+    // simulator walks this list at order-arrival time to record which order
+    // references were resting ahead of it — which is the whole reason
+    // ahead-versus-behind is answerable on an order-by-order feed at all.
+    const Order* first_order(char side, int32_t price) const {
+        const Level* lvl = (side == 'B' ? bids_ : asks_).level_at(price);
         return lvl == nullptr ? nullptr : lvl->head;
     }
 
@@ -492,6 +540,11 @@ public:
 
     uint64_t shares_at(char side, int32_t price) {
         Level* lvl = (side == 'B' ? bids_ : asks_).level_at(price);
+        return lvl == nullptr ? 0 : lvl->shares;
+    }
+
+    uint64_t shares_at(char side, int32_t price) const {
+        const Level* lvl = (side == 'B' ? bids_ : asks_).level_at(price);
         return lvl == nullptr ? 0 : lvl->shares;
     }
 

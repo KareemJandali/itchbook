@@ -78,4 +78,73 @@ inline bool apply(Book& b, char type, const uint8_t* p) {
     }
 }
 
+// ---- pre-mutation state ------------------------------------------------------
+//
+// E, C, X, D and U carry only an order reference. The order's side, resting
+// price and remaining shares live in the book, and for a D — or an E that takes
+// the order to zero — they are gone the instant the mutation lands. Anything
+// that needs to know *where* a message landed has to look before it applies.
+//
+// This is not an optimisation, it is a correctness requirement: a simulator
+// tracking a queue at one price level cannot otherwise tell whether a cancel it
+// just saw was even at its price.
+struct PreState {
+    bool known = false;      // the reference named an order the book was holding
+    char side = 0;           // 'B' or 'S'
+    int32_t price = 0;       // the order's RESTING price, which for a C is not
+                             // the same as the price the trade printed at
+    uint32_t shares = 0;     // displayed shares before this message
+    uint64_t ref = 0;
+};
+
+// True for the message types that name an existing order by reference.
+inline bool references_resting_order(char type) {
+    switch (type) {
+        case 'E': case 'C': case 'X': case 'D': case 'U': return true;
+        default: return false;
+    }
+}
+
+inline uint64_t referenced_ref(char type, const uint8_t* p) {
+    namespace m = itchbook::itch;
+    switch (type) {
+        case 'E': return m::order_executed::ref(p);
+        case 'C': return m::order_executed_price::ref(p);
+        case 'X': return m::order_cancel::ref(p);
+        case 'D': return m::order_delete::ref(p);
+        case 'U': return m::order_replace::original_ref(p);
+        default:  return 0;
+    }
+}
+
+// apply(), with the pre-mutation snapshot the simulator needs.
+//
+// This probes the reference map once here and once inside the mutation, rather
+// than being fused into a single probe. That is a deliberate choice backed by
+// measurement: phase 4 removed exactly this kind of second, cache-warm probe
+// from the delete path and it was worth -0.5%, which is nothing (bench/README.md).
+// The second probe walks the same slot chain the first just pulled into L1.
+// Fusing them would mean widening Book's API to pass slot indices around, for a
+// gain already measured to be absent.
+//
+// What it does buy is that resolve and apply cannot disagree about which order a
+// reference names — a real hazard, since RefMap::insert resolves a duplicate
+// reference by last-writer-wins.
+inline bool apply_ex(Book& b, char type, const uint8_t* p, PreState* out) {
+    *out = PreState{};
+    if (references_resting_order(type)) {
+        const uint64_t ref = referenced_ref(type, p);
+        if (const Order* o = b.find(ref)) {
+            out->known = true;
+            out->side = static_cast<char>(o->side);
+            out->price = o->price;
+            out->shares = o->shares;
+            out->ref = ref;
+        } else {
+            out->ref = ref;   // recorded so unknown references can be counted
+        }
+    }
+    return apply(b, type, p);
+}
+
 }  // namespace itchbook::book
