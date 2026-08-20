@@ -63,3 +63,9 @@ jobs:
 
       - name: Property fuzz the queue model
         run: ./build/fuzz_queue --iterations 200000 --seed 1
+
+      # Two independent implementations of the queue rules over identical bytes.
+      # A queue model is a counterfactual with no ground truth, so agreement
+      # between them is most of the assurance available before real data.
+      - name: Differential test (queue model vs Python oracle)
+        run: python3 tests/queue_differential.py --binary build/queue_sim --seeds 2

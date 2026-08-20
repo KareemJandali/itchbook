@@ -280,10 +280,23 @@ private:
 
     void queued_commit(Entry& e, const Resolved& r, std::vector<SimFill>* fills,
                        const book::Book* post) {
-        // Price priority: a printable trade strictly through our price means a
-        // displayed order at our price would have traded first (R3).
-        if (r.cls == Class::Trade && r.printable && r.side == e.side &&
-            strictly_through(e.side, e.price, r.print_price)) {
+        // R3 — price priority. A printable trade strictly through our limit
+        // means a displayed order at our price would have traded first.
+        //
+        // Two conditions beyond the price test:
+        //
+        //   * Side is checked only when the message actually carries a reliable
+        //     one. A 'P' does not: its Buy/Sell field is the side of the
+        //     non-displayed order and is widely observed to be constant. The
+        //     price test alone is sound anyway — a print through our limit
+        //     should have hit us first whichever side rested.
+        //
+        //   * Suppressed while the other side is already at-or-through us, i.e.
+        //     while R1 is live. Otherwise both mechanisms claim the same flow
+        //     and we fill twice off one aggressor.
+        if (r.cls == Class::Trade && r.printable &&
+            strictly_through(e.side, e.price, r.print_price) &&
+            (!r.known || r.side == e.side) && !opposite_reaches_us(e, post)) {
             trade_class(e, r.shares, r.ts, Trigger::Through, fills, post);
             return;
         }
@@ -297,6 +310,15 @@ private:
             cancel_class(e, r.shares, cancel_is_ahead(e, r));
         }
         // Class::Add joins the back: no effect on anyone already resting.
+    }
+
+    // Is the other side already resting at or through our price? If so R1 owns
+    // this flow and R3 must stand down.
+    static bool opposite_reaches_us(const Entry& e, const book::Book* post) {
+        if (post == nullptr) return false;
+        int32_t best = 0;
+        const bool have = e.side == Side::Buy ? post->best_ask(&best) : post->best_bid(&best);
+        return have && at_or_through(e.side, e.price, best);
     }
 
     // THE line that separates the models.
