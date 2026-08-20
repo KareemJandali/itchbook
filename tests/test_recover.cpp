@@ -55,30 +55,65 @@ void test_halt_policy_never_rebuilds() {
 
 void test_recovery_needs_an_unbroken_run() {
     // The convergence bar. A single unresolved reference means an order from
-    // before the gap is still out there, so the count restarts — "mostly
-    // clean" is not a state the book can be trusted in.
+    // before the gap is still out there. What has to be true is that the RATE
+    // falls, not that a run of perfect messages is never interrupted.
     GapConfig c;
-    c.clean_messages_to_recover = 100;
+    c.recovery_window = 1600;
+    c.recovery_tolerance = 2;
     GapTracker t{c};
     t.on_gap(1, 10);
 
-    for (int i = 0; i < 99; ++i) t.on_reference(true);
+    // The window has to be full before a rate over it means anything.
+    for (int i = 0; i < 1599; ++i) t.on_reference(true);
     CHECK(!t.trusted());
-    t.on_reference(false);                    // one straggler resets it
-    CHECK(!t.trusted());
-    CHECK_EQ(t.clean_run(), 0u);
-
-    for (int i = 0; i < 99; ++i) t.on_reference(true);
-    CHECK(!t.trusted());
-    t.on_reference(true);                     // the hundredth
+    t.on_reference(true);
     CHECK(t.trusted());
     CHECK_EQ(t.stats().recoveries, 1u);
-    CHECK_EQ(t.stats().unknown_refs_after_gap, 1u);
+}
+
+void test_one_straggler_does_not_block_recovery_forever() {
+    // The bug real data found, and the reason this is a windowed rate rather
+    // than a consecutive run.
+    //
+    // The first version reset a counter to zero on any unresolved reference.
+    // On the synthetic feed that works, because orders churn fast and the
+    // pre-gap tail dies out in seconds. On a real MSFT day it never recovers:
+    // an order added before the gap can rest for HOURS, and one cancel of one
+    // such order wipes out a run that had climbed to nineteen thousand. The
+    // book had long since converged; the criterion could not say so.
+    GapConfig c;
+    c.recovery_window = 1600;
+    c.recovery_tolerance = 2;
+    GapTracker t{c};
+    t.on_gap(1, 10);
+
+    // A long-lived pre-gap order surfaces once every few hundred messages —
+    // rare, but never quite absent. Under the old rule this recovered never.
+    for (int round = 0; round < 4; ++round) {
+        for (int i = 0; i < 400; ++i) t.on_reference(true);
+        t.on_reference(false);
+    }
+    for (int i = 0; i < 1600; ++i) t.on_reference(true);
+    CHECK(t.trusted());
+}
+
+void test_a_sustained_rate_of_stragglers_does_block_recovery() {
+    // The other half. A book still riddled with references it cannot resolve
+    // has not converged, and tolerating a rate must not mean tolerating this.
+    GapConfig c;
+    c.recovery_window = 1600;
+    c.recovery_tolerance = 2;
+    GapTracker t{c};
+    t.on_gap(1, 10);
+    for (int i = 0; i < 20000; ++i) t.on_reference(i % 50 != 0);   // 2% unknown
+    CHECK(!t.trusted());
+    CHECK_EQ(t.stats().recoveries, 0u);
 }
 
 void test_a_second_gap_undoes_a_recovery() {
     GapConfig c;
-    c.clean_messages_to_recover = 10;
+    c.recovery_window = 10;
+    c.recovery_tolerance = 0;
     GapTracker t{c};
     t.on_gap(1, 5);
     for (int i = 0; i < 10; ++i) t.on_reference(true);
@@ -95,7 +130,8 @@ void test_a_feed_that_keeps_losing_packets_is_not_a_feed_you_are_recovering_from
     // link is not delivering the feed".
     GapConfig c;
     c.max_gaps_before_halt = 5;
-    c.clean_messages_to_recover = 1;
+    c.recovery_window = 1;
+    c.recovery_tolerance = 0;
     GapTracker t{c};
     for (int i = 0; i < 5; ++i) {
         CHECK(t.on_gap(static_cast<uint64_t>(i) * 100, 1));
@@ -140,14 +176,16 @@ void test_a_message_about_the_pre_gap_world_is_expected_not_an_error() {
     // — it is the signal that recovery is not finished, and it is the only
     // signal the feed gives us.
     GapConfig c;
-    c.clean_messages_to_recover = 5;
+    c.recovery_window = 1600;
+    c.recovery_tolerance = 0;
     GapTracker t{c};
     t.on_gap(1, 100);
-    for (int i = 0; i < 20; ++i) t.on_reference(false);
-    CHECK_EQ(t.stats().unknown_refs_after_gap, 20u);
-    CHECK_EQ(t.stats().messages_untrusted, 20u);
+    for (int i = 0; i < 200; ++i) t.on_reference(false);
+    CHECK_EQ(t.stats().unknown_refs_after_gap, 200u);
+    CHECK_EQ(t.stats().messages_untrusted, 200u);
     CHECK(!t.trusted());
-    for (int i = 0; i < 5; ++i) t.on_reference(true);
+    // Once the stragglers stop and a full clean window has gone by, it is over.
+    for (int i = 0; i < 3200; ++i) t.on_reference(true);
     CHECK(t.trusted());
 }
 
@@ -179,7 +217,8 @@ void test_a_truncated_stream_outranks_a_recovery_in_progress() {
     // not recovering: there is no bound on what was missed and no further
     // messages with which to demonstrate convergence.
     GapConfig c;
-    c.clean_messages_to_recover = 10;
+    c.recovery_window = 10;
+    c.recovery_tolerance = 0;
     GapTracker t{c};
     t.on_gap(100, 50);
     CHECK(!t.trusted());
@@ -197,6 +236,8 @@ int main() {
     test_a_second_gap_undoes_a_recovery();
     test_a_feed_that_keeps_losing_packets_is_not_a_feed_you_are_recovering_from();
     test_clearing_a_book_keeps_the_tape_and_drops_the_orders();
+    test_one_straggler_does_not_block_recovery_forever();
+    test_a_sustained_rate_of_stragglers_does_block_recovery();
     test_a_message_about_the_pre_gap_world_is_expected_not_an_error();
     test_a_stream_that_stopped_is_not_a_stream_that_ended();
     test_a_truncated_stream_outranks_a_recovery_in_progress();
