@@ -444,10 +444,37 @@ private:
         return total;
     }
 
+    // Retire filled orders, and actually let go of them.
+    //
+    // This used to only flip `live` to false and keep the entry in the vector
+    // forever. Every dead quote therefore stayed in a list that is walked
+    // several times per message — by the commit loop, by price priority, by the
+    // clamp, by own_live_ahead — and a strategy that requotes on every touch
+    // move accumulates them all day. The cost is O(quotes placed) per message,
+    // which is quadratic in the length of the run, and it does not show up on a
+    // small feed: 50k messages took 1.5s, 100k took 5.5s, 200k took 21s. On a
+    // real 1.2M-message day that is thirteen minutes for ONE latency point and
+    // over an hour for a sweep.
+    //
+    // Erasing is behaviour-preserving because every one of those loops already
+    // skips `!e.live` — the dead entries were pure overhead, contributing
+    // nothing but the walk past them.
     void reap() {
-        for (Entry& e : entries_) {
+        size_t write = 0;
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            Entry& e = entries_[i];
             if (e.live && e.display == 0 && e.hidden == 0) e.live = false;
+            if (!e.live) {
+                // The mbo model's per-order set of what was ahead dies with it.
+                // Leaving these behind leaks a hash entry per quote for the
+                // whole session.
+                ahead_sets_.erase(e.id);
+                continue;
+            }
+            if (write != i) entries_[write] = e;
+            ++write;
         }
+        entries_.resize(write);
     }
 
     QueueConfig cfg_;
