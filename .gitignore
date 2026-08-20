@@ -2,6 +2,10 @@
 build/
 build-*/
 cmake-build-*/
+
+# Output of scripts/real-data-run.sh. Derived from licensed data, so it is
+# ignored for the same reason data/ is.
+out/
 compile_commands.json
 
 # Market data — never commit (multi-GB, licensed).
