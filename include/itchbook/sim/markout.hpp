@@ -92,21 +92,31 @@ public:
     // wrong number.
     void observe(uint64_t now_ns, const Mid& mid) {
         if (!mid.ok()) return;
-        // Samples are appended in time order, so once a sample has every horizon
-        // resolved it never needs revisiting. `first_open_` walks forward.
-        for (size_t i = first_open_; i < samples_.size(); ++i) {
-            Sample& s = samples_[i];
-            bool all_done = true;
-            for (size_t h = 0; h < kNumHorizons; ++h) {
-                if (s.resolved[h]) continue;
-                if (now_ns >= s.ts + kHorizons[h]) {
-                    s.two_mid_at[h] = mid.two_mid;
-                    s.resolved[h] = true;
-                } else {
-                    all_done = false;
-                }
+        // Each horizon gets its OWN cursor. Samples are appended in time order
+        // and every horizon is a fixed offset from a sample's timestamp, so
+        // horizon h resolves samples strictly in order: everything before
+        // next_[h] is resolved for h, everything from it on is not. Advancing
+        // three cursors costs work proportional to what actually became
+        // resolvable on this message, and nothing at all on the messages where
+        // that is none of them.
+        //
+        // The previous version kept ONE frontier that advanced only when a
+        // sample had ALL horizons resolved, and rescanned from there on every
+        // message. With a ten-second horizon that frontier lags by ten seconds
+        // of fills, so every message walked every fill of the last ten seconds:
+        // O(fills in flight) per message rather than O(1) amortised. On a
+        // 1.2M-message day it was 40 of the 47 seconds a single backtest took,
+        // and a six-point latency sweep took the better part of an hour. It did
+        // not show up on a 200k-message feed, which is the only size anything
+        // was ever run at before real data.
+        for (size_t h = 0; h < kNumHorizons; ++h) {
+            while (next_[h] < samples_.size() &&
+                   now_ns >= samples_[next_[h]].ts + kHorizons[h]) {
+                Sample& s = samples_[next_[h]];
+                s.two_mid_at[h] = mid.two_mid;
+                s.resolved[h] = true;
+                ++next_[h];
             }
-            if (all_done && i == first_open_) ++first_open_;
         }
     }
 
@@ -142,7 +152,8 @@ public:
 
 private:
     std::vector<Sample> samples_;
-    size_t first_open_ = 0;
+    // One cursor per horizon; see observe().
+    size_t next_[kNumHorizons] = {};
     uint64_t fills_without_mid_ = 0;
 };
 
