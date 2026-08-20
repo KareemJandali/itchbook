@@ -1,8 +1,10 @@
 name: ci
 
+# Every branch, not just main. Restricting this to main meant four phases of
+# work were pushed to a feature branch without CI ever running, and the first
+# run after merging failed on a warning clang catches and gcc does not.
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:

@@ -3,11 +3,15 @@ build/
 cmake-build-*/
 compile_commands.json
 
-# Market data — never commit (multi-GB, licensed)
-data/raw/
-data/sliced/
+# Market data — never commit (multi-GB, licensed).
+# Ignore the contents, not the directories: excluding a directory outright
+# means a fresh clone has nowhere to write, and every tool that opens a file
+# under it fails.
+data/raw/*
+data/sliced/*
+!data/raw/.gitkeep
+!data/sliced/.gitkeep
 *.gz
-!data/.gitkeep
 
 # Credentials — API keys belong in the environment, never in the tree
 .env
