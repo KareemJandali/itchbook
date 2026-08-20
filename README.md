@@ -3,11 +3,12 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phase 3 (C++ parser + book). The C++ book reconstructs from the
-> feed and agrees with the Python oracle byte for byte across adversarial
-> replays — that differential test runs in CI on every push. **Not yet
-> validated against real market data**, which is what actually closes phases 2
-> and 3; see [Validation](#validation). See
+> **Status:** Phase 3 (C++ parser + book). Reconstructs MSFT from a real
+> NASDAQ trading day — 30 Dec 2019, 1,221,484 messages — with the C++ book and
+> the Python oracle producing **61,228 byte-identical snapshot rows** and zero
+> unknown order references. That closes phase 3's done-condition. Phase 2's
+> remains open: the numbers have not yet been graded against an external
+> oracle, see [Validation](#validation). See
 > [`docs/build-plan.md`](docs/build-plan.md) for the full eight-phase roadmap.
 
 ## What it's for
@@ -173,8 +174,9 @@ against our own Python oracle. Both would pass happily if our reading of the
 ITCH spec were wrong *in the same way in both implementations*. Only an outside
 number settles that, and until one has been matched this project knows nothing.
 
-That is phase 2's done-condition, and it has **not been run yet** — no raw ITCH
-day has been through it.
+That is phase 2's done-condition, and it has **not been run yet**. A real day
+*has* now been through the reconstruction — see `validation/` — but the numbers
+it produced have not been checked against anybody else's.
 
 ### Grading a reconstruction
 
