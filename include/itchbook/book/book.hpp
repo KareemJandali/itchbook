@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "itchbook/book/level.hpp"
@@ -143,6 +144,29 @@ private:
     std::vector<Slot> slots_;
     size_t mask_ = 0;
     size_t size_ = 0;
+};
+
+// ---- the storage a book mutates ---------------------------------------------
+
+// A single-symbol book owns one of these. Every book in a BookSet shares ONE,
+// and that is not an optimisation to be measured later — it is the only way the
+// thing fits. A per-book RefMap at the default 1<<20 slots is 16 MB, so nine
+// thousand books would want ~144 GB before a single order existed.
+//
+// One shared reference map is correct rather than merely cheap: ITCH order
+// references are unique across the whole day's feed, so two symbols can never
+// name the same order.
+//
+// The pool is shared for a second reason as well. Allocation order follows
+// arrival order, so orders that arrive together sit together and a cache line
+// pulled in for one message is warm for the next; 8,700 independent free lists
+// threaded through the same chunks would lose that. Whether it actually pays is
+// measured in phase 9.9, against a prediction written first.
+struct Storage {
+    RefMap refs;
+    Pool   pool;
+
+    explicit Storage(size_t refs_capacity = 1u << 20) : refs(refs_capacity) {}
 };
 
 // ---- one side of the book ---------------------------------------------------
@@ -330,6 +354,36 @@ public:
         }
     }
 
+    // Every order resting on this side, with mutable access, in no meaningful
+    // order. One caller: clearing a book whose pool and reference map belong to
+    // 8,700 other books, which cannot drop the containers and walk away.
+    //
+    // The dense scan stops as soon as it has seen every non-empty level, so it
+    // costs the occupied part of the band rather than the band. `fn` is allowed
+    // to destroy the order it is handed, which is why the successor is read
+    // first: deallocating an order overwrites its `next`.
+    template <typename Fn>
+    void for_each_order_mut(Fn&& fn) {
+        size_t remaining = dense_nonempty_;
+        for (size_t i = 0; i < dense_.size() && remaining > 0; ++i) {
+            Level& lvl = dense_[i];
+            if (lvl.empty()) continue;
+            --remaining;
+            for (Order* o = lvl.head; o != nullptr;) {
+                Order* next = o->next;
+                fn(o);
+                o = next;
+            }
+        }
+        for (auto& entry : overflow_) {
+            for (Order* o = entry.second.head; o != nullptr;) {
+                Order* next = o->next;
+                fn(o);
+                o = next;
+            }
+        }
+    }
+
     size_t level_count() const { return dense_nonempty_ + overflow_.size(); }
     size_t overflow_count() const { return overflow_.size(); }
 
@@ -392,10 +446,23 @@ public:
     // It is a cache-locality knob, not just a memory one: every message carries
     // an order reference, so a table too large to sit in cache costs a miss on
     // the hottest lookup in the program. See bench/README.md.
+    // Owning: one book with a reference map and a pool to itself. Every caller
+    // that is not a BookSet, and identical in behaviour to before the storage
+    // moved out from under it.
     explicit Book(int32_t tick = 100, int32_t band_pct = 20,
                   size_t refs_capacity = 1u << 20)
-        : tick_(tick), band_pct_(band_pct), refs_capacity_(refs_capacity),
-          refs_(refs_capacity), bids_('B', tick), asks_('S', tick) {}
+        : owned_(std::make_unique<Storage>(refs_capacity)), store_(owned_.get()),
+          tick_(tick), band_pct_(band_pct), bids_('B', tick), asks_('S', tick) {}
+
+    // Borrowing: the storage belongs to the BookSet and outlives every book in
+    // it. `locate` is carried so a book knows which symbol it is without asking
+    // the set; it is not how messages are routed — every ITCH message already
+    // carries its locate in the common header — and phase 9.3 stamps it into
+    // each Order, where it becomes a cross-check that a reference resolved to
+    // an order belonging to the symbol the message named.
+    Book(Storage& store, uint16_t locate, int32_t tick = 100, int32_t band_pct = 20)
+        : store_(&store), locate_(locate),
+          tick_(tick), band_pct_(band_pct), bids_('B', tick), asks_('S', tick) {}
 
     // Throw away every resting order and start again from empty.
     //
@@ -410,10 +477,10 @@ public:
     // prints before it un-happen. They are incomplete after a gap, which is a
     // different thing from wrong, and `unknown_ref` records the difference.
     void clear_orders() {
-        pool_ = Pool();
-        refs_ = RefMap(refs_capacity_);
+        release_all_orders();
         bids_ = Side('B', tick_);
         asks_ = Side('S', tick_);
+        resting_orders_ = 0;
         resting_shares_ = 0;
     }
 
@@ -424,21 +491,22 @@ public:
             bids_.set_band(price, band_pct_, kMaxDenseLevels);
             asks_.set_band(price, band_pct_, kMaxDenseLevels);
         }
-        Order* o = pool_.allocate();
+        Order* o = store_->pool.allocate();
         o->ref = ref;
         o->shares = shares;
         o->price = price;
         o->side = static_cast<uint8_t>(side);
         side_for(side).push(o);
-        refs_.insert(ref, o);
+        store_->refs.insert(ref, o);
+        ++resting_orders_;
         resting_shares_ += shares;
     }
 
     // 'E' — trades at the resting order's own price.
     void execute(uint64_t ref, uint32_t shares) {
-        size_t slot = refs_.find_index(ref);
+        size_t slot = store_->refs.find_index(ref);
         if (slot == RefMap::npos) { ++unknown_ref_; return; }
-        Order* o = refs_.at(slot);
+        Order* o = store_->refs.at(slot);
         record_trade(o->price, shares);
         reduce(o, shares, slot);
     }
@@ -446,32 +514,32 @@ public:
     // 'C' — trades at a stated price. A non-printable execution still removes
     // the shares from the book but must not count toward volume, VWAP or OHLC.
     void execute_with_price(uint64_t ref, uint32_t shares, int32_t price, bool printable) {
-        size_t slot = refs_.find_index(ref);
+        size_t slot = store_->refs.find_index(ref);
         if (slot == RefMap::npos) { ++unknown_ref_; return; }
         if (printable) record_trade(price, shares);
-        reduce(refs_.at(slot), shares, slot);
+        reduce(store_->refs.at(slot), shares, slot);
     }
 
     // 'X' — partial cancel. Not a trade: no volume.
     void cancel(uint64_t ref, uint32_t shares) {
-        size_t slot = refs_.find_index(ref);
+        size_t slot = store_->refs.find_index(ref);
         if (slot == RefMap::npos) { ++unknown_ref_; return; }
-        reduce(refs_.at(slot), shares, slot);
+        reduce(store_->refs.at(slot), shares, slot);
     }
 
     // 'D' — full removal.
     void remove(uint64_t ref) {
-        size_t slot = refs_.find_index(ref);
+        size_t slot = store_->refs.find_index(ref);
         if (slot == RefMap::npos) { ++unknown_ref_; return; }
-        destroy(refs_.at(slot), slot);
+        destroy(store_->refs.at(slot), slot);
     }
 
     // 'U' — delete then add. Side is inherited from the original order; the
     // replacement joins the back of its new level, losing queue priority.
     void replace(uint64_t orig_ref, uint64_t new_ref, int32_t price, uint32_t shares) {
-        size_t slot = refs_.find_index(orig_ref);
+        size_t slot = store_->refs.find_index(orig_ref);
         if (slot == RefMap::npos) { ++unknown_ref_; return; }
-        Order* o = refs_.at(slot);
+        Order* o = store_->refs.at(slot);
         char side = static_cast<char>(o->side);
         destroy(o, slot);
         add(new_ref, side, price, shares);
@@ -553,9 +621,9 @@ public:
     // its own fill accounting and must not also move this book's market trade
     // statistics, which describe the *feed's* trades and not ours.
     void take(uint64_t ref, uint32_t shares) {
-        size_t slot = refs_.find_index(ref);
+        size_t slot = store_->refs.find_index(ref);
         if (slot == RefMap::npos) { ++unknown_ref_; return; }
-        reduce(refs_.at(slot), shares, slot);
+        reduce(store_->refs.at(slot), shares, slot);
     }
 
     uint64_t shares_at(char side, int32_t price) {
@@ -568,8 +636,13 @@ public:
         return lvl == nullptr ? 0 : lvl->shares;
     }
 
-    const Order* find(uint64_t ref) const { return refs_.find(ref); }
-    size_t resting_orders() const { return pool_.live(); }
+    const Order* find(uint64_t ref) const { return store_->refs.find(ref); }
+
+    // Was pool_.live(). A shared pool counts every symbol's orders, so this has
+    // to be the book's own tally or an all-symbols run would report the whole
+    // market's resting order count for each of 8,700 books.
+    size_t resting_orders() const { return resting_orders_; }
+    uint16_t locate() const { return locate_; }
     uint64_t resting_shares() const { return resting_shares_; }
 
     uint64_t volume() const { return volume_; }
@@ -652,8 +725,9 @@ public:
 
     uint64_t unknown_ref() const { return unknown_ref_; }
     size_t overflow_levels() const { return bids_.overflow_count() + asks_.overflow_count(); }
-    const Pool& pool() const { return pool_; }
-    const RefMap& refs() const { return refs_; }
+    const Pool& pool() const { return store_->pool; }
+    const RefMap& refs() const { return store_->refs; }
+    const Storage& storage() const { return *store_; }
 
     // Session state, tracked for the summary and for phase 7.
     void set_trading_state(char c) { trading_state_ = c; }
@@ -696,19 +770,37 @@ private:
     // walked once per message rather than twice.
     void destroy(Order* o, size_t slot) {
         resting_shares_ -= o->shares;
+        --resting_orders_;
         side_for(static_cast<char>(o->side)).pop(o);
-        refs_.erase_at(slot);
-        pool_.deallocate(o);
+        store_->refs.erase_at(slot);
+        store_->pool.deallocate(o);
     }
 
+    // Hand this book's orders back one at a time, because the containers belong
+    // to everyone. The old implementation dropped the whole Pool and the whole
+    // RefMap and rebuilt them — correct while a book was the only thing in
+    // them, and a silent emptying of 8,699 other books the moment it was not. A
+    // gap on one symbol is not an outage for the rest of the market.
+    void release_all_orders() {
+        auto release = [this](Order* o) {
+            store_->refs.erase(o->ref);
+            store_->pool.deallocate(o);
+        };
+        bids_.for_each_order_mut(release);
+        asks_.for_each_order_mut(release);
+    }
+
+    // Non-null always. It points into owned_ when this book has its own
+    // storage, and at the BookSet's when it does not.
+    std::unique_ptr<Storage> owned_;
+    Storage* store_;
+    uint16_t locate_ = 0;
     int32_t tick_;
     int32_t band_pct_;
-    size_t refs_capacity_;
-    Pool pool_;
-    RefMap refs_;
     Side bids_;
     Side asks_;
 
+    size_t resting_orders_ = 0;
     uint64_t resting_shares_ = 0;
     uint64_t volume_ = 0;
     uint64_t notional_ = 0;

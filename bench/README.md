@@ -204,3 +204,33 @@ The two are consistent. Three timed replays at (142.31 - 82.04) cycles/msg is
 181M cycles saved, against a process-level delta of 192M; the remainder is the
 instrumented pass. Quoting the 42% against a whole-process counter would have
 been wrong, and the counter is what caught it.
+
+## Phase 9.1 — a third prediction, also flat
+
+The shared-storage refactor moved `RefMap` and `Pool` out of `Book` and behind a
+pointer, so every reference probe on the hot path became `store_->refs` where it
+had been `refs_`. That is one extra load per message on the hottest lookup in
+the program, and phase 4's rule says it gets a prediction before it gets a
+measurement.
+
+**Predicted flat.** The pointer is loaded once per call from a `Book` that is
+already in cache, it never changes, and the compiler can hoist it out of
+anything it inlines. The load it guards — a probe into a table far larger than
+L2 — costs orders of magnitude more.
+
+Measured, interleaved, pinned, nine rounds on a 1M-message feed:
+
+| | cycles/msg | p50 | p99 | p99.9 |
+|---|---:|---:|---:|---:|
+| owned storage (before) | 76.43 | 58 | 330 | 620 |
+| shared storage (after) | 76.65 | 58 | 348 | 654 |
+
+**-0.3%**, and `compare.py` refused to call it: it reported 29.3% spread on the
+`before` variant and printed its own warning that the delta is too small to
+trust on that machine. Both facts belong here. The honest statement is not "the
+indirection costs 0.3%" — it is that the indirection is smaller than this
+hardware can resolve, and the number above is the bound, not the effect.
+
+That makes three predictions in this file that measured flat, against one that
+mattered. Which is the ratio the phase-4 section already warned about: the wins
+are not where the plan expects them.

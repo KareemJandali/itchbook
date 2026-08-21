@@ -170,6 +170,110 @@ void test_clearing_a_book_keeps_the_tape_and_drops_the_orders() {
     CHECK_EQ(b.resting_orders(), 1u);
 }
 
+// ---- shared storage --------------------------------------------------------
+//
+// Phase 9 puts every symbol in one process behind one reference map and one
+// pool, because a per-book map at the default size is 16 MB and nine thousand
+// of them do not fit in a machine. That makes recovery a different problem: a
+// gap on one symbol must not be an outage for the other 8,699, and the old
+// clear_orders() -- which dropped the whole Pool and the whole RefMap and built
+// new ones -- would have been exactly that. It would not have failed a test
+// either, because until now a book was the only thing in its containers.
+
+void test_clearing_one_book_leaves_its_neighbours_untouched() {
+    itchbook::book::Storage store;
+    itchbook::book::Book a(store, /*locate=*/1);
+    itchbook::book::Book b(store, /*locate=*/2);
+
+    a.add(10, 'B', 1000000, 100);
+    a.add(11, 'B', 999900, 200);
+    a.add(12, 'S', 1000200, 300);
+    b.add(20, 'B', 500000, 400);
+    b.add(21, 'S', 500100, 500);
+
+    CHECK_EQ(a.resting_orders(), 3u);
+    CHECK_EQ(b.resting_orders(), 2u);
+    CHECK_EQ(store.pool.live(), 5u);
+    CHECK_EQ(store.refs.size(), 5u);
+
+    a.clear_orders();
+
+    // The cleared book is empty...
+    CHECK_EQ(a.resting_orders(), 0u);
+    CHECK_EQ(a.resting_shares(), 0u);
+    CHECK(a.find(10) == nullptr);
+    CHECK(a.find(11) == nullptr);
+    CHECK(a.find(12) == nullptr);
+
+    // ...and its neighbour has not noticed. This is the assertion the whole
+    // refactor exists for: every one of b's references still resolves, to the
+    // same order, with the same shares.
+    CHECK_EQ(b.resting_orders(), 2u);
+    CHECK_EQ(b.resting_shares(), 900u);
+    const itchbook::book::Order* b20 = b.find(20);
+    const itchbook::book::Order* b21 = b.find(21);
+    CHECK(b20 != nullptr);
+    CHECK(b21 != nullptr);
+    // Guarded, so that a regression here reports every check that failed
+    // instead of dereferencing null and taking the run down with it.
+    if (b20 != nullptr) CHECK_EQ(b20->shares, 400u);
+    if (b21 != nullptr) CHECK_EQ(b21->shares, 500u);
+    int32_t px = 0;
+    CHECK(b.best_bid(&px));
+    CHECK_EQ(px, 500000);
+
+    // Exactly three nodes went back to the shared pool: the cleared book's,
+    // and nobody else's. A clear that leaked would leave live() at 5 and a
+    // clear that over-freed would corrupt b, and neither shows up in b's own
+    // numbers -- only in the pool's.
+    CHECK_EQ(store.pool.live(), 2u);
+    CHECK_EQ(store.refs.size(), 2u);
+
+    // And the cleared book still works. A gap that leaves a symbol unusable
+    // turns one lost packet into the end of that symbol's session.
+    a.add(13, 'B', 1000100, 600);
+    CHECK_EQ(a.resting_orders(), 1u);
+    CHECK(a.best_bid(&px));
+    CHECK_EQ(px, 1000100);
+    CHECK_EQ(store.pool.live(), 3u);
+}
+
+void test_shared_storage_keeps_two_books_apart_under_ordinary_flow() {
+    // Not just on recovery: adds, executions and deletes on one book must not
+    // move the other's counts, and a shared pool must hand every book its own
+    // nodes. Reference uniqueness across the feed is what makes one map legal,
+    // so the two books here deliberately never share a reference.
+    itchbook::book::Storage store;
+    itchbook::book::Book a(store, 1);
+    itchbook::book::Book b(store, 2);
+
+    for (uint64_t i = 0; i < 50; ++i) a.add(100 + i, 'B', 1000000 - static_cast<int32_t>(i) * 100, 10);
+    for (uint64_t i = 0; i < 30; ++i) b.add(200 + i, 'S', 2000000 + static_cast<int32_t>(i) * 100, 20);
+
+    CHECK_EQ(a.resting_orders(), 50u);
+    CHECK_EQ(b.resting_orders(), 30u);
+    CHECK_EQ(store.pool.live(), 80u);
+
+    a.execute(100, 10);          // empties the order
+    a.remove(101);
+    b.execute(200, 5);           // partial: the order stays
+
+    CHECK_EQ(a.resting_orders(), 48u);
+    CHECK_EQ(b.resting_orders(), 30u);
+    const itchbook::book::Order* b200 = b.find(200);
+    CHECK(b200 != nullptr);
+    if (b200 != nullptr) CHECK_EQ(b200->shares, 15u);
+    CHECK_EQ(store.pool.live(), 78u);
+
+    // Volume is per book, not per storage. Two symbols sharing a pool must not
+    // share a tape.
+    CHECK_EQ(a.volume(), 10u);
+    CHECK_EQ(b.volume(), 5u);
+
+    CHECK_EQ(a.locate(), 1u);
+    CHECK_EQ(b.locate(), 2u);
+}
+
 void test_a_message_about_the_pre_gap_world_is_expected_not_an_error() {
     // Every delete or execution referencing an order we threw away is a message
     // about the world before the gap. It is not corruption and it is not a bug
@@ -236,6 +340,8 @@ int main() {
     test_a_second_gap_undoes_a_recovery();
     test_a_feed_that_keeps_losing_packets_is_not_a_feed_you_are_recovering_from();
     test_clearing_a_book_keeps_the_tape_and_drops_the_orders();
+    test_clearing_one_book_leaves_its_neighbours_untouched();
+    test_shared_storage_keeps_two_books_apart_under_ordinary_flow();
     test_one_straggler_does_not_block_recovery_forever();
     test_a_sustained_rate_of_stragglers_does_block_recovery();
     test_a_message_about_the_pre_gap_world_is_expected_not_an_error();
