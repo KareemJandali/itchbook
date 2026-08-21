@@ -772,6 +772,82 @@ Plus a torture test: producer pinned faster than consumer for sustained periods;
 assert every message is either applied exactly once or accounted as a graded
 drop. Shares conserved across the boundary.
 
+### 10.6 — what actually happened
+
+`scripts/determinism-gate.sh`, in CI. Both halves land as stated, and the gate
+earned its keep on the first run.
+
+**Gate A: one book, six schedules.** Three ring sizes crossed with two rates.
+Each clean run's `--per-symbol` output must be byte-identical to
+`book_replay --all-symbols` on the same feed. Six configurations rather than one
+because a single match proves the code ran; six matching across rings from 4,096
+to 65,536 slots proves the answer does not depend on how full the ring got or
+how often the consumer starved.
+
+Both sides now call the *same* writer — `write_per_symbol` moved out of
+`book_replay.cpp` into `include/itchbook/book/report.hpp`. A second copy of that
+formatting would have made the comparison worthless in both directions: failing
+on a trailing zero, or passing because both copies were wrong the same way.
+
+A configuration that drops is above the knee on that machine, and a book built
+from a feed with holes is not supposed to match one built from the whole feed.
+Those runs are **skipped by name and counted**, and the gate fails if fewer than
+four stayed clean — a machine that dropped everything must not report a pass
+having compared nothing.
+
+**Gate B: what was applied, against what was sent.** Under sustained overload,
+`--applied-out` records the raw bytes of every message the book thread applied,
+and a checker requires that stream to be an exact in-order subsequence of the
+sender's feed.
+
+The obvious version of this test cannot work, and the reason is worth keeping:
+replaying the recording and diffing the books would pass even if the ring handed
+the consumer a slot the producer had already overwritten, because the recording
+contains the corrupted message and a synchronous replay of it reproduces the
+same wrong book. Checking against the sender catches duplication, corruption and
+reordering; a book-to-book diff catches none of them.
+
+**Two bugs, and the second is the one this phase was for.**
+
+1. *Phantom drops.* The drop decision compared `writable()`'s lower bound
+   against `kBatch` instead of against what the packet needed. At `--ring-log2
+   12` it refused **2,464 packets for want of room in a ring that peaked at
+   1,683 of 4,096 slots** — and refused an identical 2,464 at 30,000 and at
+   90,000 msg/s, because the cache's staleness is a function of how many
+   messages have gone by and not of the clock. Rate-independent loss was the
+   tell. This would have put a cliff in 10.7's curve that the pipeline does not
+   have.
+2. *A ring overrun that lost nothing.* Fixing (1) meant asking for the true free
+   count before declaring a drop, computed as `capacity() - size()`. That is the
+   right number obtained the wrong way. `writable()` keeps a stale copy of the
+   consumer's cursor and refreshes it only when it would report zero — sound
+   only while the producer publishes no more than `writable()` itself offered.
+   Publishing against `size()` walked `head - cached_tail_` past capacity, and
+   the next `writable()` underflowed in unsigned arithmetic to **18,446,744,073,
+   709,551,612 free slots in a 1,024-slot ring**. The producer then overwrote
+   slots the consumer had not read.
+
+   Nothing was lost. Sent 252,482, applied 252,482, every identity satisfied,
+   exit 0. The messages came out **reordered by exactly one lap of the ring** —
+   visible in the applied stream as 24 jumps of −1023, 22 of +1025 and one of
+   +2049. Every count-based check in the tool passed, because counting is not
+   ordering. Only Gate B saw it.
+
+   `publish()`'s assert catches this and is compiled out of the Release build the
+   measurement runs in; the Debug build aborts with *"published more slots than
+   writable() offered"*, which named the bug exactly.
+
+   The fix belongs in the ring, not the caller: there was no way to ask for the
+   true free count without breaking the cache invariant. `writable_exact()`
+   refreshes the cursor and returns the truth in one call, and
+   `test_spsc_ring.cpp` now has the failure reduced to eight slots — the
+   `capacity() - size()` pattern reports 18 quintillion free slots on lap zero.
+
+**Still open:** the plan's `consumer-slow` scenario for `adversarial.py` and the
+kill switch's ring-occupancy input are not built. Gate B covers what that
+scenario was for — conservation and ordering under sustained backpressure — but
+does not grade it on the CORRECT/SAFE/CAUTIOUS/WRONG scale the other twelve use.
+
 ### 10.7 — The headline artifact: the rate–latency curve
 
 Sweep `--rate` from real-time — compute the real number from census timestamps,

@@ -129,6 +129,38 @@ public:
         return free_slots;
     }
 
+    // The TRUE number of free slots, at the cost of reading the consumer's
+    // cache line every time.
+    //
+    // This exists because writable()'s lower bound is not merely imprecise --
+    // it carries an invariant, and reading around it corrupts the ring.
+    // writable() computes `Capacity - (head - cached_tail_)` and refreshes the
+    // cache only when that reaches zero, which is safe ONLY while the producer
+    // publishes no more than writable() returned. Publish more than that -- for
+    // instance because you computed the free count some other way, from size()
+    // -- and `head - cached_tail_` passes Capacity, so the next writable()
+    // computes a NEGATIVE free count in unsigned arithmetic and hands back
+    // roughly eighteen quintillion. The producer then cheerfully overwrites
+    // slots the consumer has not read.
+    //
+    // That is not hypothetical. wire_to_book needed the true figure before
+    // declaring a packet dropped, computed it as `capacity() - size()`, and
+    // published against it. The result was a book whose messages were applied
+    // out of order by exactly one lap of the ring -- 1,024 slots, appearing in
+    // the applied stream as jumps of -1023 and +1025 -- and it was invisible in
+    // Release because publish()'s assert is the only thing that catches it.
+    //
+    // So: refresh the cache and return the truth, in one call, leaving the
+    // invariant intact for every writable() that follows. Callers that only
+    // ever act on writable()'s answer should keep using writable(); this is for
+    // the caller that must decide something irreversible -- drop this packet --
+    // and cannot act on a lower bound.
+    size_t writable_exact() {
+        cached_tail_ = tail_.load(std::memory_order_acquire);
+        const uint64_t head = head_.load(std::memory_order_relaxed);
+        return Capacity - static_cast<size_t>(head - cached_tail_);
+    }
+
     // The slot `n` ahead of the write cursor, for filling in place. Writing a
     // batch means calling this for each slot and then publish(n) ONCE.
     Slot& write_slot(size_t n = 0) {

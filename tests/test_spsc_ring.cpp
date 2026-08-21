@@ -262,6 +262,60 @@ void test_a_slow_consumer_never_loses_a_message() {
     CHECK(drag.load() > 0);   // the spin was not optimised away
 }
 
+// The bug that phase 10.6 found four layers up, reduced to the ring.
+//
+// A producer that needs the TRUE free count -- because it has to decide
+// something irreversible, like whether to drop a packet -- cannot use
+// writable(), which is a lower bound. The obvious substitute is
+// `capacity() - size()`, which returns the right number and silently breaks the
+// ring: writable() keeps a stale copy of the consumer's cursor and refreshes it
+// only when it would report zero, which is sound only while the producer
+// publishes no more than writable() itself offered. Publish against size() and
+// `head - cached_tail_` walks past Capacity, so the next writable() underflows
+// in unsigned arithmetic and reports about eighteen quintillion free slots.
+//
+// Nothing is lost when that happens, which is why it survived every count-based
+// check: the producer overwrites slots the consumer has not read, and the
+// messages come out REORDERED by exactly one lap of the ring.
+void test_the_true_free_count_does_not_corrupt_the_cached_view() {
+    SpscRing<uint64_t, 8> r;
+    uint64_t v = 0;
+
+    // Drive the producer's cached view of the consumer as stale as it can be:
+    // fill, drain completely, and never let writable() hit zero and refresh.
+    for (uint64_t i = 0; i < 4; ++i) CHECK(r.push(i));
+    for (uint64_t i = 0; i < 4; ++i) CHECK(r.pop(&v));
+    CHECK(r.empty());
+
+    // writable() may now under-report -- that is its contract and not a bug.
+    // writable_exact() must report the truth AND leave the cache consistent.
+    CHECK(r.writable() <= 8);
+    CHECK_EQ(r.writable_exact(), size_t{8});
+
+    // The invariant the whole structure rests on: after any number of
+    // writable_exact() calls, publishing what it offered must never make
+    // writable() overstate. Ten laps, filling to whatever the exact count says
+    // each time, is enough for a broken cache to run away.
+    for (int lap = 0; lap < 10; ++lap) {
+        const size_t room = r.writable_exact();
+        CHECK(room <= 8);
+        for (size_t k = 0; k < room; ++k) r.write_slot(k) = static_cast<uint64_t>(lap * 100 + k);
+        r.publish(room);
+        CHECK(r.writable() <= 8);          // never eighteen quintillion
+        CHECK_EQ(r.size(), room);
+        for (size_t k = 0; k < room; ++k) {
+            CHECK(r.pop(&v));
+            CHECK_EQ(v, static_cast<uint64_t>(lap * 100 + static_cast<int>(k)));
+        }
+        CHECK(r.empty());
+    }
+
+    // And it never overstates: whatever it offers, the ring can actually hold.
+    for (uint64_t i = 0; i < 5; ++i) CHECK(r.push(100 + i));
+    CHECK_EQ(r.writable_exact(), size_t{3});
+    CHECK_EQ(r.writable_exact() + r.size(), size_t{8});
+}
+
 }  // namespace
 
 int main() {
@@ -274,5 +328,6 @@ int main() {
     test_the_counter_keeps_counting_past_the_array();
     test_two_threads_conserve_every_message_and_their_order();
     test_a_slow_consumer_never_loses_a_message();
+    test_the_true_free_count_does_not_corrupt_the_cached_view();
     return REPORT();
 }

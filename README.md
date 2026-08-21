@@ -570,6 +570,9 @@ scripts/            real-data-run.sh, full-day-differential.sh,
                     machine with no market data on it
                     wire-to-book-check.sh — the UDP pipeline must lose nothing,
                     and must notice when it does
+                    determinism-gate.sh — the pipeline may reorder time, never
+                    effect: its book must equal the synchronous one, byte for
+                    byte, across six timing regimes
 tests/              unit, property fuzzers, and the cross-implementation differentials
 data/  out/         gitignored — raw feeds, per-symbol slices, generated results
 ```
