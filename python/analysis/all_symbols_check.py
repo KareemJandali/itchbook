@@ -51,6 +51,12 @@ def main():
     ap.add_argument("--tick", type=int, default=100)
     ap.add_argument("--max-symbols", type=int, default=0,
                     help="check only the first N symbols; 0 checks every one")
+    ap.add_argument("--band-levels", type=int, default=512,
+                    help="dense band slots per side for the all-symbols run")
+    ap.add_argument("--band-sweep", type=int, nargs="*", default=None,
+                    help="also assert the reconstruction is identical at each of "
+                         "these band widths. The band is a locality knob: where a "
+                         "level is stored must not change any number reported.")
     args = ap.parse_args()
 
     binary = Path(args.binary).resolve()
@@ -60,8 +66,32 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         per_symbol = Path(tmp) / "per_symbol.csv"
-        subprocess.run([str(binary), str(feed), "--all-symbols", "--per-symbol",
-                        str(per_symbol), "--tick", str(args.tick), "--quiet"], check=True)
+        def all_symbols(out, levels):
+            subprocess.run([str(binary), str(feed), "--all-symbols", "--per-symbol",
+                            str(out), "--tick", str(args.tick),
+                            "--band-levels", str(levels), "--quiet"], check=True)
+
+        all_symbols(per_symbol, args.band_levels)
+
+        # The band decides whether a level lives in a dense slot or in the cold
+        # overflow map, and nothing else. Every column except the two that
+        # describe the band itself must survive changing it -- which is what
+        # makes the width a budget decision rather than a correctness one.
+        band_fields = {"overflow_levels", "off_band_adds", "recentres"}
+        if args.band_sweep:
+            base = [{k: v for k, v in r.items() if k not in band_fields}
+                    for r in csv.DictReader(per_symbol.open())]
+            for levels in args.band_sweep:
+                other = Path(tmp) / f"band_{levels}.csv"
+                all_symbols(other, levels)
+                rows = [{k: v for k, v in r.items() if k not in band_fields}
+                        for r in csv.DictReader(other.open())]
+                if rows != base:
+                    differing = next((i for i, (a, b) in enumerate(zip(rows, base)) if a != b), None)
+                    sys.exit(f"band width {levels} changed the reconstruction "
+                             f"(first differing row {differing})")
+            print(f"band sweep: identical at widths "
+                  f"{args.band_levels} and {', '.join(str(x) for x in args.band_sweep)}")
 
         rows = list(csv.DictReader(per_symbol.open()))
         if not rows:

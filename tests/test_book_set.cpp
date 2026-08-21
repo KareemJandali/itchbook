@@ -127,6 +127,165 @@ void test_the_session_belongs_to_the_market_not_to_a_symbol() {
     CHECK_EQ(set.system_event(), 'C');
 }
 
+// ---- the dense band ---------------------------------------------------------
+//
+// The band is a LOCALITY knob and nothing else. Where a level is stored -- a
+// slot in the dense array or a node in the cold std::map -- must not change any
+// number the book reports, because the two paths are merged in price order on
+// the way out. That property is what lets the width be chosen on a memory
+// budget instead of argued about, and it is asserted here rather than assumed.
+
+void fill_a_drifting_book(BookSet& set, uint16_t locate, int32_t start, int steps) {
+    uint64_t ref = static_cast<uint64_t>(locate) * 1000000 + 1;
+    int32_t centre = start;
+    for (int i = 0; i < steps; ++i) {
+        set.at(locate).add(ref++, 'B', centre - 100, 100);
+        set.at(locate).add(ref++, 'S', centre + 100, 100);
+        centre += 100;                       // one tick per step: the band ages
+    }
+}
+
+void test_band_width_changes_nothing_the_book_reports() {
+    // Same messages, three wildly different budgets. A width of 4 slots cannot
+    // hold a book that walks 300 ticks; a width of 4096 holds all of it. The
+    // reported state has to be identical anyway.
+    const int32_t start = 1000000;
+    const int steps = 300;
+    struct Result { size_t orders; uint64_t shares; int32_t bid; int32_t ask; };
+    Result seen[3];
+    const size_t widths[3] = {4, 128, 4096};
+
+    for (int w = 0; w < 3; ++w) {
+        BookSet set(1u << 12, 100, 20, widths[w]);
+        set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+        fill_a_drifting_book(set, 1, start, steps);
+        const itchbook::book::Book& b = *set.peek(1);
+        int32_t bid = 0;
+        int32_t ask = 0;
+        CHECK(b.best_bid(&bid));
+        CHECK(b.best_ask(&ask));
+        seen[w] = Result{b.resting_orders(), b.resting_shares(), bid, ask};
+    }
+    for (int w = 1; w < 3; ++w) {
+        CHECK_EQ(seen[w].orders, seen[0].orders);
+        CHECK_EQ(seen[w].shares, seen[0].shares);
+        CHECK_EQ(seen[w].bid, seen[0].bid);
+        CHECK_EQ(seen[w].ask, seen[0].ask);
+    }
+
+    // ...and the narrow band really did push work into the overflow map, or the
+    // comparison above proved nothing.
+    BookSet narrow(1u << 12, 100, 20, 4);
+    narrow.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    fill_a_drifting_book(narrow, 1, start, steps);
+    CHECK(narrow.peek(1)->off_band_adds() > 0);
+    CHECK(narrow.peek(1)->overflow_levels() > 0);
+
+    BookSet wide(1u << 12, 100, 20, 4096);
+    wide.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    fill_a_drifting_book(wide, 1, start, steps);
+    CHECK(wide.peek(1)->off_band_adds() < narrow.peek(1)->off_band_adds());
+}
+
+void test_the_band_waits_for_a_two_sided_quote() {
+    // The first order of an ITCH day arrives around 04:00 and may be a stub
+    // quote -- 77.6% of symbols posted one at or above $100,000 on the day this
+    // project validates against. A band centred there covers nothing. So the
+    // first order does not open the band; the first order on each side does.
+    BookSet set(1u << 12, 100, 20, 64);
+    set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    itchbook::book::Book& b = set.at(1);
+
+    b.add(1, 'S', 1999999900, 100);      // $199,999.99 -- the stub
+    CHECK_EQ(b.off_band_adds(), 1u);     // nowhere to put it yet
+
+    b.add(2, 'B', 1000000, 100);         // $100.00 -- now there are two sides
+    b.add(3, 'B', 999900, 100);
+    b.add(4, 'S', 1000100, 100);
+
+    // The band opened between $100.00 and $199,999.99, which is a terrible
+    // centre -- and the point is that the book is still correct, just slow:
+    // everything it cannot index lands in the overflow map and is still found.
+    int32_t px = 0;
+    CHECK(b.best_bid(&px));
+    CHECK_EQ(px, 1000000);
+    CHECK(b.best_ask(&px));
+    CHECK_EQ(px, 1000100);
+    CHECK_EQ(b.resting_orders(), 4u);
+}
+
+void test_a_recentre_keeps_price_time_priority() {
+    // Re-centring rebuilds both dense arrays and re-indexes every resting
+    // order. If it reordered a queue, every fill in phase 6 downstream of it
+    // would be wrong, and nothing in the summary would show it -- the shares
+    // are all still there, just in the wrong sequence.
+    BookSet set(1u << 12, 100, 20, 8);
+    set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    itchbook::book::Book& b = set.at(1);
+    b.add(1, 'B', 1000000, 100);
+    b.add(2, 'S', 1000100, 100);
+
+    // Three orders at one price, in a known arrival order.
+    b.add(10, 'B', 999900, 100);
+    b.add(11, 'B', 999900, 200);
+    b.add(12, 'B', 999900, 300);
+
+    // Drag the touch far enough that the 8-slot band is hopeless, past the
+    // window where the policy is allowed to look.
+    uint64_t ref = 100;
+    for (int i = 0; i < 1200; ++i) {
+        b.add(ref++, 'B', 1000000 + i * 100, 100);
+        b.add(ref++, 'S', 1000200 + i * 100, 100);
+    }
+    CHECK_EQ(b.recentres(), 1u);
+
+    // The queue at 999900 must still be 10, then 11, then 12. An execution
+    // takes from the front, so executing 100 shares must remove ref 10.
+    CHECK(b.find(10) != nullptr);
+    b.execute(10, 100);
+    CHECK(b.find(10) == nullptr);
+    CHECK(b.find(11) != nullptr);
+    CHECK(b.find(12) != nullptr);
+    CHECK_EQ(b.shares_at('B', 999900), 500u);
+}
+
+void test_an_odd_spread_does_not_send_the_book_to_overflow() {
+    // The band is centred on (bid + ask) / 2, and across a one-tick spread that
+    // midpoint sits BETWEEN two ticks. index_of() addresses a slot as
+    // (price - base_) / tick_ and sends anything with a remainder to overflow,
+    // so an unsnapped base made every real price off-grid and the whole book
+    // fell through to the std::map -- correct, and quietly not fast.
+    //
+    // It only bit on odd spreads, which is why a feed whose first quote
+    // happened to be two ticks wide looked perfectly healthy.
+    for (int spread : {1, 2, 3, 7}) {
+        BookSet set(1u << 12, 100, 20, 1024);
+        set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+        itchbook::book::Book& b = set.at(1);
+        b.add(1, 'B', 1000000, 100);
+        b.add(2, 'S', 1000000 + spread * 100, 100);
+        for (uint64_t i = 0; i < 200; ++i) {
+            b.add(10 + i, 'B', 1000000 - static_cast<int32_t>(i) * 100, 100);
+        }
+        // One: the stub-avoiding wait means the very first order predates the
+        // band. Everything after it is indexable whatever the spread.
+        CHECK_EQ(b.off_band_adds(), 1u);
+    }
+}
+
+void test_a_band_that_is_working_is_never_moved() {
+    BookSet set(1u << 12, 100, 20, 1024);
+    set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    itchbook::book::Book& b = set.at(1);
+    uint64_t ref = 1;
+    for (int i = 0; i < 2000; ++i) {
+        b.add(ref++, 'B', 1000000 - (i % 50) * 100, 100);
+        b.add(ref++, 'S', 1000100 + (i % 50) * 100, 100);
+    }
+    CHECK_EQ(b.recentres(), 0u);
+    CHECK_EQ(b.off_band_adds(), 1u);   // only the very first, before both sides
+}
+
 void test_tradability_comes_from_three_places_not_one() {
     // 'H' has been per symbol since phase 7. 'h' and 'W' were nowhere: the book
     // derived tradability from 'H' alone, so a symbol could be operationally
@@ -244,6 +403,11 @@ int main() {
     test_the_directory_is_kept_and_the_padding_is_not();
     test_a_message_for_an_undirectoried_locate_is_counted_not_ignored();
     test_the_session_belongs_to_the_market_not_to_a_symbol();
+    test_band_width_changes_nothing_the_book_reports();
+    test_the_band_waits_for_a_two_sided_quote();
+    test_a_recentre_keeps_price_time_priority();
+    test_an_odd_spread_does_not_send_the_book_to_overflow();
+    test_a_band_that_is_working_is_never_moved();
     test_tradability_comes_from_three_places_not_one();
     test_a_broken_trade_is_counted_and_not_applied();
     test_the_counters_that_matter_are_asked_of_the_feed();
