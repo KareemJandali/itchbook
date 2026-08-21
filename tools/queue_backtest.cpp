@@ -9,6 +9,7 @@
 //   queue_backtest <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]
 //                  [--size N] [--json out.json] [--fees base|top|inverted]
 #include <cinttypes>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -102,10 +103,18 @@ void print_results(const std::vector<LaneResult>& rs, uint64_t events,
     }
 }
 
-void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t events,
+// Returns false if the file could not be written. The caller must propagate
+// that: a backtest whose --json never landed has produced no result, and
+// exiting 0 tells a script that piped it into an analysis step to go ahead and
+// read whatever stale file is sitting at that path.
+bool write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t events,
                 const char* strategy) {
     std::FILE* f = std::fopen(path, "w");
-    if (f == nullptr) return;
+    if (f == nullptr) {
+        std::fprintf(stderr, "error: cannot open '%s' for writing: %s\n",
+                     path, std::strerror(errno));
+        return false;
+    }
     std::fprintf(f, "{\n  \"strategy\": \"%s\",\n  \"events\": %" PRIu64 ",\n  \"models\": {",
                  strategy, events);
     bool first = true;
@@ -132,7 +141,16 @@ void write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
         first = false;
     }
     std::fprintf(f, "\n  }\n}\n");
-    std::fclose(f);
+    // A short write on a full disk shows up here, not at fprintf: stdio buffers,
+    // so the failure surfaces when the buffer is flushed by fclose.
+    const bool bad = std::ferror(f) != 0;
+    const bool closed = std::fclose(f) == 0;
+    if (bad || !closed) {
+        std::fprintf(stderr, "error: failed writing '%s': %s\n",
+                     path, std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 template <typename S>
@@ -150,7 +168,9 @@ int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
     std::printf("latency: %" PRIu64 " ns order / %" PRIu64 " ns cancel\n",
                 latency.order_ns, latency.cancel_ns);
     print_results(rs, bt.events(), S::name());
-    if (json_path != nullptr) write_json(json_path, rs, bt.events(), S::name());
+    if (json_path != nullptr && !write_json(json_path, rs, bt.events(), S::name())) {
+        return 1;
+    }
     return 0;
 }
 

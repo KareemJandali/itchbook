@@ -39,6 +39,12 @@ const char* type_name(char t) {
         case 'Q': return "Cross Trade";
         case 'B': return "Broken Trade";
         case 'I': return "NOII";
+        case 'h': return "Operational Halt";
+        case 'V': return "MWCB Decline Level";
+        case 'W': return "MWCB Status";
+        case 'K': return "IPO Quoting Period Update";
+        case 'J': return "LULD Auction Collar";
+        case 'N': return "Retail Price Improvement";
         default:  return "";
     }
 }
@@ -55,14 +61,24 @@ int main(int argc, char** argv) {
         Census census;
         uint64_t total = itchbook::parse(reader, census);
 
-        std::printf("%-5s %-28s %14s\n", "type", "name", "count");
-        std::printf("-------------------------------------------------------\n");
+        std::printf("%-5s %-28s %14s  %s\n", "type", "name", "count", "modelled");
+        std::printf("---------------------------------------------------------------\n");
+        uint64_t ignored = 0;
         for (int c = 0; c < 256; ++c) {
             if (census.counts[c] == 0) continue;
-            std::printf("%-5c %-28s %14llu\n", c, type_name(static_cast<char>(c)),
-                        static_cast<unsigned long long>(census.counts[c]));
+            const char t = static_cast<char>(c);
+            const bool known = itchbook::itch::modelled(t);
+            if (!known) ignored += census.counts[c];
+            std::printf("%-5c %-28s %14llu  %s\n", c, type_name(t),
+                        static_cast<unsigned long long>(census.counts[c]),
+                        known ? "yes" : "no");
         }
-        std::printf("-------------------------------------------------------\n");
+        std::printf("---------------------------------------------------------------\n");
+        // A feed is not just what we read. Saying how much of it we ignored is
+        // the difference between "this book handles the day" and "this book
+        // handles the parts of the day it happens to know about".
+        std::printf("%-34s %14llu\n", "messages NOT modelled",
+                    static_cast<unsigned long long>(ignored));
         std::printf("%-34s %14llu\n", "TOTAL messages", static_cast<unsigned long long>(total));
         std::printf("%-34s %14llu\n", "TOTAL bytes", static_cast<unsigned long long>(reader.bytes()));
     } catch (const std::exception& e) {

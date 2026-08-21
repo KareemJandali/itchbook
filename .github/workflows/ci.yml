@@ -8,6 +8,32 @@ on:
   pull_request:
 
 jobs:
+  # The README says which toolchain it was verified on, so CI has to be the
+  # thing that verifies it. This job exists only to keep that sentence true:
+  # gcc catches warnings clang does not and vice versa, and a second compiler
+  # is the cheapest evidence that the code is portable rather than tuned to
+  # one frontend. It builds and runs the unit tests; the long soaks and the
+  # analysis stay in the clang job rather than being paid for twice.
+  gcc-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build zlib1g-dev g++
+
+      - name: Configure (Debug + sanitizers)
+        env:
+          CC: gcc
+          CXX: g++
+        run: cmake -S . -B build-gcc -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-gcc
+
+      - name: Unit tests (C++)
+        run: ctest --test-dir build-gcc --output-on-failure
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:

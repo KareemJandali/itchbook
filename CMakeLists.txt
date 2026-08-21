@@ -12,8 +12,14 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
-  add_link_options(-fsanitize=address,undefined)
+  # -fno-sanitize-recover is the flag that makes UBSan mean something. Without
+  # it UBSan DIAGNOSES and CONTINUES: it prints "runtime error: signed integer
+  # overflow" to stderr, the process exits 0, and CI goes green with undefined
+  # behaviour in the build it just blessed. ASan aborts on its own; UBSan has
+  # to be told to. A sanitizer nobody's exit code listens to is decoration.
+  add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined
+                      -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")

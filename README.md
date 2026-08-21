@@ -335,10 +335,11 @@ every pointer the levels hold stays valid.
 ## Reproduce it
 
 Every command below was run from a fresh clone with nothing cached, in order,
-and works as written on Linux with Clang 16 and Python 3.11 — which is also the
-only combination CI proves, since [`ci.yml`](.github/workflows/ci.yml) builds
-`ubuntu-latest` with `clang++` and nothing else. Other toolchains are expected
-to work and are not verified here. Requires a C++20 compiler, CMake ≥ 3.20,
+and works as written on Linux with Python 3.11 under both Clang and GCC —
+[`ci.yml`](.github/workflows/ci.yml) builds `ubuntu-latest` twice, once with
+each, and runs the unit tests under both, so that sentence is checked rather
+than asserted. macOS is expected to work and is not verified here. Requires a
+C++20 compiler, CMake ≥ 3.20,
 zlib and Python 3.9+. No third-party libraries: the tests, the fuzzers, the
 charts and the analysis are stdlib only, deliberately, so this clones and
 builds without a package manager standing in the way.

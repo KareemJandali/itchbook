@@ -57,7 +57,23 @@ class TestFraming(unittest.TestCase):
         self.assertEqual(list(itch.iter_messages(io.BytesIO(b""))), [])
 
     def test_every_modelled_type_has_a_spec_length(self):
-        self.assertEqual(set(itch.SPEC_LENGTH), set(itch.DECODERS))
+        # SPEC_LENGTH is deliberately the larger set: it also frames the types
+        # we do not decode, so a desync inside one of them is still caught.
+        # Every type we DO decode must be in it.
+        self.assertLessEqual(set(itch.DECODERS), set(itch.SPEC_LENGTH))
+
+    def test_spec_lengths_match_the_cpp_table(self):
+        """The two parsers are a differential test of each other. That only
+        means something while they agree on the frame, so the tables have to be
+        compared rather than assumed — this is the check that would have caught
+        a length added on one side and not the other."""
+        import re
+        header = (ROOT / "include" / "itchbook" / "itch" / "messages.hpp").read_text()
+        body = header.split("constexpr int spec_length(char t)")[1].split("}")[0]
+        cpp = {m.group(1): int(m.group(2))
+               for m in re.finditer(r"case '(.)': return (\d+);", body)}
+        py = {k.decode(): v for k, v in itch.SPEC_LENGTH.items()}
+        self.assertEqual(cpp, py)
 
     def test_generated_payloads_match_spec_lengths(self):
         for mtype, payload in itch.iter_messages(io.BytesIO(gen.build())):
