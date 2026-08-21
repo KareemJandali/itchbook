@@ -215,21 +215,31 @@ private:
         // Both rejection cases are settled before a single share is counted
         // into the engine. Deciding afterwards would mean unwinding the
         // accounting, and unwinding is how share counts stop adding up.
+        //
+        // Which state that refusal lands in depends on where the order came
+        // from. Rejected means "never touched the book", so it is only
+        // reachable from New. A stop arrives here a second time: it was parked
+        // as Accepted when it was submitted, and Accepted -> Rejected is not a
+        // move the state machine permits — it aborted the process. An order
+        // that has already been accepted and then cannot trade is CANCELLED.
+        // Same share count either way; the difference is a word that stays
+        // true and a transition that is legal.
+        const State refused = (m.state == State::New) ? State::Rejected : State::Cancelled;
 
         // Fill-or-kill is all-or-nothing: a partial fill that then unwinds is
         // not the same thing, and would leave prints on the tape that never
         // happened.
         if (type == Type::FOK && available(m.req, type) < remaining) {
-            transition(m.state, State::Rejected);
-            r.state = State::Rejected;
+            transition(m.state, refused);
+            r.state = refused;
             r.reject = Reject::FokUnfillable;
             return r;
         }
-        // A market order with nothing to trade against is rejected, not
-        // cancelled: it never had a chance to rest in the first place.
+        // A market order with nothing to trade against never had a chance to
+        // rest in the first place.
         if (type == Type::Market && !has_liquidity(m.req)) {
-            transition(m.state, State::Rejected);
-            r.state = State::Rejected;
+            transition(m.state, refused);
+            r.state = refused;
             r.reject = Reject::NoLiquidity;
             return r;
         }
@@ -416,6 +426,14 @@ private:
 
                 Result sub;
                 sub.first_fill = fills_.size();
+                // A parked stop is not in any queue: it holds no shares and
+                // nobody can trade with it. It joins the market at the moment
+                // it TRIGGERS, so that is when its arrival sequence is taken —
+                // the same rule refresh_iceberg() applies for the same reason.
+                // Keeping the sequence it got at submit time would let a stop
+                // parked at 09:31 fire at 15:00 and rest ahead of every order
+                // that had been queued at that price all day.
+                m.sequence = ++seq_;
                 // It runs from Accepted; run() moves it on from there. Forcing
                 // it back to New would be an illegal transition.
                 run(m, sub, effective_type(m.req.type));

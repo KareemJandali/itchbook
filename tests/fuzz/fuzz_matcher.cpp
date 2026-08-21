@@ -40,6 +40,20 @@ using namespace itchbook::engine;
 
 namespace {
 
+// How many of each order type the generator has actually produced. This exists
+// because for a long time the answer for stops was zero: the type switch never
+// selected them, so a million sequences exercised four of the six types the
+// engine implements while reporting full coverage. A fuzzer that silently
+// stops covering something is worse than no fuzzer, because it is believed.
+uint64_t g_emitted[6] = {0, 0, 0, 0, 0, 0};
+
+const char* kTypeName[6] = {"Limit", "Market", "IOC", "FOK",
+                            "StopMarket", "StopLimit"};
+
+}  // namespace
+
+namespace {
+
 int failures = 0;
 
 #define INVARIANT(cond, what)                                                  \
@@ -136,7 +150,7 @@ bool run_sequence(const uint8_t* data, size_t size) {
             req.quantity = in.range(1, 200);
             req.price = base + static_cast<int32_t>(in.range(0, 20)) * 100;
 
-            switch (in.u8() % 8) {
+            switch (in.u8() % 10) {
                 case 0:  req.type = Type::Market; break;
                 case 1:  req.type = Type::IOC; break;
                 case 2:  req.type = Type::FOK; break;
@@ -144,8 +158,21 @@ bool run_sequence(const uint8_t* data, size_t size) {
                     req.type = Type::Limit;
                     req.display = in.range(1, req.quantity);
                     break;
+                case 4:
+                case 5:
+                    // Stops. The trigger sits inside the same narrow band as
+                    // the prices, so the market actually reaches it — a stop
+                    // parked outside the band is a stop that never fires and
+                    // tests only the parking. Both kinds are generated: a
+                    // StopMarket becomes a Market on trigger and a StopLimit
+                    // becomes a Limit at req.price, which is the branch that
+                    // had no coverage at all.
+                    req.type = (in.u8() & 1) ? Type::StopMarket : Type::StopLimit;
+                    req.stop_price = base + static_cast<int32_t>(in.range(0, 20)) * 100;
+                    break;
                 default: req.type = Type::Limit; break;
             }
+            ++g_emitted[static_cast<size_t>(req.type)];
             switch (in.u8() % 4) {
                 case 1: req.stp = Stp::CancelNewest; break;
                 case 2: req.stp = Stp::CancelOldest; break;
@@ -291,6 +318,24 @@ int main(int argc, char** argv) {
                 "no invariant violated\n",
                 static_cast<unsigned long long>(iterations),
                 static_cast<unsigned long long>(total_ops));
+
+    // Coverage is part of the result, not a footnote. A run that violated no
+    // invariant because it never exercised a type has not shown anything about
+    // that type, so say what was emitted and fail if anything was missed.
+    std::printf("  emitted:");
+    bool missing = false;
+    for (size_t i = 0; i < 6; ++i) {
+        std::printf(" %s=%llu", kTypeName[i], static_cast<unsigned long long>(g_emitted[i]));
+        if (g_emitted[i] == 0) missing = true;
+    }
+    std::printf("\n");
+    if (missing) {
+        std::fprintf(stderr,
+                     "FAIL: the generator never emitted one of the order types. "
+                     "Every type the engine implements must be exercised, or "
+                     "this run proves nothing about it.\n");
+        return 1;
+    }
     return failures == 0 ? 0 : 1;
 }
 #endif
