@@ -20,9 +20,9 @@ off a terminal and typed in.
 | messages | 268,744,780 |
 | symbols | 8,906 |
 | executed volume | 971,016,019 shares |
-| **wall clock** | **87.22 s** |
-| throughput | 3.08 M msg/s |
-| peak RSS | 484.0 MB |
+| **wall clock** | **44.57 s** |
+| throughput | 6.03 M msg/s |
+| peak RSS | 551.1 MB |
 | unknown references | 0 |
 | locate mismatches | 0 |
 | undirectoried messages | 0 |
@@ -32,32 +32,32 @@ off a terminal and typed in.
 | | seconds | M msg/s |
 |---|---:|---:|
 | decompress + frame + length-check, building nothing | 16.51 | 16.28 |
-| the same, plus building 8,906 books | 87.22 | 3.08 |
-| **the book's own cost** | **70.71** | — |
+| the same, plus building 8,906 books | 44.57 | 6.03 |
+| **the book's own cost** | **28.06** | — |
 
-Decompression is **19%** of the run.
+Decompression is **37%** of the run.
 
 ## The prediction
 
 | | |
 |---|---|
 | written before the run | book-only 60–120 s, end-to-end 80–140 s, 5–20x worse per message than the cache-hot benchmark |
-| measured | book-only **70.7 s**, end-to-end **87.2 s**, **11.5x** |
+| measured | book-only **28.1 s**, end-to-end **44.6 s**, **4.6x** |
 | verdict | **kept** |
 
-The single-symbol benchmark reports 22.8 ns per message. Across a whole day of every symbol it is **263 ns**.
+The single-symbol benchmark reports 22.8 ns per message. Across a whole day of every symbol it is **104 ns**.
 
 ## Memory, decomposed
 
 | | MB | what it is |
 |---|---:|---|
 | dense bands | 291.8 | 512 slots x 2 sides x 8,906 books x 32 B |
-| reference map | 67.1 | 4,194,304 slots x 16 B |
+| reference map | 134.2 | 8,388,608 slots x 16 B |
 | order pool | 83.7 | 2,093,056 orders x 40 B |
-| **accounted** | **442.7** | 91.5% of peak RSS |
+| **accounted** | **509.8** | 92.5% of peak RSS |
 | residual | 41.3 | books, directory, overflow maps, allocator, binary |
 
-Peak live orders were 1,924,078; the pool ended at 2,093,056, and the reference map was pre-sized to 4,194,304 slots — 2.18x the peak, which is the load factor that sizing was chosen for.
+Peak live orders were 1,924,078; the pool ended at 2,093,056, and the reference map was pre-sized to 8,388,608 slots — 4.36x the peak, which is the load factor that sizing was chosen for.
 
 ## The band, graded
 
