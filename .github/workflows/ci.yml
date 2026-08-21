@@ -189,6 +189,47 @@ jobs:
       # because a shared CI machine cannot support a claim about core
       # synchronisation. The number that matters is measured on the hardware the
       # results come from and quoted in docs/phase10-methodology.md.
+      # The paced sender, end to end through a real socket. This asserts the
+      # packets arrive and that the tool reports its own lateness; it asserts
+      # NOTHING about the timing, because a shared runner cannot hold a
+      # schedule and the tool's whole point is to say so rather than pretend.
+      - name: Paced UDP sender delivers every packet
+        run: |
+          python3 python/make_queue_feed.py data/raw/pace.gz --messages 40000 \
+            --seed 4 --gap-ns 20000
+          ./build/mold_wrap data/raw/pace.gz data/raw/pace.mold.gz --mtu 1400
+          python3 - <<'PY' &
+          import socket, json
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+          s.bind(("127.0.0.1", 26400))
+          s.settimeout(10.0)
+          n = 0
+          try:
+              while True:
+                  s.recvfrom(65535)
+                  n += 1
+          except socket.timeout:
+              pass
+          json.dump({"received": n}, open("/tmp/sink.json", "w"))
+          PY
+          sleep 1
+          ./build/mold_replay_udp data/raw/pace.mold.gz --rate 100000 \
+            --json /tmp/send.json
+          wait
+          python3 -c "
+          import json, sys
+          sent = json.load(open('/tmp/send.json'))
+          got = json.load(open('/tmp/sink.json'))
+          print(f\"sent {sent['packets']} packets / {sent['messages']} messages, \"
+                f\"sink received {got['received']}\")
+          assert sent['send_errors'] == 0, 'sender reported send errors'
+          assert sent['packets'] > 0 and sent['messages'] > 0
+          if got['received'] != sent['packets']:
+              print('note: kernel dropped %d packets on loopback' %
+                    (sent['packets'] - got['received']))
+          "
+
       - name: Cross-core clock offset tool runs
         run: |
           ./build/tsc_offset --samples 20000 --cpu-a 0 --cpu-b 1 --json /tmp/tsc.json

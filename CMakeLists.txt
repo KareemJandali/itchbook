@@ -79,6 +79,8 @@ add_executable(restart_check tools/restart_check.cpp)
 # Always optimised, and never sanitised: this measures a handoff between two
 # cores in the tens of nanoseconds, and a sanitiser's instrumentation is larger
 # than the thing being measured.
+add_executable(mold_replay_udp tools/mold_replay_udp.cpp)
+
 add_executable(tsc_offset tools/tsc_offset.cpp)
 target_compile_options(tsc_offset PRIVATE -O2)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -93,7 +95,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(book_bench PRIVATE -fno-sanitize=all)
 endif()
 
-foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest tsc_offset
+foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
+          tsc_offset mold_replay_udp
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()

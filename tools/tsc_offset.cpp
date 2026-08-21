@@ -217,9 +217,7 @@ int main(int argc, char** argv) {
 
     auto ns = [cyc_per_ns](double cycles) { return cycles / cyc_per_ns; };
 
-    std::printf("%-34s %s\n", "timestamp source",
-                have_tsc ? "rdtsc / rdtscp (per-core counter)"
-                         : "clock_gettime CLOCK_MONOTONIC (system-wide)");
+    std::printf("%-34s %s\n", "timestamp source", itchbook::bench::clock_name());
     if (have_tsc) {
         std::printf("%-34s %s\n", "invariant TSC", invariant ? "yes" : "NO — cycle counts are fiction");
     }
@@ -343,7 +341,7 @@ int main(int argc, char** argv) {
             "  \"clock_can_see_the_handoff\": %s,\n"
             "  \"resolvable\": %s,\n"
             "  \"signs_oppose\": %s\n}\n",
-            have_tsc ? "rdtsc" : "clock_gettime_monotonic",
+            itchbook::bench::clock_name(),
             invariant ? "true" : "false", (pinned_a && pinned_b) ? "true" : "false",
             cyc_per_ns, samples, fwd.min_round_trip, fwd.median_round_trip,
             fwd.offset_cycles, rev.offset_cycles, fwd.bound_cycles, worst_ns,
