@@ -40,3 +40,54 @@ That is two different questions being asked, not a parser bug. Bounding the
 replay to the same window makes all five fields match exactly. `validate.py`
 now refuses to grade a reconstruction whose window does not match the oracle's,
 rather than reporting a confusing FAIL.
+
+
+## Which oracle, and why not the one the plan named
+
+The build plan's done-condition says match "NASDAQ's published daily summary
+for that date — or match LOBSTER's published orderbook file". This project
+matched **Databento's XNAS.ITCH daily bar** instead. That was a substitution,
+and it is worth stating plainly rather than being caught on.
+
+The reason is that the obvious NASDAQ sources do not answer the question:
+
+* A **consolidated** daily bar — what almost every public source publishes — is
+  every venue at once. ITCH is one venue. MSFT traded roughly 20M shares that
+  day across the market and **6.15M of them on NASDAQ**. Comparing the two
+  fails for an entirely correct reason, and passing would mean something was
+  wrong.
+* **NasdaqTrader's per-symbol matched volume** is venue-specific and would be
+  exactly right. The site keeps a rolling window and will not go back to 2019.
+* **LOBSTER's** free samples are 2012-06-21 for five tickers, and NASDAQ's free
+  ITCH sample days do not include that date. Checking against it means buying
+  data to confirm something already confirmed.
+
+Databento is venue-specific (`XNAS.ITCH`), which is the property that matters,
+and is arguably a stronger oracle than a summary line because it is a full
+independent reconstruction rather than an aggregate. But it is not a source the
+plan named, and the plan named those sources for a reason: they are free and
+anyone can check them.
+
+## The check anyone can run
+
+One NASDAQ-published figure survives all of the above, needs no subscription,
+and is checkable in a minute: the **official opening and closing prices**. Both
+are auctions, both arrive in the feed as `Q` cross trades, and for a
+NASDAQ-listed stock the official closing price *is* the closing cross.
+
+```bash
+python3 python/analysis/check_cross.py validation/MSFT_2019-12-30.json \
+    --official-close <close> --official-open <open>
+```
+
+This is a real test rather than a formality. Cross handling is the part of an
+ITCH book most likely to be quietly wrong — it is rare, it is a separate
+message type, and it never appears in a day's ordinary flow, so nothing else
+exercises it. Note it is a different number from the summary's `close`, which
+is the last trade of the session including late prints.
+
+**Status: not yet independently verified.** The reconstruction produces
+$158.99 for the opening cross and $157.59 for the closing cross on
+2019-12-30. Those need checking against a published quote history before this
+section claims anything — filling in numbers from memory and then agreeing with
+them is not validation.
