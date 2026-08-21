@@ -3,9 +3,10 @@
   "messages": 268744780,
   "bytes": 8251407909,
   "compressed_bytes": 3524013057,
-  "elapsed_seconds": 66.14,
+  "elapsed_seconds": 65.94,
   "pass": "framing + live-order tracking",
   "live_orders": {"peak": 1924078, "final": 0, "adds": 118631456, "deletes": 114360997, "replaces": 21639067, "full_executions": 4270459, "partial_executions": 1552282, "full_cancels": 0, "partial_cancels": 2787676, "unknown_refs": 0},
+  "types": {"A": 117145568, "C": 99917, "D": 114360997, "E": 5722824, "F": 1485888, "H": 8966, "I": 4024315, "J": 34, "K": 3, "L": 215161, "P": 1218602, "Q": 17836, "R": 8906, "S": 6, "U": 21639067, "V": 1, "X": 2787676, "Y": 9013},
   "symbols": [
     {"locate":0,"symbol":"","directoried":false,"messages":10,"adds":0,"executions":0,"cancels":0,"deletes":0,"replaces":0,"trades":0,"crosses":0,"opening_crosses":0,"closing_crosses":0,"halts":0,"operational_halts":0,"broken_trades":0,"executed_shares":0,"first_price":null,"last_price":null,"min_price":null,"max_price":null,"prints":0,"first_trade":null,"last_trade":null,"min_trade":null,"max_trade":null},
     {"locate":1,"symbol":"A","directoried":true,"messages":132210,"adds":60079,"executions":2576,"cancels":1237,"deletes":58221,"replaces":9386,"trades":214,"crosses":2,"opening_crosses":1,"closing_crosses":1,"halts":1,"operational_halts":0,"broken_trades":0,"executed_shares":119932,"first_price":51.9100,"last_price":84.4700,"min_price":0.0001,"max_price":199999.9900,"prints":227,"first_trade":85.3700,"last_trade":84.9000,"min_trade":84.6500,"max_trade":85.3700},
