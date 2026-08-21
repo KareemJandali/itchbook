@@ -51,7 +51,18 @@ struct Options {
     bool quiet = false;
     bool all_symbols = false;
     const char* per_symbol = nullptr;   // one row per security
-    size_t refs_capacity = size_t{1} << 22;
+    // 8,388,608 slots -- 134 MB -- against a measured 1,924,078 peak live
+    // orders, so a 23% load factor at the busiest moment of the day.
+    //
+    // This was 1<<22 until phase 9.9 swept it. Halving the load factor from 46%
+    // to 23% cut book-only time from 68.8 s to 28.4 s: 2.42x, for 67 MB. The
+    // prediction said flat, on the grounds that the probe is one cache line
+    // either way; it is not, because deletes dominate this feed and
+    // backward-shift deletion walks to the end of a cluster whose length grows
+    // as 1/(1-a)^2. Going further to 11.5% buys nothing -- 28.7 s -- so the
+    // effect saturates and this is the size to stop at. See
+    // validation/sweep-load.json and docs/phase9-results.md.
+    size_t refs_capacity = size_t{1} << 23;
     size_t band_levels = 512;   // per side, per symbol; see BookSet's comment
     bool per_book_pools = false;
     size_t pool_first_chunk = ITCHBOOK_POOL_FIRST_CHUNK;

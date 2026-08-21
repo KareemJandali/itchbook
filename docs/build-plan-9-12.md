@@ -372,11 +372,24 @@ verbatim: pin, interleave, ≥5% or it is not a result.
   understood rather than assumed.
 - **Ref map load factor.** Prediction: flat between 25% and 50%, because the
   probe is one cache line either way and the table is far past L2 in both cases.
-  A flat result is a result and gets reported, not deleted.
 
-- **The band width, which 9.8 graded without sweeping.** Not a prediction, an
-  open question: the off-band fraction and the wall clock against N, one
-  full-day run per point.
+  **REFUTED, and it is the largest win in the phase.** 46% load → 23% load cut
+  book-only time from 68.8 s to 28.4 s — **2.42×, for 67 MB**. The prediction's
+  premise is the part that was wrong: at 46% load with backward-shift deletion
+  it is *not* one cache line. Deletion walks to the end of its cluster, and
+  cluster length grows as `1/(1−α)²` — 3.42 slots at 46%, 1.68 at 23%, a
+  predicted 2.03× against a measured 2.42×. Deletes are ~140M of ~285M
+  operations on this feed, which `RefMap`'s own header says is why tombstones
+  were rejected. **The design comment named the dominant operation and the
+  prediction costed the other one.** Going on to 11.5% load buys nothing (28.7 s),
+  so the effect saturates and 4× peak is where to stop. The default moved.
+
+- **And the band, which turned out to be the smaller knob by an order of
+  magnitude.** 64× the band width (128 → 8192 slots) moves the run ~20%, and
+  saturates at 2048; the reference map moves it 2.4×. The dense band is what
+  phase 3 was proud of. At market scale the reference map is what costs.
+
+
 
 All three run through `bench/full-day-sweep.py`, which applies phase 4's rules
 to a run that takes a minute and a half rather than a second — interleaved,
