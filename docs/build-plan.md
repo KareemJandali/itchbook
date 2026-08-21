@@ -484,8 +484,8 @@ safely. Never silently wrong.
 ### Phase 8 — Write-up (shipped August 2026)
 
 *Done. The README is the deliverable and it now leads with the verification
-claim. Phases 8–11 were renumbered as engineering when this shipped early —
-see [`build-plan-8-11.md`](build-plan-8-11.md), which supersedes the numbering
+claim. The engineering phases that follow it are numbered 9-12 —
+see [`build-plan-9-12.md`](build-plan-9-12.md), which supersedes the numbering
 below and the September 2027 timeline in section 7.*
 
 The README is the deliverable a recruiter actually sees. Structure:
