@@ -1067,6 +1067,78 @@ where almost every message straddles a boundary. It runs under ASan/UBSan and
 under ThreadSanitizer, and CI additionally requires a byte-identical book at all
 three production chunk sizes.
 
+### 10.5's last two items — `consumer-slow`, and the switch's sixth input
+
+**The kill switch gets a limit about what the system KNOWS, not what it did.**
+`Trip::FeedBacklog`, on sustained ring occupancy. It belongs beside drawdown for
+the same reason drawdown belongs beside the position limit: there is no order
+you can decline in advance that makes it not have happened. A consumer that has
+fallen behind is quoting off a book that is behind the market, and those quotes
+are already gone by the time anyone notices — which is exactly the failure 10.7
+measured, where the tail leaves long before a single packet is dropped and every
+counter still reads clean.
+
+The design is entirely in the word *sustained*. A deep ring is not a fault —
+10.7's sweep peaked above 51,000 of 65,536 slots at rates that lost nothing —
+so the limit trips on **duration above the line**, and a dip **restarts** the
+clock rather than pausing it. Pausing would let a ring that is backlogged 99% of
+the time never trip as long as it touched the line occasionally, which is the
+system the limit exists for. Eight tests, including a burst pattern that spends
+90 ms above the line fifty times over and correctly never trips.
+
+One unit bug worth recording: the first wiring passed `bench::cycles_end()` as
+the timestamp, so "sustained for 100 ms" was compared against a TSC cycle count
+and meant whatever the core's frequency made it. A risk control is the last
+place to infer a unit; it reads a nanosecond clock now, once per batch.
+
+**`consumer-slow` is graded by the same grader, on the same scale.** Every other
+scenario in `adversarial.py` damages a *file* and replays it. This one damages
+nothing: the feed is perfect, every packet arrives, and the loss comes from the
+receiver dropping whole packets because the ring is full — because the book
+thread has been told to run slower than the wire. That is phase 10.5's promise
+under test, and it is a promise about a code path no file scenario reaches.
+
+**A gap has to travel through the ring like a message.** The sequencer runs on
+the receiver and the book runs on the consumer, so a gap is *detected* on one
+side and *acted on* on the other. Handing it over out of band — an atomic
+counter, a flag — arrives at the wrong point in the stream: rebuild-forward
+means discarding the book at exactly the message the gap precedes, and a flag
+that overtakes the messages still in flight discards the wrong ones. So a gap
+occupies a slot, in order. A gap that cannot be staged is counted separately and
+**fails the run**, because that is the silent wrongness itself: the consumer
+would apply everything after it having never been told anything was missing.
+
+Two consequences worth stating. The ring now carries markers as well as
+messages, so identity 1 subtracts them — an identity that failed on every lossy
+run would be switched off within a week. And a new identity 1b: every gap the
+sequencer declared either reached the book or was counted as unreachable.
+
+**The throttle is a multiple of the wire's interval, not a fixed duration.** It
+was absolute at first, which made the scenario silently do nothing at any rate
+but the one it was tuned on — 20 µs per message against a wire delivering one
+every 50 µs leaves the consumer twice as fast as the producer, so nothing filled
+and `consumer-slow` reported CORRECT having dropped nothing. Caught by the
+harness's own no-op rule, which every damaging scenario has had since phase 7.
+
+Result: `pipeline-clean` CORRECT, `consumer-slow` and `consumer-stalled` SAFE,
+**0 WRONG** — and the live table produces WRONG on demand when the convergence
+bar is set to 1, which is what makes the SAFEs worth having. A ring too large
+for the throttle to fill fails the run as a no-op rather than passing.
+
+**One consequence found by the identities themselves.** The ring now carries
+slots that are not messages, and `messages_into_ring` went on reporting the sum
+— so `wire-to-book-check.sh` failed its accounting by exactly the gap count. The
+field reports messages again and `slots_into_ring` reports the sum, because a
+name that says "messages" and means "messages plus markers" is a trap every
+future caller walks into once.
+
+**Open, and not gold-plated here:** `clear_all_orders()` walks all 65,536 locate
+slots on every rebuild, most of them null. Under sustained backpressure that is
+a rebuild per gap and it measurably slows the consumer, which causes more drops,
+which causes more gaps. The behaviour is correct and the cost is real; a
+constructed-locate list would fix it and belongs with the next thing that needs
+`BookSet` to iterate cheaply.
+
 ### Done — Phase 10
 
 - [ ] Wire-to-book p50/p99/p99.9 **and the bucket distribution** at 1×

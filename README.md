@@ -534,7 +534,8 @@ include/itchbook/   public headers (this is a library, not an app)
   sim/              queue models, ledger, markouts, fees, latency, backtest
   mold/             MoldUDP64 packet framing and the gap/duplicate/reorder sequencer
   recover/          gap policy, book + strategy snapshots, halt tracking
-  risk/             the kill switch
+  risk/             the kill switch — five limits on what the system did, and
+                    one on what it knows: sustained wire-to-book queue depth
   pipe/             the lock-free SPSC ring, and the reader thread that
                     decompresses ahead of the book through it
   bench/            rdtsc timing and latency percentiles

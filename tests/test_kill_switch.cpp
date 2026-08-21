@@ -196,6 +196,151 @@ void test_the_latch_holds_and_keeps_the_first_cause() {
     CHECK(k.live());
 }
 
+// ---- the sixth limit: a queue that does not drain --------------------------
+//
+// Every other limit here is about what the system DID. This one is about what
+// it KNOWS, and its whole design is in the word "sustained": a ring that fills
+// and drains is a ring doing its job, and only a backlog that stays above the
+// line is a consumer failing to keep up.
+
+const uint64_t kMs = 1000000ULL;
+
+void test_ring_occupancy_disabled_by_default() {
+    KillSwitch k;
+    for (int i = 0; i < 100; ++i) {
+        k.on_ring_occupancy(static_cast<uint64_t>(i) * kMs, 1000000);
+    }
+    CHECK(k.live());
+}
+
+void test_a_ring_below_the_line_never_trips() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 100 * kMs;
+    KillSwitch k(cfg);
+    for (int i = 0; i < 10000; ++i) {
+        k.on_ring_occupancy(static_cast<uint64_t>(i) * kMs, 1000);   // AT the line
+    }
+    CHECK(k.live());
+    CHECK(!k.backlogged());
+    CHECK_EQ(k.peak_ring_occupancy(), uint64_t{1000});
+}
+
+// The case the duration exists for. A deep burst that drains is normal: phase
+// 10.7 peaked above 51,000 of 65,536 slots at rates that lost nothing.
+void test_bursts_that_drain_never_trip_however_deep() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 100 * kMs;
+    KillSwitch k(cfg);
+    uint64_t t = 0;
+    for (int burst = 0; burst < 50; ++burst) {
+        // 90 ms above the line — nearly the whole window — then a dip.
+        for (int i = 0; i < 9; ++i) {
+            t += 10 * kMs;
+            k.on_ring_occupancy(t, 60000);
+        }
+        t += 10 * kMs;
+        k.on_ring_occupancy(t, 5);        // drained: the clock restarts
+    }
+    CHECK(k.live());
+    CHECK_EQ(k.peak_ring_occupancy(), uint64_t{60000});
+}
+
+void test_a_backlog_that_does_not_drain_trips() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 100 * kMs;
+    KillSwitch k(cfg);
+    uint64_t t = 0;
+    k.on_ring_occupancy(t, 4000);
+    CHECK(k.live());               // the breach alone is not the trip
+    CHECK(k.backlogged());
+    for (int i = 0; i < 9; ++i) {  // 90 ms: still inside the window
+        t += 10 * kMs;
+        k.on_ring_occupancy(t, 4000);
+    }
+    CHECK(k.live());
+    t += 10 * kMs;                 // 100 ms: the window closes
+    k.on_ring_occupancy(t, 4000);
+    CHECK(!k.live());
+    CHECK(k.report().reason == Trip::FeedBacklog);
+    CHECK_EQ(k.report().observed, int64_t{4000});
+    CHECK_EQ(k.report().limit, int64_t{1000});
+    CHECK_EQ(k.report().ts, t);
+}
+
+// A dip resets the clock rather than pausing it. Otherwise a ring that spends
+// 99% of its time backlogged would never trip as long as it touched the line
+// occasionally, which is exactly the system this limit is for.
+void test_a_dip_restarts_the_clock_rather_than_pausing_it() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 100 * kMs;
+    KillSwitch k(cfg);
+    uint64_t t = 0;
+    for (int i = 0; i < 9; ++i) {     // 90 ms above
+        k.on_ring_occupancy(t, 4000);
+        t += 10 * kMs;
+    }
+    k.on_ring_occupancy(t, 0);        // one dip
+    t += 10 * kMs;
+    for (int i = 0; i < 9; ++i) {     // 90 ms above again
+        k.on_ring_occupancy(t, 4000);
+        t += 10 * kMs;
+    }
+    CHECK(k.live());                  // 180 ms above in total, never 100 in a row
+}
+
+void test_a_zero_window_trips_on_the_breach_itself() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 0;
+    KillSwitch k(cfg);
+    k.on_ring_occupancy(500, 1000);
+    CHECK(k.live());                  // at the line, not over it
+    k.on_ring_occupancy(500, 1001);
+    CHECK(!k.live());
+    CHECK(k.report().reason == Trip::FeedBacklog);
+    CHECK_EQ(k.report().observed, int64_t{1001});
+}
+
+// A clock that goes backwards is a caller bug. Unsigned subtraction would turn
+// it into an instant trip, and a kill switch that latches on a stale timestamp
+// is one nobody leaves enabled.
+void test_a_clock_that_goes_backwards_restarts_rather_than_tripping() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 100 * kMs;
+    KillSwitch k(cfg);
+    k.on_ring_occupancy(500 * kMs, 4000);
+    k.on_ring_occupancy(1 * kMs, 4000);      // backwards
+    CHECK(k.live());
+    k.on_ring_occupancy(50 * kMs, 4000);     // 49 ms from the restart
+    CHECK(k.live());
+    k.on_ring_occupancy(101 * kMs, 4000);    // 100 ms from the restart
+    CHECK(!k.live());
+}
+
+// ...and it latches like every other limit, keeping the first cause.
+void test_the_backlog_trip_latches_and_survives_the_queue_draining() {
+    KillSwitchConfig cfg;
+    cfg.max_ring_occupancy = 1000;
+    cfg.backlog_sustained_ns = 0;
+    KillSwitch k(cfg);
+    k.on_ring_occupancy(kMs, 9999);
+    CHECK(!k.live());
+    for (int i = 0; i < 100; ++i) {
+        k.on_ring_occupancy((2 + static_cast<uint64_t>(i)) * kMs, 0);
+    }
+    CHECK(!k.live());
+    CHECK(k.report().reason == Trip::FeedBacklog);
+    CHECK_EQ(k.report().observed, int64_t{9999});
+    k.reset();
+    CHECK(k.live());
+    CHECK(!k.backlogged());
+}
+
 }  // namespace
 
 int main() {
@@ -210,5 +355,13 @@ int main() {
     test_cancels_count_for_rate_but_not_for_the_ratio();
     test_drawdown_is_peak_to_trough_not_open_to_now();
     test_the_latch_holds_and_keeps_the_first_cause();
+    test_ring_occupancy_disabled_by_default();
+    test_a_ring_below_the_line_never_trips();
+    test_bursts_that_drain_never_trip_however_deep();
+    test_a_backlog_that_does_not_drain_trips();
+    test_a_dip_restarts_the_clock_rather_than_pausing_it();
+    test_a_zero_window_trips_on_the_breach_itself();
+    test_a_clock_that_goes_backwards_restarts_rather_than_tripping();
+    test_the_backlog_trip_latches_and_survives_the_queue_draining();
     return REPORT();
 }

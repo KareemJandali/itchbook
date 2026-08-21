@@ -18,14 +18,16 @@
 //     moving fast enough that you wanted out.
 //   * **Some limits have no pre-trade form at all.** A drawdown limit is a
 //     statement about realised losses. There is no order you can decline in
-//     advance that makes it not have happened.
+//     advance that makes it not have happened. The same is true of a feed you
+//     have fallen behind: by the time you notice, every quote you sent in the
+//     last few milliseconds was priced off a book that no longer existed.
 //
 // So this is a POST-trade control, and it is latching. Once tripped it stays
 // tripped until a human resets it. A risk control that re-arms itself when the
 // condition clears is not a kill switch; it is a way to have the same incident
 // several times in one afternoon.
 //
-// Each of the five limits is independently configurable and independently
+// Each of the six limits is independently configurable and independently
 // disabled by leaving it at zero. Nothing here is on by default: a limit the
 // operator did not choose is a limit nobody has thought about, and a surprise
 // halt in production is its own kind of outage.
@@ -47,6 +49,7 @@ enum class Trip : uint8_t {
     MessageRate,   // our outbound messages per second
     OrderToFill,   // orders sent per fill received
     Drawdown,      // peak-to-trough equity
+    FeedBacklog,   // sustained queue depth between the wire and the book
 };
 
 inline const char* to_string(Trip t) {
@@ -57,6 +60,7 @@ inline const char* to_string(Trip t) {
         case Trip::MessageRate: return "message-rate";
         case Trip::OrderToFill: return "order-to-fill";
         case Trip::Drawdown:    return "drawdown";
+        case Trip::FeedBacklog: return "feed-backlog";
     }
     return "?";
 }
@@ -91,6 +95,32 @@ struct KillSwitchConfig {
     // because a strategy that made $10k and gave back $9k had a bad day even
     // though it is up on the session.
     Money max_drawdown = 0;
+
+    // ---- and the one that is about the input rather than the output --------
+    //
+    // Slots occupied in the wire-to-book ring. Zero disables.
+    //
+    // Every other limit here is a statement about what this system DID. This
+    // one is a statement about what it KNOWS, and it belongs beside them for
+    // the reason drawdown does: there is no order you can decline in advance
+    // that makes it not have happened. A consumer that has fallen behind is
+    // quoting off a book that is behind the market, and the quotes are already
+    // gone by the time anyone notices. Phase 10 measured the shape of that
+    // failure -- the tail leaves long before a single packet is dropped, so
+    // every counter still reads clean while the book is already stale.
+    //
+    // The ring going deep is not by itself a fault. Bursts are what a ring is
+    // for, and phase 10.7's sweep peaked above 51,000 of 65,536 slots at rates
+    // it absorbed without losing a message. What matters is a backlog that does
+    // not drain, so this trips on DURATION above the threshold rather than on
+    // the threshold itself.
+    uint64_t max_ring_occupancy = 0;
+
+    // ...and how long it has to stay there. A backlog shorter than this is a
+    // burst; longer, and the consumer is not keeping up. Zero means trip on the
+    // first observation above the threshold, which is available deliberately
+    // and is almost never what an operator wants.
+    uint64_t backlog_sustained_ns = 100000000ULL;   // 100 ms
 };
 
 // What tripped, what the observed value was, and what it was measured against.
@@ -185,6 +215,51 @@ public:
         observe(ts, position, equity, mark);
     }
 
+    // How deep the wire-to-book queue is, right now.
+    //
+    // Called from the side that reads the ring, with whatever clock that side
+    // already has -- feed time in a replay, wall clock live. It is the caller's
+    // clock throughout this file and mixing two here would make "sustained for
+    // 100 ms" mean nothing.
+    //
+    // Below the threshold, the timer resets. That is the whole design: a ring
+    // that fills and drains repeatedly never trips, however deep the peaks,
+    // because each dip below the line starts the clock again. Only a backlog
+    // that stays above the line for the whole window is a consumer that is not
+    // keeping up.
+    void on_ring_occupancy(uint64_t ts, uint64_t occupancy) {
+        if (cfg_.max_ring_occupancy == 0) return;
+        if (occupancy > peak_occupancy_) peak_occupancy_ = occupancy;
+        if (occupancy <= cfg_.max_ring_occupancy) {
+            backlog_since_ = kNoBacklog;
+            return;
+        }
+        if (backlog_since_ == kNoBacklog) {
+            backlog_since_ = ts;
+            // A zero window means the breach itself is the trip. Handled here
+            // rather than by falling through, so that a caller whose clock does
+            // not advance between observations still gets the behaviour it
+            // asked for.
+            if (cfg_.backlog_sustained_ns == 0) {
+                trip(Trip::FeedBacklog, static_cast<int64_t>(occupancy),
+                     static_cast<int64_t>(cfg_.max_ring_occupancy), ts);
+            }
+            return;
+        }
+        // Unsigned, so a timestamp that goes backwards would wrap to something
+        // enormous and trip instantly. Treat it as a restart instead: an
+        // out-of-order clock is a caller bug, and a kill switch that latches on
+        // one is a kill switch nobody will leave enabled.
+        if (ts < backlog_since_) {
+            backlog_since_ = ts;
+            return;
+        }
+        if (ts - backlog_since_ >= cfg_.backlog_sustained_ns) {
+            trip(Trip::FeedBacklog, static_cast<int64_t>(occupancy),
+                 static_cast<int64_t>(cfg_.max_ring_occupancy), ts);
+        }
+    }
+
     // A mark update with no fill. Drawdown moves without trading, so a switch
     // that only looks on fills is blind exactly while a position is being
     // marked against a market running away from it.
@@ -214,6 +289,8 @@ public:
         fills_ = 0;
         peak_seen_ = false;
         peak_equity_ = 0;
+        backlog_since_ = kNoBacklog;
+        peak_occupancy_ = 0;
     }
 
     uint64_t messages() const { return messages_; }
@@ -222,6 +299,8 @@ public:
     Money peak_equity() const { return peak_equity_; }
     Money drawdown() const { return peak_seen_ ? peak_equity_ - last_equity_ : 0; }
     uint64_t message_rate() const { return rate_.rate(); }
+    uint64_t peak_ring_occupancy() const { return peak_occupancy_; }
+    bool backlogged() const { return backlog_since_ != kNoBacklog; }
 
 private:
     // The latch. The FIRST breach is the one recorded: everything after a trip
@@ -291,6 +370,13 @@ private:
     uint64_t fills_ = 0;
     bool peak_seen_ = false;
     Money peak_equity_ = 0;
+    // The instant the ring last went above the threshold and stayed there.
+    // kNoBacklog rather than 0 because 0 is a legitimate timestamp, and a
+    // sentinel that collides with a real value is how "never" becomes "at the
+    // very start of the session".
+    static constexpr uint64_t kNoBacklog = ~0ULL;
+    uint64_t backlog_since_ = kNoBacklog;
+    uint64_t peak_occupancy_ = 0;
     Money last_equity_ = 0;
 };
 

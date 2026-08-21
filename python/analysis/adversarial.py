@@ -157,6 +157,135 @@ def run(cmd, allow=(0,)):
     return r
 
 
+# ---- the live pipeline, where the damage is self-inflicted -----------------
+#
+# Every scenario above damages a FILE and replays it. This one damages nothing:
+# the feed is perfect and the packets all arrive. The loss comes from the
+# receiver, which drops whole packets when the ring is full, because the book
+# thread has been told to take longer per message than the wire allows.
+#
+# That is the phase 10.5 promise under test -- "backpressure degrades to graded
+# feed gaps rather than silent loss" -- and it is a promise about a code path
+# no file-based scenario reaches. A dropped MoldUDP64 packet is exactly a
+# sequence gap, so the same sequencer, the same gap policy and the same
+# rebuild-forward machinery should handle it, and the same four verdicts should
+# apply. If they do not, the sentence was a hope.
+#
+# The comparison artifact differs and the table says so: these compare the
+# ALL-SYMBOLS book (one row per security, the phase 10.6 gate's artifact)
+# rather than the single-symbol depth dump the file scenarios use, because the
+# pipeline builds every symbol at once.
+# The throttle is a MULTIPLE of the wire's own inter-message interval, not a
+# fixed number of nanoseconds.
+#
+# It was absolute at first, and that made the scenario silently do nothing at
+# any rate but the one it was tuned on: 20 us per message against a wire
+# delivering one every 50 us leaves the consumer twice as fast as the producer,
+# so the ring never fills and "consumer-slow" drops nothing while reporting
+# CORRECT. A factor of 2 means the consumer runs at half the wire's rate on any
+# machine and at any rate, which is what the scenario actually needs.
+PIPELINE = [
+    ("pipeline-clean", 0.0, False,
+     "control: the pipeline with no throttle. Anything but CORRECT is a bug in "
+     "the harness or the pipeline, not a finding"),
+    ("consumer-slow", 2.0, True,
+     "the book thread is throttled to half the wire's rate; the ring fills and "
+     "the receiver drops whole packets"),
+    ("consumer-stalled", 6.0, True,
+     "a sixth of the wire's rate: sustained backpressure, and the kill switch's "
+     "ring-occupancy limit should trip"),
+]
+
+
+def wait_bound(port, timeout=10.0):
+    """Linux says when the receiver is listening; a fixed sleep guesses."""
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with open("/proc/net/udp") as f:
+                if f":{port:04X} " in f.read().upper():
+                    return True
+        except OSError:
+            time.sleep(2.0)
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def pipeline_rows(b, feed, packets, work, args):
+    """Run the live scenarios and return rows in the same shape as the rest."""
+    import subprocess as sp
+
+    truth_csv = work / "pipeline-truth.csv"
+    run([str(b / "book_replay"), str(feed), "--all-symbols",
+         "--per-symbol", str(truth_csv), "--quiet"])
+    truth = truth_csv.read_text()
+    if truth.count("\n") < 2:
+        raise SystemExit("the all-symbols truth has no rows; nothing to compare")
+
+    rows = []
+    problems = []
+    port = args.pipeline_port
+    interval_ns = 1e9 / args.pipeline_rate if args.pipeline_rate > 0 else 0.0
+    for name, factor, must_drop, why in PIPELINE:
+        throttle_ns = int(factor * interval_ns)
+        port += 1
+        out_csv = work / f"{name}.csv"
+        out_json = work / f"{name}.json"
+        cmd = [str(b / "wire_to_book"), "--port", str(port),
+               "--ring-log2", str(args.pipeline_ring_log2),
+               "--timeout-ms", "6000", "--rcvbuf-mb", "16",
+               "--expect-messages", "4000000",
+               "--per-symbol", str(out_csv), "--json", str(out_json),
+               "--recover-after", str(args.recover_after),
+               "--kill-ring-occupancy", str(args.pipeline_kill_occupancy),
+               "--kill-backlog-ms", "50", "--quiet"]
+        if throttle_ns:
+            cmd += ["--slow-consumer-ns", str(throttle_ns)]
+        recv = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True)
+        if not wait_bound(port):
+            recv.kill()
+            recv.wait()
+            raise SystemExit(f"{name}: the receiver never bound port {port}")
+        run([str(b / "mold_replay_udp"), str(packets), "--host", "127.0.0.1",
+             "--port", str(port), "--rate", str(args.pipeline_rate), "--quiet"])
+        tail = recv.communicate()[0]
+        rc = recv.returncode
+        # 0 clean, 3 lossy, 4 kernel drops unreadable. Anything else is the
+        # pipeline reporting a broken invariant, and that is not a verdict --
+        # it is a failure of the thing doing the grading.
+        if rc not in (0, 3, 4):
+            raise SystemExit(f"{name}: wire_to_book exited {rc}\n{tail}")
+        st = json.loads(out_json.read_text())
+
+        # A scenario that inflicted no backpressure is not a passing scenario,
+        # it is a broken one -- the same rule the file scenarios follow.
+        dropped = st["ring_full_drops"]
+        if must_drop and dropped == 0:
+            problems.append(f"{name} (the ring never filled, so nothing was dropped)")
+        if not must_drop and dropped != 0:
+            problems.append(f"{name} (the control dropped {dropped} packets; "
+                            f"lower --pipeline-rate or raise the ring)")
+        # ...and a gap that never reached the book is the silent wrongness this
+        # whole scenario exists to rule out.
+        if st["gaps_lost_to_full_ring"] != 0:
+            problems.append(f"{name} ({st['gaps_lost_to_full_ring']} gaps never "
+                            f"reached the book)")
+
+        rows.append({
+            "name": name, "why": why,
+            "verdict": verdict(out_csv.read_text() == truth, st["trusted"]),
+            "lost": st["messages_lost"], "gaps": st["gaps_to_book"],
+            "dups": 0, "reordered": 0, "trunc": 0,
+            "state": st["state"], "rebuilds": st["rebuilds"],
+            "recoveries": st["recoveries"],
+            "dropped": dropped, "kill": st["kill_switch"],
+            "peak": st["kill_peak_occupancy"],
+        })
+    return rows, problems
+
+
 def verdict(matches, trusted):
     if matches and trusted:
         return "CORRECT"
@@ -180,13 +309,28 @@ def main():
     ap.add_argument("--checkpoint-frac", type=float, default=0.9,
                     help="where in the feed's time span to compare books "
                          "(default 0.9 — after the outage, before the close)")
+    ap.add_argument("--pipeline", action="store_true",
+                    help="also grade the LIVE pipeline: wire_to_book with its "
+                         "book thread throttled until the ring fills and the "
+                         "receiver drops packets (phase 10.5's promise that "
+                         "backpressure becomes a graded gap)")
+    ap.add_argument("--pipeline-rate", type=int, default=60000)
+    ap.add_argument("--pipeline-ring-log2", type=int, default=12,
+                    help="a SMALL ring on purpose: the throttled scenarios have "
+                         "to fill it inside one run, and a large one turns them "
+                         "into no-ops that report CORRECT")
+    ap.add_argument("--pipeline-port", type=int, default=27400)
+    ap.add_argument("--pipeline-kill-occupancy", type=int, default=2000)
     ap.add_argument("--keep", metavar="DIR",
                     help="keep the damaged feeds and books here instead of a "
                          "temporary directory")
     a = ap.parse_args()
 
     b = Path(a.build)
-    for tool in ("mold_wrap", "mold_damage", "mold_replay"):
+    needed = ["mold_wrap", "mold_damage", "mold_replay"]
+    if a.pipeline:
+        needed += ["wire_to_book", "mold_replay_udp", "book_replay"]
+    for tool in needed:
         if not (b / tool).exists():
             raise SystemExit(f"error: {b / tool} not found — build first")
 
@@ -273,6 +417,29 @@ def main():
     for r in rows:
         print(f"  {r['name']:<{w}}  {r['why']}")
 
+    pipeline = []
+    if a.pipeline:
+        print("\n--- the live pipeline: loss caused by backpressure, not by damage ---")
+        print("(these compare the ALL-SYMBOLS book, one row per security, not the "
+              "single-symbol\n depth dump above — the pipeline builds every symbol "
+              "at once)\n")
+        pipeline, pipe_problems = pipeline_rows(b, a.feed, packets, work, a)
+        no_op += pipe_problems
+        pw = max(len(r["name"]) for r in pipeline)
+        print(f"{'scenario':<{pw}} {'verdict':>9} {'dropped':>8} {'lost':>8} "
+              f"{'gaps':>6} {'state':>12} {'rebuild':>8} {'recov':>6} "
+              f"{'peak occ':>9}  kill switch")
+        print("-" * (pw + 78))
+        for r in pipeline:
+            print(f"{r['name']:<{pw}} {r['verdict']:>9} {r['dropped']:>8,} "
+                  f"{r['lost']:>8,} {r['gaps']:>6} {r['state']:>12} "
+                  f"{r['rebuilds']:>8} {r['recoveries']:>6} {r['peak']:>9,}  "
+                  f"{r['kill']}")
+        print()
+        for r in pipeline:
+            print(f"  {r['name']:<{pw}}  {r['why']}")
+        rows = rows + pipeline
+
     counts = {}
     for r in rows:
         counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
@@ -300,6 +467,14 @@ def main():
         print("\nFAIL: the undamaged control did not come back CORRECT — the "
               "harness itself is broken")
         return 1
+    # The live table has its own control, and it has to pass for the same
+    # reason: a pipeline that cannot reproduce the book with nothing wrong is
+    # not a pipeline whose damaged verdicts mean anything.
+    for r in pipeline:
+        if r["name"] == "pipeline-clean" and r["verdict"] != "CORRECT":
+            print("\nFAIL: the unthrottled pipeline did not come back CORRECT — "
+                  "its damaged\nverdicts describe a pipeline that is already wrong")
+            return 1
     print("\nOK: correct or safe in every scenario, never silently wrong")
     return 0
 

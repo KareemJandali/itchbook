@@ -291,6 +291,22 @@ public:
         }
     }
 
+    // Discard every resting order, everywhere, and keep everything else.
+    //
+    // This is rebuild-forward at feed scale. A gap in a multiplexed feed is not
+    // a gap in one symbol: the lost packet held messages for whichever symbols
+    // happened to be in it, and nothing in the surviving stream says which. So
+    // every book is suspect and every book is cleared. The result holds NO
+    // WRONG ORDERS, only missing ones, which is the property recover/
+    // gap_policy.hpp exists to preserve -- and the tape (volume, OHLC, trade
+    // counts) is deliberately NOT cleared, because those are facts about
+    // messages that were received and remain true.
+    void clear_all_orders() {
+        for (auto& b : books_) {
+            if (b != nullptr) b->clear_orders();
+        }
+    }
+
     // The feed-level counters. Per book they answer a question about a symbol;
     // summed they answer the one phase 9 actually asks.
     uint64_t unknown_ref() const {

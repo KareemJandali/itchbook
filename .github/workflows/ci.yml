@@ -663,6 +663,41 @@ jobs:
       - name: Adversarial replay (drops, dups, reorders, truncation, an outage)
         run: python3 python/analysis/adversarial.py data/raw/rec.gz --build build
 
+      # Phase 10's entry in the phase-7 matrix. Every scenario above damages a
+      # FILE; this one damages nothing. The feed is perfect and every packet
+      # arrives -- the loss comes from the receiver dropping whole packets
+      # because the ring is full, because the book thread has been told to take
+      # longer per message than the wire allows.
+      #
+      # That is phase 10.5's promise under test: "backpressure degrades to
+      # graded feed gaps rather than silent loss". Same sequencer, same gap
+      # policy, same rebuild-forward, same four verdicts, and 0 WRONG is the
+      # same bar. The rate is conservative and the ring large because the
+      # control scenario must drop NOTHING on a shared runner -- a control that
+      # drops is a control that proves nothing.
+      - name: Adversarial replay, live pipeline (backpressure as a graded gap)
+        run: |
+          python3 python/analysis/adversarial.py data/raw/rec.gz --build build \
+            --pipeline --pipeline-rate 20000 --pipeline-ring-log2 12 \
+            --pipeline-kill-occupancy 1000
+
+      # ...and the live table has to be able to say WRONG too. Setting the
+      # convergence bar to a single clean reference makes the pipeline call
+      # itself trusted while its book is still missing thousands of orders,
+      # which is precisely the silently-wrong state.
+      - name: Live pipeline harness self-test (it must detect silent wrongness)
+        run: |
+          if python3 python/analysis/adversarial.py data/raw/rec.gz --build build \
+               --pipeline --pipeline-rate 20000 --pipeline-ring-log2 12 \
+               --recover-after 1 > /tmp/pipe-selftest.txt 2>&1; then
+            cat /tmp/pipe-selftest.txt
+            echo "FAIL: the live harness passed a run it should have failed"
+            exit 1
+          fi
+          grep -q "consumer-slow" /tmp/pipe-selftest.txt
+          grep -qE "WRONG" /tmp/pipe-selftest.txt
+          echo "live harness correctly reported silent wrongness at a bar of 1"
+
       # ...and prove the harness can actually fail, because a grader that only
       # ever returns CORRECT is worth nothing. Setting the convergence bar to a
       # single clean reference makes the system call itself trusted while its
