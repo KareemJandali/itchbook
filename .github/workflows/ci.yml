@@ -64,6 +64,31 @@ jobs:
           ./build/itch_dump   data/raw/sample.gz 5
           ./build/itch_slice  data/raw/sample.gz TEST data/sliced/TEST.gz
 
+      # The census counts live orders with a structure that shares no code with
+      # the book: no levels, no pool, twelve bytes per order instead of forty.
+      # So the two arrive at "how many orders are resting" by different routes,
+      # and phase 9 will lean on the census number to size a ref map for 8,700
+      # symbols at once. Two independent counts of the same feed must agree, or
+      # neither of them gets to be evidence.
+      - name: Census and book agree on how many orders are live
+        run: |
+          python3 python/make_queue_feed.py data/raw/live.gz --messages 200000 \
+            --gap-ns 20000 --seed 3
+          ./build/itch_census  data/raw/live.gz --peak-orders | tee /tmp/census.txt
+          ./build/book_replay  data/raw/live.gz --symbol TEST --json /tmp/book.json
+          python3 - <<'PY'
+          import json, re, sys
+          census = open('/tmp/census.txt').read()
+          live = int(re.search(r'live at end of file\s+(\d+)', census).group(1))
+          unknown = int(re.search(r'references naming no live order\s+(\d+)', census).group(1))
+          assert re.search(r'inserted == live \+ removed \+ emptied\s+yes', census), census
+          book = json.load(open('/tmp/book.json'))
+          print(f"census live={live} unknown={unknown} | "
+                f"book resting={book['resting_orders']} unknown={book['unknown_refs']}")
+          if live != book['resting_orders'] or unknown != book['unknown_refs']:
+              sys.exit("census and book disagree about the same feed")
+          PY
+
       - name: Smoke test (reference book replay)
         run: |
           python3 python/reference/replay.py data/raw/sample.gz --symbol TEST \
