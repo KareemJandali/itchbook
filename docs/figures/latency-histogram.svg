@@ -37,7 +37,7 @@
 </style>
 <rect class="surface" width="720" height="440"/>
 <text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Per-message book latency, 1M-message benchmark feed</text>
-<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">1,000,005 messages, 54 occupied buckets, slowest in [623,487, 741,455) cycles</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">1,000,005 messages, 59 occupied buckets, slowest in [623,487, 741,455) cycles</text>
 <line class="grid" x1="79" y1="378.0" x2="690" y2="378.0"/>
 <text class="muted" x="71" y="382.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1</text>
 <line class="grid" x1="79" y1="333.7" x2="690" y2="333.7"/>
@@ -66,65 +66,70 @@
 <text class="muted" x="588.2" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100,000</text>
 <line class="grid" x1="690.0" y1="112" x2="690.0" y2="378"/>
 <text class="muted" x="690.0" y="396" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1,000,000</text>
-<rect class="s1" x="141.3" y="376.8" width="7.9" height="1.2" rx="2"/>
-<rect class="s1" x="159.2" y="347.0" width="4.8" height="31.0" rx="2"/>
-<rect class="s1" x="172.0" y="311.9" width="7.9" height="66.1" rx="2"/>
-<rect class="s1" x="181.8" y="275.0" width="2.2" height="103.0" rx="2"/>
-<rect class="s1" x="186.0" y="254.4" width="5.4" height="123.6" rx="2"/>
-<rect class="s1" x="193.4" y="238.5" width="7.2" height="139.5" rx="2"/>
-<rect class="s1" x="202.6" y="258.2" width="5.6" height="119.8" rx="2"/>
-<rect class="s1" x="210.2" y="260.5" width="6.4" height="117.5" rx="2"/>
-<rect class="s1" x="218.7" y="285.7" width="5.1" height="92.3" rx="2"/>
-<rect class="s1" x="225.8" y="261.2" width="5.5" height="116.8" rx="2"/>
-<rect class="s1" x="233.3" y="192.5" width="5.6" height="185.5" rx="2"/>
-<rect class="s1" x="240.9" y="153.7" width="5.5" height="224.3" rx="2"/>
-<rect class="s1" x="248.4" y="153.0" width="6.1" height="225.0" rx="2"/>
-<rect class="s1" x="256.4" y="148.0" width="5.5" height="230.0" rx="2"/>
-<rect class="s1" x="263.9" y="152.8" width="5.6" height="225.2" rx="2"/>
-<rect class="s1" x="271.5" y="159.9" width="6.0" height="218.1" rx="2"/>
-<rect class="s1" x="279.5" y="155.5" width="5.6" height="222.5" rx="2"/>
-<rect class="s1" x="287.1" y="157.9" width="5.5" height="220.1" rx="2"/>
-<rect class="s1" x="294.6" y="164.3" width="5.6" height="213.7" rx="2"/>
-<rect class="s1" x="302.2" y="171.5" width="5.7" height="206.5" rx="2"/>
-<rect class="s1" x="309.9" y="186.1" width="5.6" height="191.9" rx="2"/>
-<rect class="s1" x="317.5" y="194.7" width="5.7" height="183.3" rx="2"/>
-<rect class="s1" x="325.2" y="196.7" width="5.6" height="181.3" rx="2"/>
-<rect class="s1" x="332.8" y="202.2" width="5.7" height="175.8" rx="2"/>
-<rect class="s1" x="340.6" y="205.5" width="5.7" height="172.5" rx="2"/>
-<rect class="s1" x="348.3" y="204.7" width="5.6" height="173.3" rx="2"/>
-<rect class="s1" x="355.9" y="216.9" width="5.7" height="161.1" rx="2"/>
-<rect class="s1" x="363.6" y="235.3" width="5.6" height="142.7" rx="2"/>
-<rect class="s1" x="371.2" y="245.6" width="5.7" height="132.4" rx="2"/>
-<rect class="s1" x="378.9" y="252.9" width="5.7" height="125.1" rx="2"/>
-<rect class="s1" x="386.5" y="263.3" width="5.7" height="114.7" rx="2"/>
-<rect class="s1" x="394.2" y="269.6" width="5.6" height="108.4" rx="2"/>
-<rect class="s1" x="401.9" y="284.7" width="5.7" height="93.3" rx="2"/>
-<rect class="s1" x="409.5" y="309.0" width="5.7" height="69.0" rx="2"/>
-<rect class="s1" x="417.2" y="335.7" width="5.7" height="42.3" rx="2"/>
-<rect class="s1" x="424.9" y="325.9" width="5.7" height="52.1" rx="2"/>
-<rect class="s1" x="432.5" y="356.8" width="5.7" height="21.2" rx="2"/>
-<rect class="s1" x="440.2" y="376.8" width="5.7" height="1.2" rx="2"/>
-<rect class="s1" x="470.9" y="351.3" width="5.7" height="26.7" rx="2"/>
-<rect class="s1" x="478.5" y="302.3" width="5.7" height="75.7" rx="2"/>
-<rect class="s1" x="486.2" y="318.5" width="5.7" height="59.5" rx="2"/>
-<rect class="s1" x="493.8" y="333.7" width="5.7" height="44.3" rx="2"/>
-<rect class="s1" x="501.5" y="307.5" width="5.7" height="70.5" rx="2"/>
-<rect class="s1" x="509.2" y="351.3" width="5.7" height="26.7" rx="2"/>
-<rect class="s1" x="516.8" y="376.8" width="5.7" height="1.2" rx="2"/>
-<rect class="s1" x="539.8" y="376.8" width="5.7" height="1.2" rx="2"/>
-<rect class="s1" x="547.5" y="376.8" width="5.7" height="1.2" rx="2"/>
-<rect class="s1" x="562.8" y="330.2" width="5.7" height="47.8" rx="2"/>
-<rect class="s1" x="570.5" y="310.7" width="5.7" height="67.3" rx="2"/>
-<rect class="s1" x="578.1" y="338.0" width="5.7" height="40.0" rx="2"/>
-<rect class="s1" x="585.8" y="347.0" width="5.7" height="31.0" rx="2"/>
-<rect class="s1" x="601.1" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="159.2" y="376.8" width="4.8" height="1.2" rx="2"/>
+<rect class="s1" x="172.0" y="317.6" width="7.9" height="60.4" rx="2"/>
+<rect class="s1" x="181.8" y="278.0" width="2.2" height="100.0" rx="2"/>
+<rect class="s1" x="186.0" y="260.1" width="5.4" height="117.9" rx="2"/>
+<rect class="s1" x="193.4" y="240.7" width="7.2" height="137.3" rx="2"/>
+<rect class="s1" x="202.6" y="260.0" width="5.6" height="118.0" rx="2"/>
+<rect class="s1" x="210.2" y="262.9" width="6.4" height="115.1" rx="2"/>
+<rect class="s1" x="218.7" y="281.8" width="5.1" height="96.2" rx="2"/>
+<rect class="s1" x="225.8" y="263.1" width="5.5" height="114.9" rx="2"/>
+<rect class="s1" x="233.3" y="198.5" width="5.6" height="179.5" rx="2"/>
+<rect class="s1" x="240.9" y="157.4" width="5.5" height="220.6" rx="2"/>
+<rect class="s1" x="248.4" y="155.4" width="6.1" height="222.6" rx="2"/>
+<rect class="s1" x="256.4" y="150.2" width="5.5" height="227.8" rx="2"/>
+<rect class="s1" x="263.9" y="152.9" width="5.6" height="225.1" rx="2"/>
+<rect class="s1" x="271.5" y="158.2" width="6.0" height="219.8" rx="2"/>
+<rect class="s1" x="279.5" y="154.8" width="5.6" height="223.2" rx="2"/>
+<rect class="s1" x="287.1" y="157.0" width="5.5" height="221.0" rx="2"/>
+<rect class="s1" x="294.6" y="162.3" width="5.6" height="215.7" rx="2"/>
+<rect class="s1" x="302.2" y="167.8" width="5.7" height="210.2" rx="2"/>
+<rect class="s1" x="309.9" y="180.4" width="5.6" height="197.6" rx="2"/>
+<rect class="s1" x="317.5" y="189.2" width="5.7" height="188.8" rx="2"/>
+<rect class="s1" x="325.2" y="191.0" width="5.6" height="187.0" rx="2"/>
+<rect class="s1" x="332.8" y="196.3" width="5.7" height="181.7" rx="2"/>
+<rect class="s1" x="340.6" y="202.6" width="5.7" height="175.4" rx="2"/>
+<rect class="s1" x="348.3" y="204.3" width="5.6" height="173.7" rx="2"/>
+<rect class="s1" x="355.9" y="213.8" width="5.7" height="164.2" rx="2"/>
+<rect class="s1" x="363.6" y="229.1" width="5.6" height="148.9" rx="2"/>
+<rect class="s1" x="371.2" y="239.8" width="5.7" height="138.2" rx="2"/>
+<rect class="s1" x="378.9" y="247.4" width="5.7" height="130.6" rx="2"/>
+<rect class="s1" x="386.5" y="257.7" width="5.7" height="120.3" rx="2"/>
+<rect class="s1" x="394.2" y="264.7" width="5.6" height="113.3" rx="2"/>
+<rect class="s1" x="401.9" y="277.9" width="5.7" height="100.1" rx="2"/>
+<rect class="s1" x="409.5" y="306.0" width="5.7" height="72.0" rx="2"/>
+<rect class="s1" x="417.2" y="322.3" width="5.7" height="55.7" rx="2"/>
+<rect class="s1" x="424.9" y="289.5" width="5.7" height="88.5" rx="2"/>
+<rect class="s1" x="432.5" y="325.9" width="5.7" height="52.1" rx="2"/>
+<rect class="s1" x="455.5" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="470.9" y="330.2" width="5.7" height="47.8" rx="2"/>
+<rect class="s1" x="478.5" y="325.9" width="5.7" height="52.1" rx="2"/>
+<rect class="s1" x="486.2" y="324.6" width="5.7" height="53.4" rx="2"/>
+<rect class="s1" x="493.8" y="307.5" width="5.7" height="70.5" rx="2"/>
+<rect class="s1" x="501.5" y="327.2" width="5.7" height="50.8" rx="2"/>
+<rect class="s1" x="509.2" y="347.0" width="5.7" height="31.0" rx="2"/>
+<rect class="s1" x="516.8" y="356.8" width="5.7" height="21.2" rx="2"/>
+<rect class="s1" x="524.5" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="532.2" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="555.2" y="364.7" width="5.7" height="13.3" rx="2"/>
+<rect class="s1" x="562.8" y="364.7" width="5.7" height="13.3" rx="2"/>
+<rect class="s1" x="570.5" y="316.8" width="5.7" height="61.2" rx="2"/>
+<rect class="s1" x="578.1" y="313.2" width="5.7" height="64.8" rx="2"/>
+<rect class="s1" x="585.8" y="333.7" width="5.7" height="44.3" rx="2"/>
+<rect class="s1" x="593.5" y="347.0" width="5.7" height="31.0" rx="2"/>
+<rect class="s1" x="601.1" y="356.8" width="5.7" height="21.2" rx="2"/>
+<rect class="s1" x="616.5" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="624.1" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="631.8" y="364.7" width="5.7" height="13.3" rx="2"/>
 <rect class="s1" x="647.1" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="654.8" y="376.8" width="5.7" height="1.2" rx="2"/>
 <rect class="s1" x="670.1" y="376.8" width="5.7" height="1.2" rx="2"/>
 <line class="axis" x1="79" y1="378" x2="690" y2="378"/>
-<line class="axis" x1="262.9" y1="106" x2="262.9" y2="378" stroke-dasharray="4 3"/>
-<text class="ink" x="262.9" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p50 64</text>
-<line class="axis" x1="347.3" y1="106" x2="347.3" y2="378" stroke-dasharray="4 3"/>
-<text class="ink" x="347.3" y="82" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99 431</text>
+<line class="axis" x1="270.5" y1="106" x2="270.5" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="270.5" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p50 76</text>
+<line class="axis" x1="354.9" y1="106" x2="354.9" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="354.9" y="82" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99 512</text>
 <line class="axis" x1="385.5" y1="106" x2="385.5" y2="378" stroke-dasharray="4 3"/>
 <text class="ink" x="385.5" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99.9 1,024</text>
 <text class="muted" x="384" y="414" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">cycles per message — log scale</text>
