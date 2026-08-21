@@ -151,7 +151,7 @@ Nothing here was typed off a terminal.
 | locates seen | 8,907 |
 | with a stock directory entry | 8,906 |
 | that ever quoted an order | 8,892 |
-
+| that ever printed a trade | 7,196 |
 | with a closing cross | 8,906 |
 
 **Live orders, one shared reference space across every symbol.**
@@ -169,7 +169,7 @@ Nothing here was typed off a terminal.
 | cancels that did not | 2,787,676 |
 | **references naming no live order** | **0** |
 
-The pass took **65.58 s** — 126 MB/s of feed, 4.10 M msg/s — and it was the `framing + live-order tracking` pass.
+The pass took **66.14 s** — 125 MB/s of feed, 4.06 M msg/s — and it was the `framing + live-order tracking` pass.
 
 **Stub quotes, and why a symbol's quoted range sizes nothing.**
 
@@ -179,6 +179,15 @@ The consequence is concrete: the range of prices a symbol *quoted* spans almost 
 
 **1 locate with no directory entry:** `0` (10 messages). That is the session itself — `S` system events and the market-wide `V` carry stock locate 0, and no `R` describes it. A message for an undirectoried locate is counted rather than ignored, because the benign explanation and a framing bug look identical until someone looks.
 
+
+**The floor.** A pass that decompresses, frames and length-checks the file while building nothing:
+
+| pass | seconds | MB/s | M msg/s |
+|---|---:|---:|---:|
+| `framing only` | **16.51** | 500 | 16.28 |
+| `framing + live-order tracking` | 66.14 | 125 | 4.06 |
+
+No replay of this file can beat 16.51 s, and the difference between that and any end-to-end number is what the book costs. The second row prices the live-order table on its own: **49.6 s** for roughly 263 M hash operations against a table far larger than L2 — which is the same shape of work the book's reference map does, and the reason the multi-symbol throughput prediction in the build plan is what it is.
 <!-- census:end -->
 
 
