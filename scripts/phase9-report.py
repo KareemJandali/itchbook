@@ -22,13 +22,15 @@ END = "<!-- generated:end -->"
 
 
 def load():
+    sweep = V / "sweep-load.json"
     return (json.loads((V / "census-2019-12-30-framing.json").read_text()),
             json.loads((V / "census-2019-12-30.json").read_text()),
             json.loads((V / "all-symbols-2019-12-30.json").read_text()),
-            list(csv.DictReader((V / "all-symbols-2019-12-30.csv").open())))
+            list(csv.DictReader((V / "all-symbols-2019-12-30.csv").open())),
+            json.loads(sweep.read_text()) if sweep.exists() else None)
 
 
-def build(floor, census, run, rows):
+def build(floor, census, run, rows, sweep):
     act = [r for r in rows if int(r["adds"]) > 0]
     def frac(r):
         return int(r["off_band_adds"]) / int(r["adds"])
@@ -76,17 +78,53 @@ def build(floor, census, run, rows):
          "",
          f"Decompression is **{fs / secs * 100:.0f}%** of the run.",
          "",
-         "## The prediction", "",
-         "| | |", "|---|---|",
-         "| written before the run | book-only 60–120 s, end-to-end 80–140 s, "
-         "5–20x worse per message than the cache-hot benchmark |",
-         f"| measured | book-only **{book:.1f} s**, end-to-end **{secs:.1f} s**, "
-         f"**{(book * 1e9 / msgs) / 22.8:.1f}x** |",
-         "| verdict | **kept** |",
-         "",
-         f"The single-symbol benchmark reports 22.8 ns per message. Across a whole day "
-         f"of every symbol it is **{book * 1e9 / msgs:.0f} ns**.",
-         "",
+         "## The prediction", ""]
+
+    # Written into the plan before any of this ran. Graded here by computing the
+    # verdict from the numbers rather than by a word typed next to them -- an
+    # earlier version of this script asserted "kept" as a literal and went on
+    # saying it after the measurement moved outside the range.
+    LO, HI = 60.0, 120.0            # book-only seconds
+    E_LO, E_HI = 80.0, 140.0        # end-to-end seconds
+    R_LO, R_HI = 5.0, 20.0          # x the cache-hot benchmark
+    CACHE_HOT_NS = 22.8
+
+    def grade(book_s, end_s):
+        ratio = (book_s * 1e9 / msgs) / CACHE_HOT_NS
+        ok = (LO <= book_s <= HI) and (E_LO <= end_s <= E_HI) and (R_LO <= ratio <= R_HI)
+        return ratio, ok
+
+    L += [f"> book-only {LO:.0f}–{HI:.0f} s, end-to-end {E_LO:.0f}–{E_HI:.0f} s, "
+          f"{R_LO:.0f}–{R_HI:.0f}x worse per message than the cache-hot benchmark",
+          ""]
+
+    # The configuration the prediction was written against: the reference map
+    # pre-sized to 2x the peak, which is what the default was at the time.
+    old = None
+    if sweep:
+        for v in sweep["variants"]:
+            if v["ref_map_slots"] == 4194304:
+                old = min(v["samples"])
+    rows_pred = []
+    if old is not None:
+        r, ok = grade(old - fs, old)
+        rows_pred.append(("as predicted against — 4.19M map slots, 46% load",
+                          old - fs, old, r, ok))
+    r_now, ok_now = grade(book, secs)
+    rows_pred.append((f"as it stands — {run['ref_map_slots'] / 1e6:.2f}M map slots, "
+                      f"{census['live_orders']['peak'] / run['ref_map_slots'] * 100:.0f}% load",
+                      book, secs, r_now, ok_now))
+
+    L += ["| configuration | book-only | end-to-end | vs cache-hot | inside the prediction |",
+          "|---|---:|---:|---:|---|"]
+    for name, b, e, r, ok in rows_pred:
+        L.append(f"| {name} | {b:.1f} s | {e:.1f} s | {r:.1f}x | "
+                 f"{'**yes**' if ok else 'no' } |")
+    L += ["",
+          f"The single-symbol benchmark reports {CACHE_HOT_NS} ns per message. Across a whole "
+          f"day of every symbol it is **{book * 1e9 / msgs:.0f} ns**.",
+          ""]
+    L += [
          "## Memory, decomposed", "",
          "| | MB | what it is |", "|---|---:|---|",
          f"| dense bands | {band:.1f} | {run['band_levels']} slots x 2 sides x "
