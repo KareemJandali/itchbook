@@ -28,6 +28,7 @@
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
 #include "itchbook/book/report.hpp"
+#include "itchbook/pipe/reader_thread.hpp"
 #include "itchbook/itch/messages.hpp"
 #include "itchbook/itch/parser.hpp"
 #include "itchbook/itch/reader.hpp"
@@ -66,6 +67,13 @@ struct Options {
     size_t refs_capacity = size_t{1} << 23;
     size_t band_levels = 512;   // per side, per symbol; see BookSet's comment
     bool per_book_pools = false;
+    // Phase 10.8: decompress on one thread while the book runs on another.
+    // Off by default -- every committed number in phases 3-9 came from the
+    // single-threaded path, and silently changing what `book_replay feed.gz`
+    // means would invalidate the regression gate's baseline rather than
+    // improve it.
+    bool reader_thread = false;
+    size_t reader_chunk_kb = 64;
     size_t pool_first_chunk = ITCHBOOK_POOL_FIRST_CHUNK;
     size_t pool_max_chunk = ITCHBOOK_POOL_MAX_CHUNK;
 };
@@ -212,6 +220,7 @@ struct AllSymbols {
     double elapsed_s = 0.0;
     uint64_t peak_rss_bytes = 0;
     bool stop = false;
+    itchbook::pipe::ReaderStats reader;
 
     explicit AllSymbols(const Options& o)
         : opt(o), set(o.refs_capacity, o.tick, 20, o.band_levels,
@@ -236,6 +245,27 @@ struct AllSymbols {
         if (itchbook::book::apply(set, type, p)) ++applied;
     }
 };
+
+// Chunk size is a template parameter -- it sizes the slot, and the slot is the
+// ring's element type -- so a runtime --reader-chunk-kb picks among
+// instantiations. Three, because P4 predicts they are indistinguishable and a
+// prediction of flatness still has to be run.
+template <typename Handler>
+itchbook::pipe::ReaderStats run_threaded(const Options& opt, Handler& h) {
+    itchbook::pipe::ReaderStats st;
+    switch (opt.reader_chunk_kb) {
+        case 256:
+            itchbook::pipe::parse_threaded<Handler, 256 * 1024>(opt.feed, h, &st);
+            break;
+        case 1024:
+            itchbook::pipe::parse_threaded<Handler, 1024 * 1024>(opt.feed, h, &st);
+            break;
+        default:
+            itchbook::pipe::parse_threaded<Handler, 64 * 1024>(opt.feed, h, &st);
+            break;
+    }
+    return st;
+}
 
 // Peak resident set, from the OS rather than from an accounting of what we
 // meant to allocate. VmHWM on Linux; ru_maxrss on macOS and the BSDs, where it
@@ -289,6 +319,12 @@ bool write_all_json(const AllSymbols& a, const char* path) {
     std::fprintf(f,
         "{\n"
         "  \"feed\": \"%s\",\n"
+        "  \"reader_thread\": %s,\n"
+        "  \"reader_chunk_bytes\": %zu,\n"
+        "  \"reader_chunks\": %llu,\n"
+        "  \"producer_stalls\": %llu,\n"
+        "  \"consumer_stalls\": %llu,\n"
+        "  \"reader_peak_occupancy\": %llu,\n"
         "  \"elapsed_seconds\": %.2f,\n"
         "  \"peak_rss_bytes\": %llu,\n"
         "  \"messages_read\": %llu,\n"
@@ -315,7 +351,14 @@ bool write_all_json(const AllSymbols& a, const char* path) {
         "  \"operational_halts\": %llu,\n"
         "  \"broken_trades\": %llu\n"
         "}\n",
-        a.opt.feed, a.elapsed_s,
+        a.opt.feed,
+        a.opt.reader_thread ? "true" : "false",
+        a.opt.reader_chunk_kb * 1024,
+        static_cast<unsigned long long>(a.reader.chunks),
+        static_cast<unsigned long long>(a.reader.producer_stalls),
+        static_cast<unsigned long long>(a.reader.consumer_stalls),
+        static_cast<unsigned long long>(a.reader.max_occupancy),
+        a.elapsed_s,
         static_cast<unsigned long long>(a.peak_rss_bytes),
         static_cast<unsigned long long>(a.read),
         static_cast<unsigned long long>(a.applied),
@@ -386,6 +429,35 @@ void print_all_summary(const AllSymbols& a) {
     std::printf("%-28s %13.1f MB\n", "peak RSS",
                 static_cast<double>(a.peak_rss_bytes) / 1e6);
     std::printf("%-28s %13.2f s\n", "wall clock", a.elapsed_s);
+    if (a.opt.reader_thread) {
+        // POLL COUNTS, not time, and the difference matters enough to print.
+        //
+        // The obvious reading -- more producer stalls means the book is the slow
+        // half -- does not follow, because a poll costs a different amount on
+        // each side. The consumer's empty poll is a load and a compare; the
+        // producer's full poll goes through writable(), which refreshes the
+        // consumer's cache line when it would report zero. So the consumer
+        // spins far more times per second than the producer, and the raw
+        // counts are not comparable across the boundary. An early version of
+        // this printed "bottleneck: decompression" from exactly that
+        // comparison, on a feed whose own timings said the opposite.
+        //
+        // What they do say: whether either side waited at all, and whether the
+        // ring ever filled. Which half is actually slower is a question about
+        // TIME, and bench/reader-overlap.py answers it the only sound way --
+        // by measuring decompression alone and the whole run, and subtracting.
+        std::printf("%-28s %16s\n", "reader chunks",
+                    comma(a.reader.chunks).c_str());
+        std::printf("%-28s %16s\n", "  producer polls, ring full",
+                    comma(a.reader.producer_stalls).c_str());
+        std::printf("%-28s %16s\n", "  consumer polls, ring empty",
+                    comma(a.reader.consumer_stalls).c_str());
+        std::printf("%-28s %16s\n", "  peak ring occupancy",
+                    comma(a.reader.max_occupancy).c_str());
+        std::printf("%s", "  (poll counts, not time: the two sides poll at "
+                          "different costs.\n   For which half is slower, run "
+                          "bench/reader-overlap.py.)\n");
+    }
     if (a.elapsed_s > 0.0) {
         std::printf("%-28s %16.2f\n", "M msg/s",
                     static_cast<double>(a.read) / a.elapsed_s / 1e6);
@@ -557,6 +629,10 @@ bool parse_args(int argc, char** argv, Options* opt) {
         };
         if (a == "--all-symbols") {
             opt->all_symbols = true;
+        } else if (a == "--reader-thread") {
+            opt->reader_thread = true;
+        } else if (a == "--reader-chunk-kb") {
+            opt->reader_chunk_kb = static_cast<size_t>(std::atol(next("--reader-chunk-kb")));
         } else if (a == "--per-symbol") {
             opt->per_symbol = next("--per-symbol");
             opt->all_symbols = true;
@@ -636,8 +712,12 @@ int main(int argc, char** argv) {
         try {
             AllSymbols a(opt);
             const auto started = std::chrono::steady_clock::now();
-            itchbook::Reader reader(opt.feed);
-            itchbook::parse(reader, a);
+            if (opt.reader_thread) {
+                a.reader = run_threaded(opt, a);
+            } else {
+                itchbook::Reader reader(opt.feed);
+                itchbook::parse(reader, a);
+            }
             a.elapsed_s = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - started).count();
             a.peak_rss_bytes = peak_rss();

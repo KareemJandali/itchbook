@@ -81,11 +81,19 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build-tsan --target test_spsc_ring spsc_stress
+          cmake --build build-tsan --target test_spsc_ring test_reader_thread spsc_stress
           cmake --build build-tsan --target wire_to_book mold_replay_udp mold_wrap
 
       - name: Ring unit tests, race-detected
         run: ./build-tsan/test_spsc_ring
+
+      # The second consumer of the ring, and the first producer that is not a
+      # socket. Its chunk-boundary cases drive the ring through carry-and-
+      # publish patterns the socket path never produces.
+      - name: Reader thread, race-detected
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ./build-tsan/test_reader_thread
 
       # halt_on_error stops at the first race rather than reporting thousands of
       # instances of one bug. The stress run randomises batch sizes and stalls
@@ -378,7 +386,72 @@ jobs:
       # Standing rule 7 for phase 10: the results doc's tables are generated
       # from the committed sweep, and this fails if the prose has drifted.
       - name: The phase 10 results match their artifacts
-        run: python3 scripts/phase10-report.py --check
+        run: |
+          python3 scripts/phase10-report.py --check
+          python3 scripts/phase10-8-report.py --check
+
+      # Phase 10.8. The reader thread must be INDISTINGUISHABLE from the
+      # single-threaded path, not merely fast: same message stream, same book,
+      # same failures on the same malformed input. test_reader_thread covers the
+      # stream (and runs under ASan/UBSan here and under TSan in the other job);
+      # this covers the book, across all three chunk sizes, because the chunk
+      # size is what decides where messages get carried across a slot boundary.
+      #
+      # It asserts nothing about speed. The overlap measurement needs a machine
+      # with cores to spare and lives in validation/reader-overlap.json.
+      - name: Reader thread builds the identical book at every chunk size
+        run: |
+          python3 scripts/make-synthetic-feed.py data/raw/overlap.gz \
+            --messages 200000 --symbols 64
+          ./build/book_replay data/raw/overlap.gz --all-symbols \
+            --per-symbol /tmp/seq.csv --json /tmp/seq.json --quiet
+          for kb in 64 256 1024; do
+            ./build/book_replay data/raw/overlap.gz --all-symbols --reader-thread \
+              --reader-chunk-kb $kb --per-symbol /tmp/thr-$kb.csv \
+              --json /tmp/thr-$kb.json --quiet
+            cmp /tmp/seq.csv /tmp/thr-$kb.csv
+            echo "chunk ${kb}KB: identical book"
+          done
+          python3 - <<'PY'
+          import json
+          seq = json.load(open('/tmp/seq.json'))
+          for kb in (64, 256, 1024):
+              t = json.load(open(f'/tmp/thr-{kb}.json'))
+              assert t['reader_thread'] is True, kb
+              assert t['messages_read'] == seq['messages_read'], (kb, t['messages_read'])
+              assert t['reader_chunks'] > 0, kb
+              # Both counters have to be reported; a bottleneck nobody can name
+              # is a benchmark nobody can act on.
+              assert 'producer_stalls' in t and 'consumer_stalls' in t, kb
+          print('all three chunk sizes read the same message count as the '
+                'single-threaded path')
+          PY
+
+      # ...and a message that cannot fit in a chunk must SAY so rather than
+      # hang. The first version of the producer reserved a 65,535-byte maximum
+      # message inside a 65,536-byte chunk, so it broke out before reading a
+      # byte and spun forever; the second memcpy'd a carried message into a
+      # smaller chunk and overflowed the heap, which only ASan saw.
+      - name: An oversized message is refused, not hung on
+        run: |
+          python3 - <<'PY'
+          import gzip, struct
+          with gzip.open('data/raw/oversize.gz', 'wb') as f:
+              for payload in (b'z' + b'x' * 39, b'z' + b'x' * 900):
+                  f.write(struct.pack('>H', len(payload)))
+                  f.write(payload)
+          PY
+          # A 902-byte frame against a 64 KB chunk is fine; the tests cover the
+          # refusal path at chunk sizes the flag cannot reach, so here we only
+          # require that a large frame still round-trips rather than hanging.
+          timeout 60 ./build/book_replay data/raw/oversize.gz --all-symbols --reader-thread \
+            --json /tmp/oversize.json --quiet
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/oversize.json'))
+          assert d['messages_read'] == 2, d['messages_read']
+          print('a 902-byte frame read through the reader thread without hanging')
+          "
 
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh

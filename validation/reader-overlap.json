@@ -1,0 +1,68 @@
+{
+ "feed_messages": 3775300,
+ "repeats": 3,
+ "decompress_seconds": 0.63,
+ "book_seconds": 1.7000000000000002,
+ "sequential_seconds": 2.33,
+ "ceiling": 1.3705882352941174,
+ "frame_only_no_inflate_seconds": 0.15,
+ "frame_and_book_no_inflate_seconds": 1.71,
+ "book_isolated_seconds": 1.56,
+ "subtraction_overstates_book_percent": 8.974358974358987,
+ "exceeds_model_ceiling": true,
+ "bound_by": "book",
+ "chunks": [
+  {
+   "chunk_kb": 64,
+   "elapsed_seconds": 1.41,
+   "speedup": 1.6524822695035462,
+   "fraction_of_ceiling": 1.2056737588652484,
+   "producer_stalls": 410731923,
+   "consumer_stalls": 33034560,
+   "reader_chunks": 1733,
+   "peak_occupancy": 16,
+   "messages_read": 3775300,
+   "all_runs": [
+    1.41,
+    1.48,
+    1.46
+   ]
+  },
+  {
+   "chunk_kb": 256,
+   "elapsed_seconds": 1.4,
+   "speedup": 1.6642857142857144,
+   "fraction_of_ceiling": 1.2142857142857146,
+   "producer_stalls": 307704380,
+   "consumer_stalls": 6535549,
+   "reader_chunks": 433,
+   "peak_occupancy": 16,
+   "messages_read": 3775300,
+   "all_runs": [
+    1.4,
+    1.4,
+    1.42
+   ]
+  },
+  {
+   "chunk_kb": 1024,
+   "elapsed_seconds": 1.31,
+   "speedup": 1.7786259541984732,
+   "fraction_of_ceiling": 1.2977099236641223,
+   "producer_stalls": 295867029,
+   "consumer_stalls": 5297243,
+   "reader_chunks": 109,
+   "peak_occupancy": 16,
+   "messages_read": 3775300,
+   "all_runs": [
+    1.31,
+    1.39,
+    1.42
+   ]
+  }
+ ],
+ "best_speedup": 1.7786259541984732,
+ "best_chunk_kb": 1024,
+ "chunk_spread_percent": 7.6335877862595325,
+ "overlap_refuted": false
+}

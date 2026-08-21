@@ -535,6 +535,8 @@ include/itchbook/   public headers (this is a library, not an app)
   mold/             MoldUDP64 packet framing and the gap/duplicate/reorder sequencer
   recover/          gap policy, book + strategy snapshots, halt tracking
   risk/             the kill switch
+  pipe/             the lock-free SPSC ring, and the reader thread that
+                    decompresses ahead of the book through it
   bench/            rdtsc timing and latency percentiles
 tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
                     queue_sim, queue_backtest, latency_sweep, restart_check,
@@ -567,6 +569,9 @@ bench/              baseline/after JSON, compare.py (A/B with pinning), and
                     anchored to the feed's own clock, extends itself until
                     something drops, and reports the knee and the max
                     sustainable rate
+                    reader-overlap.py — measures decompression alone and the
+                    whole run, subtracts to get the book's share, and grades the
+                    reader thread against the (D+B)/max(D,B) ceiling
 scripts/            real-data-run.sh, full-day-differential.sh,
                     update-real-numbers.py, render-writeup.py,
                     make-synthetic-feed.py — a spec-shaped ITCH feed owing

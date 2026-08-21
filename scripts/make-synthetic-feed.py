@@ -41,7 +41,19 @@ class Feed:
         # keeping it is that nothing this file emits can reference an order that
         # was never added or has already gone -- "0 unknown references" has to
         # be a property of the feed before it can be a result about the book.
+        # ref -> (locate, shares, index into live_refs), plus the parallel
+        # list, so picking a random resting order is O(1).
+        #
+        # This was `self.live = {}` with `rng.choice(list(self.live))` to pick,
+        # which rebuilds a list of every resting order on every mutating
+        # message. At 250,000 messages over 64 symbols the live set stays small
+        # and it is imperceptible; at 3,000,000 over 512 symbols the set runs to
+        # hundreds of thousands and generation goes quadratic -- five minutes in
+        # and a third of the way through a feed that takes the C++ tools two
+        # seconds to read. A generator that CI runs cannot be quadratic in the
+        # feed it generates.
         self.live = {}
+        self.live_refs = []
         # A base price per symbol, and quotes near it. Uniform prices across
         # $10-$1000 would be simpler and would defeat the point: the book keeps
         # a dense array over a band around the touch and a cold std::map for
@@ -104,10 +116,30 @@ class Feed:
         b[24:32] = name.ljust(8).encode()
         b[32:36] = be(price, 4)
         self.emit(b)
-        self.live[ref] = (locate, shares)
+        self.add_live(ref, locate, shares)
+
+    # Swap-remove: the departing ref's slot takes the last entry, and that
+    # entry's recorded index follows it. Constant time, and the order of
+    # live_refs is not meaningful to anything.
+    def add_live(self, ref, locate, shares):
+        self.live[ref] = (locate, shares, len(self.live_refs))
+        self.live_refs.append(ref)
+
+    def drop_live(self, ref):
+        _, _, pos = self.live[ref]
+        last = self.live_refs[-1]
+        self.live_refs[pos] = last
+        lo, sh, _ = self.live[last]
+        self.live[last] = (lo, sh, pos)
+        self.live_refs.pop()
+        del self.live[ref]
+
+    def set_shares(self, ref, shares):
+        locate, _, pos = self.live[ref]
+        self.live[ref] = (locate, shares, pos)
 
     def execute(self, ref):
-        locate, shares = self.live[ref]
+        locate, shares, _ = self.live[ref]
         n = self.rng.randrange(1, shares // 100 + 1) * 100
         b = self.head("E", locate, 31)
         b[11:19] = be(ref, 8)
@@ -116,31 +148,31 @@ class Feed:
         self.next_match += 1
         self.emit(b)
         if n >= shares:
-            del self.live[ref]
+            self.drop_live(ref)
         else:
-            self.live[ref] = (locate, shares - n)
+            self.set_shares(ref, shares - n)
 
     def cancel(self, ref):
-        locate, shares = self.live[ref]
+        locate, shares, _ = self.live[ref]
         n = self.rng.randrange(1, shares // 100 + 1) * 100
         b = self.head("X", locate, 23)
         b[11:19] = be(ref, 8)
         b[19:23] = be(n, 4)
         self.emit(b)
         if n >= shares:
-            del self.live[ref]
+            self.drop_live(ref)
         else:
-            self.live[ref] = (locate, shares - n)
+            self.set_shares(ref, shares - n)
 
     def delete(self, ref):
-        locate, _ = self.live[ref]
+        locate, _, _ = self.live[ref]
         b = self.head("D", locate, 19)
         b[11:19] = be(ref, 8)
         self.emit(b)
-        del self.live[ref]
+        self.drop_live(ref)
 
     def replace(self, ref):
-        locate, _ = self.live[ref]
+        locate, _, _ = self.live[ref]
         new_ref = self.next_ref
         self.next_ref += 1
         shares = self.rng.randrange(1, 20) * 100
@@ -151,8 +183,8 @@ class Feed:
         b[27:31] = be(shares, 4)
         b[31:35] = be(price, 4)
         self.emit(b)
-        del self.live[ref]
-        self.live[new_ref] = (locate, shares)
+        self.drop_live(ref)
+        self.add_live(new_ref, locate, shares)
 
     def build(self, total):
         self.system_event("O")
@@ -167,11 +199,11 @@ class Feed:
             # Weighted toward adds so the resting set does not drain; the real
             # file's mix is roughly half adds, and this is in that neighbourhood
             # without pretending to reproduce it.
-            if not self.live or self.rng.random() < 0.5:
+            if not self.live_refs or self.rng.random() < 0.5:
                 locate, name = self.rng.choice(self.symbols)
                 self.add(locate, name)
                 continue
-            ref = self.rng.choice(list(self.live))
+            ref = self.live_refs[self.rng.randrange(len(self.live_refs))]
             r = self.rng.random()
             if r < 0.35:
                 self.delete(ref)
@@ -184,8 +216,8 @@ class Feed:
         # Close the book out. Leaving orders resting is legal on a real day and
         # useless here: an empty book at the end is an invariant a checker can
         # fail on, and a feed that cannot fail its own checker proves nothing.
-        for ref in list(self.live):
-            self.delete(ref)
+        while self.live_refs:
+            self.delete(self.live_refs[-1])
         self.system_event("M")
         self.system_event("E")
         self.system_event("C")
