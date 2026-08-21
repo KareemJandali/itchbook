@@ -99,8 +99,14 @@ python3 python/analysis/latency_histogram.py out/after.csv --compare out/before.
 The bodies of the two distributions nearly coincide — the steady state was never
 the problem — and the whole change is in the right-hand tail, which is exactly
 what "the cost was one 42MB slab being faulted in, not the hot path" predicts.
-On this machine the worst single message goes from **67,370,328 cycles to
-631,192**, and throughput from 16.3M to 26.3M msg/s.
+On this machine the worst single message goes from **63,775,659 cycles to
+629,334** and throughput from 16.4M to 26.4M msg/s, while p99 moves by less than
+run-to-run noise (493 vs 523 — the wrong way, on this run). That is the shape of
+the claim: a tail event removed, not a hot path sped up. Both runs' full
+summaries are committed next to the figure as
+[`latency-before.json`](docs/figures/latency-before.json) and
+[`latency-after.json`](docs/figures/latency-after.json), so every number in this
+paragraph is checkable without rerunning anything.
 
 The same tool draws one run on its own:
 
