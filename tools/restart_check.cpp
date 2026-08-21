@@ -15,6 +15,12 @@
 // what a careless snapshot produces and what silently breaks every queue model
 // in phase 6.
 //
+// This tool checks the MARKET half. The plan's line also covers position and
+// our own open orders, which a book replay does not have — those are in
+// recover/strategy_snapshot.hpp and are checked by test_restart.cpp, which
+// drives a restored lane through a further fill and requires it to agree with
+// the lane that never died.
+//
 // The unit test in test_restart.cpp cuts a synthetic stream at every offset.
 // This does one cut on a real feed, which is the part that catches anything
 // the synthetic stream did not happen to contain.

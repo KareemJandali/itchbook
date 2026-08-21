@@ -8,6 +8,15 @@
 // discontinuity in the build plan: "reconstruct position and open orders after
 // a mid-day process restart."
 //
+// THIS FILE IS THE MARKET HALF OF THAT, and only the market half: every order
+// at every price in queue order, plus the tape. Position and our own resting
+// orders live in strategy_snapshot.hpp, because they belong to the strategy
+// rather than to the feed and a book replay that carries no strategy has no
+// use for them. Restoring one without the other is the failure worth naming:
+// a process that comes back with a perfect market and no inventory reports a
+// P&L for a strategy that spent the afternoon flat, and nothing in the output
+// says so.
+//
 // The difference is where the missing information is. After a gap, the bytes
 // were never received and nothing on disk can recover them. After a crash, the
 // bytes were received and processed; what was lost is the process's memory,
