@@ -3,19 +3,26 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–7 complete. Every claim below is measured on a real
-> NASDAQ trading day — MSFT, 30 December 2019, 1,221,484 messages — not on a
-> generated feed.
+> **Status:** Phases 1–8 complete. The correctness, fill and recovery claims
+> below are measured on a real NASDAQ trading day — MSFT, 30 December 2019,
+> 1,221,484 messages over the whole file. **Performance is the exception**, and
+> says so where it appears: a benchmark has to replay the same messages every
+> time to mean anything, so those numbers come from a generated feed built to
+> that day's message mix.
 >
-> **Correct.** The C++ book and an independent Python oracle agree byte for
-> byte across **61,228 snapshot rows and 22 summary fields**, VWAP to ten
-> decimal places, zero unknown order references. The reconstruction matches
-> **Databento's published daily bar exactly** — volume, open, high, low, close,
-> to the share and the cent. See [Validation](#validation).
+> **Correct.** The framing is checked against a whole day of every symbol —
+> **268,744,780 messages, 8.25 GB, no length mismatch**. Replaying one symbol's
+> file, the C++ book and an independent Python oracle then agree byte for byte
+> across **61,228 snapshot rows and 22 summary fields**, VWAP to ten decimal
+> places, zero unknown order references.
+> The reconstruction matches **Databento's published daily bar exactly** —
+> volume, open, high, low, close, to the share and the cent.
+> See [Validation](#validation).
 >
-> **Fast.** **1.73× fewer cycles per message** (43.9M msg/s), traced by
-> hardware counter to the pool's slab allocation rather than anything on the
-> hot path: the page-fault count matches the removed 41.9 MB slab to 99.5%. Two
+> **Fast** — *the one claim here measured on a generated feed, not the real
+> day.* **1.73× fewer cycles per message** (43.9M msg/s), traced by hardware
+> counter to the pool's slab allocation rather than anything on the hot path:
+> the page-fault count matches the removed 41.9 MB slab to 99.5%. Two
 > optimisations the plan predicted measured flat. See [`bench/`](bench/).
 >
 > **Honest about fills.** A symmetric maker at the touch **loses money in all
@@ -26,9 +33,9 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > See [`docs/phase6-results.md`](docs/phase6-results.md).
 >
 > **Never silently wrong.** Twelve scenarios of packet damage over that day —
-> drops, duplicates, reordering, truncation, a 14:00 outage, an injected halt —
-> and in none of them does the system report a trusted book that differs from
-> the truth. The grader is proven able to fail.
+> drops, duplicates, reordering, truncation, a 14:00 outage, and a trading halt
+> injected into the real stream — and in none of them does the system report a
+> trusted book that differs from the truth. The grader is proven able to fail.
 > See [`docs/phase7-results.md`](docs/phase7-results.md).
 
 Reconstructing an order book from a raw exchange feed is not hard because the
@@ -70,6 +77,67 @@ uninstrumented replay, so it is the honest end-to-end number.
 
 **1.65× faster on this machine, 1.73× on the PMU machine** (142.31 → 82.04
 cycles/msg, 25.3M → 43.9M messages/second), and the worst message improves 97×.
+
+### The distribution behind the percentiles
+
+Phase 4's done-condition is a **before/after** histogram, so here is the pool
+change as a change in shape rather than as two rows of a table:
+
+![Per-message book latency, before and after the pool change](docs/figures/latency-histogram-compare.svg)
+
+```bash
+# build the two pools, measure both, draw them on one pair of axes
+g++ -std=c++20 -O3 -Iinclude -DITCHBOOK_POOL_FIRST_CHUNK="(1u<<20)" \
+    -DITCHBOOK_POOL_MAX_CHUNK="(1u<<20)" tools/book_bench.cpp -lz -o bench_before
+./bench_before data/raw/bench.gz --histogram out/before.csv
+./build/book_bench data/raw/bench.gz --histogram out/after.csv
+python3 python/analysis/latency_histogram.py out/after.csv --compare out/before.csv \
+    --labels "one 42MB slab,geometric chunks" \
+    --svg docs/figures/latency-histogram-compare.svg
+```
+
+The bodies of the two distributions nearly coincide — the steady state was never
+the problem — and the whole change is in the right-hand tail, which is exactly
+what "the cost was one 42MB slab being faulted in, not the hot path" predicts.
+In the container these two runs came from, the worst single message goes from
+**63,775,659 cycles to 629,334** and throughput from 16.4M to 26.4M msg/s, while
+p99 moves by less than run-to-run noise (493 vs 523 — the wrong way, on this
+run). That is the shape of the claim: a tail event removed, not a hot path sped
+up. Both runs' full summaries are committed next to the figure as
+[`latency-before.json`](docs/figures/latency-before.json) and
+[`latency-after.json`](docs/figures/latency-after.json), so every number in this
+paragraph is checkable without rerunning anything, along with the bucket
+counts each chart is drawn from
+([`latency-histogram.csv`](docs/figures/latency-histogram.csv) and
+[`latency-histogram-before.csv`](docs/figures/latency-histogram-before.csv)).
+
+The same tool draws one run on its own:
+
+![Per-message book latency](docs/figures/latency-histogram.svg)
+
+```bash
+./build/book_bench data/raw/bench.gz --histogram out/latency.csv
+python3 python/analysis/latency_histogram.py out/latency.csv \
+    --svg docs/figures/latency-histogram.svg
+```
+
+Five numbers cannot show a shape, and the shape is where the argument is. This
+run puts **93.9% of a million messages between 32 and 256 cycles** — one broad
+mode, the steady state — and then decays smoothly. What the percentile columns
+cannot show is how the rest is distributed: p99.9 is 1,173 cycles and the worst
+message is 629,334, a factor of **537**, and the entire population at or above
+2,000 cycles is **321 messages out of a million**. A tail that is that wide and
+that sparse is a rare fault, not a slow path — which is the claim the pool
+change rests on, made visible rather than asserted. Both axes are logarithmic
+and labelled as such; a linear one is a single bar against the origin and six
+screens of white space.
+
+The markers are the same three statistics as the table — p50, p99, p99.9 — but
+not the same numbers, and the difference is the point: **these runs come from a
+third machine**, the container this repository's checks run in, so its absolute
+cycles sit above both columns above. Read the table for this project's hardware
+and the figure for the shape, which is the part that transfers. Regenerate it
+with the commands above to get your own.
 
 ### The counter behind it
 
@@ -144,16 +212,22 @@ optimistic       12261   814,786    -3065.75     -0.3763      0.0841
 mbo               9892   709,308    -3425.35     -0.4829     -0.1102
 pessimistic       8548   655,232    -3154.44     -0.4814     -0.2179
 
-naive reports $401.35 MORE than pessimistic
+naive reports $401.34 MORE than pessimistic
 ```
 
 ![Total P&L by fill model, MSFT](docs/figures/MSFT-fills-total.svg)
 ![Shares filled by fill model, MSFT](docs/figures/MSFT-fills-shares.svg)
 
-Both panels, because either alone misleads. Per share the four models agree
-closely; they disagree by **47%** on how many shares were filled at all, and a
-per-share chart on its own would show four near-identical bars while hiding the
-entire result.
+Both panels, because either alone misleads — though not in the direction the
+synthetic feed suggested. There, the four models' per-share numbers were nearly
+identical and only the share counts separated them. On MSFT the ordering
+inverts: per share the models spread **1.69×** (−0.2860 to −0.4829), wider than
+the **1.47×** spread in shares filled and much wider than the **1.24×** spread
+in total P&L that the first panel shows. So on real data the per-share view is
+the *most* discriminating of the three, not the least. Both panels stay, because
+the total is what a P&L statement reports and the per-share is what actually
+separates the models — and which of them discriminates is itself a thing that
+changed between the generated feed and the real one.
 
 ![Post-fill drift, MSFT](docs/figures/MSFT-markout.svg)
 
@@ -200,7 +274,9 @@ Result r = m.submit({.id = 2, .side = Side::Buy, .price = 100'5000, .quantity = 
 
 Limit, market, IOC, FOK, iceberg, stop and stop-limit; self-trade prevention in
 cancel-newest, cancel-oldest and cancel-both; and a state machine where an
-illegal transition asserts rather than quietly corrupting the share count.
+illegal transition asserts rather than quietly corrupting the share count —
+though note that is a plain `assert`, so `-DNDEBUG` removes it and the Release
+build recommended below for timing does not carry the check.
 
 Three rules carry most of the behaviour, and none of them is arbitrary:
 
@@ -230,8 +306,23 @@ its queue as an intrusive linked list, while arrival sequences are assigned by
 the engine and never touched by the book. A bug in either shows up as a
 disagreement.
 
-Run to date: **1,000,000 sequences (135M operations) on seed 1, plus 500,000
-each on seeds 2–5** — no invariant violated. CI runs a million on every push.
+Run to date: **1,000,000 sequences on each of seeds 1–5 — 99.5M operations** —
+no invariant violated, with every one of the six order types emitted and the
+count reported, because a run that violated nothing because it never exercised
+something has not shown anything about it. CI runs a million on every push and
+fails if any type goes unemitted.
+
+Stops were the type it never emitted. Adding them found three bugs. A parked
+stop firing into an empty book attempted `Accepted -> Rejected`, which the state
+machine forbids and which aborted the process. A triggered stop kept the arrival
+sequence it was given at submit time, so a stop parked in the morning could
+claim priority over orders queued at that price all day. And `fire_stops()`
+removed elected stops from its pending list by swapping the back into the gap,
+so several stops elected by the same trade rested in the wrong order among
+themselves — park 1, 2, 3 and they queue 1, 3, 2. That third one is worth
+dwelling on: fixing the sequence *first* stopped the fuzzer reporting it, which
+turned a detectable bug into a silent one for exactly as long as it took to
+notice. All three have regression tests that fail without their fix.
 
 Input is a byte buffer decoded into operations, so the same file runs under
 libFuzzer where its runtime is available:
@@ -259,27 +350,40 @@ python3 python/analysis/adversarial.py data/sliced/MSFT.gz --build build
 ```
 
 ```
-scenario             verdict     lost   gaps    dup  reord        state
-clean                CORRECT        0      0      0      0      trusted
-drop-1-in-100           SAFE    2,388     58      0   2263   recovering
-duplicate-1-in-100   CORRECT        0      0   2388      0      trusted
-reorder-1-in-100     CORRECT        0      0      0     56      trusted
-disconnect-long      CORRECT   16,231      1      0     64      trusted
-disconnect-to-end       SAFE        0      0      0      0       halted
+scenario             verdict     lost   gaps    dup  reord  trunc        state
+clean                CORRECT        0      0      0      0      0      trusted
+drop-1-in-1000          SAFE    1,127     25      0   1505      0   recovering
+drop-1-in-100           SAFE   12,199    269      0  12315      0       halted
+duplicate-1-in-100   CORRECT        0      0  12199      0      0      trusted
+reorder-1-in-100     CORRECT        0      0      0    270      0      trusted
+truncate-1-in-500       SAFE    1,341     58      0      0     58   recovering
+disconnect-short        SAFE    1,806      1      0     64      0   recovering
+disconnect-long         SAFE   18,145      1      0     64      0   recovering
+everything              SAFE    4,251     63   2160   3013     15   recovering
+disconnect-to-end       SAFE        0      0      0      0      0       halted
+halt                 CORRECT        0      0      0      0      0      trusted
+halt-and-drop           SAFE    2,620     58      0   3375      0   recovering
 
-CAUTIOUS=1  CORRECT=5  SAFE=4        (0 WRONG)
+CORRECT=4  SAFE=8                    (0 WRONG)
 ```
+
+The last two are the plan's fifth injection. MSFT did not halt on 30 December
+2019, so the halt and its resume are *inserted* into the stream — which shifts
+every sequence number after them, and puts a real book and two hours of real
+session behind the state change. `halt` staying CORRECT means the transition
+costs the book nothing; `halt-and-drop` losing 2,620 messages and reporting
+`recovering` means a gap straddling that transition is still seen as a gap.
 
 **CORRECT** means the book matched an undamaged replay and the system said so.
 **SAFE** means it did not match and the system said *that*. **WRONG** — a book
 that differs while claiming to be trusted — is the one outcome the phase exists
 to make impossible, and CI fails on any occurrence.
 
-On MSFT, 30 December 2019: 3 CORRECT, 7 SAFE, 0 WRONG, with the outage at a
-real 14:00. Duplication and reordering are handled exactly — 12,199 duplicated
-messages applied once, 270 reordered packets resolved without one false gap —
-and a feed losing 269 packets halts rather than pretending to recover. There is no retransmission service to ask, so recovery
-is rebuild-forward, and its guarantee is narrow and precise: the rebuilt book
+The outage above lands at a real 14:00. Duplication and reordering are handled
+exactly — 12,199 duplicated messages applied once, 270 reordered packets
+resolved without one false gap — and a feed losing 269 packets halts rather
+than pretending to recover. There is no retransmission service to ask, so
+recovery is rebuild-forward, and its guarantee is narrow and precise: the rebuilt book
 contains **no wrong orders, only missing ones**. That holds unconditionally.
 Whether it re-converges before the close does not: on a synthetic feed it
 recovers from a 16,231-message hole to a byte-identical book, and on MSFT it
@@ -288,10 +392,41 @@ that keep being cancelled for the rest of the day. The verdicts stay SAFE
 throughout — the book differs and the system says so, which is the contract.
 
 The harness also has to be able to fail. Set the convergence bar to a single
-clean reference and three scenarios go WRONG; that run is in CI too, and must
+clean reference and five scenarios go WRONG — drop-1-in-1000, drop-1-in-100,
+truncate-1-in-500, everything and halt-and-drop; that run is in CI too, and must
 fail. It found two real bugs, including a stream that *stopped* rather than
 ended: 80,235 messages missing, every counter honestly zero, reported clean.
 Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
+
+### Coming back after the process dies
+
+A gap and a crash lose different things. After a gap the bytes were never
+received and nothing on disk brings them back. After a crash the bytes were
+processed and what was lost is memory — and memory can be written down. The
+property is exact: snapshot at message N, restart, replay from N, and the
+result must equal a process that ran straight through. Identical, not close:
+same orders, same queue positions, same tape.
+
+It takes two snapshots, because a restart loses two things.
+[`snapshot.hpp`](include/itchbook/recover/snapshot.hpp) restores the **market**
+— every order at every price, written in fill order because dumping the ref map
+in hash order restores the right shares at every level with scrambled priority,
+which passes every level-based check and makes every queue model silently
+wrong. [`strategy_snapshot.hpp`](include/itchbook/recover/strategy_snapshot.hpp)
+restores **position and our own open orders**, each with the `ahead` count it
+had reached; an order restored at the front of a queue it never reached fills on
+the next print and books money that was never made.
+
+Restoring one without the other is the interesting failure, and it is not a
+crash. The book is right, the replay continues, every invariant holds, and the
+run reports a P&L for a strategy that spent the afternoon flat. Nothing in the
+output says a restart happened.
+
+Two things are deliberately *not* restored, and the header says why: markout
+samples whose horizon spans the restart, because the mid at that instant was
+never observed by anyone and inventing it would be worse than counting it
+unresolved; and the kill switch, because a latched limit is for a human to
+re-arm on purpose.
 
 ## Architecture
 
@@ -316,11 +451,14 @@ every pointer the levels hold stays valid.
 ## Reproduce it
 
 Every command below was run from a fresh clone with nothing cached, in order,
-and works as written — Linux, GCC 12 and Clang 16, Python 3.11, and separately
-on macOS with Apple Clang. Requires a C++20 compiler, CMake ≥ 3.20, zlib and
-Python 3.9+. No third-party libraries: the tests, the fuzzers, the charts and
-the analysis are stdlib only, deliberately, so this clones and builds without a
-package manager standing in the way.
+and works as written on Linux with Python 3.11 under both Clang and GCC —
+[`ci.yml`](.github/workflows/ci.yml) builds `ubuntu-latest` twice, once with
+each, and runs the unit tests under both, so that sentence is checked rather
+than asserted. macOS is expected to work and is not verified here. Requires a
+C++20 compiler, CMake ≥ 3.20,
+zlib and Python 3.9+. No third-party libraries: the tests, the fuzzers, the
+charts and the analysis are stdlib only, deliberately, so this clones and
+builds without a package manager standing in the way.
 
 ```bash
 # macOS:  brew install cmake zlib
@@ -352,6 +490,11 @@ python3 python/analysis/fill_comparison.py out.json
 
 # packet damage, graded
 python3 python/analysis/adversarial.py data/raw/day.gz --build build
+
+# everything above on a real day, in one pass, then fold the numbers back
+# into the docs rather than retyping them
+./scripts/real-data-run.sh <day>.NASDAQ_ITCH50.gz MSFT 200
+python3 scripts/update-real-numbers.py --out out/real --symbol MSFT
 ```
 
 For a release build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`, plus
@@ -381,7 +524,7 @@ include/itchbook/   public headers (this is a library, not an app)
   engine/           order types, states, and price-time matching
   sim/              queue models, ledger, markouts, fees, latency, backtest
   mold/             MoldUDP64 packet framing and the gap/duplicate/reorder sequencer
-  recover/          gap policy, book snapshot, halt tracking
+  recover/          gap policy, book + strategy snapshots, halt tracking
   risk/             the kill switch
   bench/            rdtsc timing and latency percentiles
 tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
@@ -404,8 +547,14 @@ python/
     leave_one_out.py   shadows real orders and grades the fill models against them
     adversarial.py     packet damage, graded CORRECT / SAFE / CAUTIOUS / WRONG
     scaling_check.py   asserts the backtester stays linear in feed length
+    check_cross.py     grades the reconstructed auction prices against NASDAQ's
+    latency_histogram.py  renders the bucket CSV, one run or before/after
     fill_comparison.py, markout.py, latency_sweep.py, svgchart.py
-scripts/            real-data-run.sh, full-day-differential.sh
+bench/              baseline/after JSON, compare.py (A/B with pinning), and
+                    regression_check.py — the CI gate that the pool change
+                    still pays, by ratio so the runner's speed cancels out
+scripts/            real-data-run.sh, full-day-differential.sh,
+                    update-real-numbers.py, render-writeup.py
 tests/              unit, property fuzzers, and the cross-implementation differentials
 data/  out/         gitignored — raw feeds, per-symbol slices, generated results
 ```
@@ -471,10 +620,18 @@ against our own Python oracle. Both would pass happily if our reading of the
 ITCH spec were wrong *in the same way in both implementations*. Only an outside
 number settles that, and until one has been matched this project knows nothing.
 
-That is phase 2's done-condition, and it is **met**: MSFT on 30 Dec 2019 matches
-Databento's `XNAS.ITCH` daily bar exactly on all five fields. See
-[`validation/`](validation/) for the record and the one subtlety that first run
-turned up.
+That is phase 2's done-condition, and it is met **with a substitution worth
+stating here rather than only in the appendix**: MSFT on 30 Dec 2019 matches
+Databento's `XNAS.ITCH` daily bar exactly on all five fields — but the plan
+named "NASDAQ's published daily summary" or "LOBSTER's published orderbook
+file", and Databento is neither. It is venue-specific, which is the property
+that matters, and arguably a stronger oracle since it is a full independent
+reconstruction rather than an aggregate; it is also a paid subscription, which
+means this particular check is not one a reader can reproduce for free. Why the
+two free sources do not answer the question, and what does,
+is in [`validation/`](validation/) — along with the one subtlety the first
+grading run turned up, and a free check of the auction prices that is still
+ungraded.
 
 ### Grading a reconstruction
 
@@ -483,21 +640,29 @@ turned up.
 #    --utc-day bounds the replay to the window the oracle's bar covers; without
 #    it the after-hours tail lands in the next bar and nothing lines up.
 ./build/itch_slice data/raw/<day>.gz MSFT data/sliced/MSFT.gz
-python3 python/reference/replay.py data/sliced/MSFT.gz \
-    --snapshots data/sliced/MSFT_book.csv --interval-ms 1000 \
-    --utc-day 2019-12-30 --json data/sliced/MSFT.json
+python3 python/reference/replay.py data/sliced/MSFT.gz --symbol MSFT \
+    --interval-ms 1000 --utc-day 2019-12-30 --json data/sliced/MSFT.json
 
 # 2. grade it against Databento's published bar for the same venue and day
 pip install databento
 export DATABENTO_API_KEY=db-...          # never commit this
 python3 python/analysis/validate.py data/sliced/MSFT.json \
-    --symbol MSFT --date 2019-01-30
+    --symbol MSFT --date 2019-12-30
 
-# 3. confirm the C++ book agrees over the whole day
+# 3. confirm the C++ book agrees, over the WHOLE file this time. book_replay
+#    has no --utc-day, and it does not need one: the differential asks whether
+#    two implementations agree, not whether either matches a vendor's bucket,
+#    so both sides simply run unbounded. Bounding one and not the other is the
+#    easy way to get a row-count mismatch that means nothing.
+python3 python/reference/replay.py data/sliced/MSFT.gz \
+    --snapshots data/sliced/MSFT_book.csv --interval-ms 1000 --quiet
 ./build/book_replay data/sliced/MSFT.gz \
     --snapshots data/sliced/MSFT_book_cpp.csv --interval-ms 1000
 python3 python/analysis/book_diff.py \
     data/sliced/MSFT_book.csv data/sliced/MSFT_book_cpp.csv
+
+# ...or just run both of those and the summary comparison in one go:
+./scripts/full-day-differential.sh data/sliced/MSFT.gz
 ```
 
 `validate.py --cost-only` prints what the query would bill before spending
@@ -506,6 +671,40 @@ already paid for.
 
 Passing means volume and OHLC match **exactly**. A book that is a few thousand
 shares off is a book with a bug in it.
+
+### The check that needs no subscription
+
+The grading above requires a Databento key, which means the headline
+verification is not something a reader can reproduce for free. One NASDAQ figure
+survives that objection: the **official opening and closing prices**. Both are
+auctions, both arrive in the feed as `Q` cross trades, and for a NASDAQ-listed
+stock the official closing price *is* the closing cross — so any published quote
+history settles it.
+
+```bash
+python3 python/analysis/check_cross.py validation/MSFT_2019-12-30.json \
+    --official-close 157.59 --source "nasdaq.com historical quotes"
+```
+
+```
+auction                 ours   published  verdict
+----------------------------------------------------
+official close      157.5900      157.59  match
+```
+
+**Done, and it matches to the cent** against nasdaq.com's own historical-quotes
+CSV. This is a real test rather than a formality: cross handling is the part of
+an ITCH book most likely to be quietly wrong, because it is rare, it is a
+separate message type, and nothing in a day's ordinary flow exercises it.
+
+The *opening* cross is not checkable from that source, and working out why was
+worth more than the check. Its `Open` column gives $158.987 — a sub-penny
+price, which an auction cannot print, since crosses clear at a single price
+built from orders priced in pennies. So that column is some other quantity,
+most likely the first consolidated print. An earlier version of this script
+compared at two decimals, rounded $158.987 to $158.99, and reported a match
+against our $158.9900; it now refuses a figure that is not on a penny increment
+and explains why. [`validation/`](validation/) has the full record.
 
 ### Two things worth knowing before you start
 
@@ -538,12 +737,19 @@ Debug roughly in this order:
 
 ## Write-up
 
-[**What synthetic data hides**](docs/writing/what-synthetic-data-hides.md) — the
-seven times a number in this project was true on a generated feed and false on
-MSFT, what each mechanism turned out to be, and what I would do differently. The
-3.67× headline that was a fact about my generator; three presentation bugs that
-all lied in the same direction; a receiver reporting a clean session having lost
-40% of the day; a recovery criterion that could never fire on a real book.
+[**What synthetic data hides**](docs/writing/what-synthetic-data-hides.md) —
+eight times a number in this project was true on a generated feed and false in
+reality, what each mechanism turned out to be, and what I would do differently.
+The 3.67× headline that was a fact about my generator; three presentation bugs
+that all lied in the same direction; a receiver reporting a clean session having
+lost 40% of the day; a recovery criterion that could never fire on a real book;
+and a property fuzzer that reported a million clean sequences over an engine it
+was exercising two thirds of.
+
+A rendered copy sits beside it as
+[`what-synthetic-data-hides.html`](docs/writing/what-synthetic-data-hides.html),
+regenerated from the Markdown by `scripts/render-writeup.py` so the two cannot
+drift.
 
 ## License
 

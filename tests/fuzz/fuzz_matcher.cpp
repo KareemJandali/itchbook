@@ -40,6 +40,28 @@ using namespace itchbook::engine;
 
 namespace {
 
+// How many of each order type the generator has actually produced. This exists
+// because for a long time the answer for stops was zero: the type switch never
+// selected them, so a million sequences exercised four of the six types the
+// engine implements while reporting full coverage. A fuzzer that silently
+// stops covering something is worse than no fuzzer, because it is believed.
+uint64_t g_emitted[6] = {0, 0, 0, 0, 0, 0};
+
+// Operations actually performed on the matcher: submits plus cancels. This
+// used to be reported as the size in BYTES of the random input buffer, which
+// is not an operation count — a sequence consumes roughly seven bytes per
+// order, so the printed figure ran about 7x the truth and the README quoted
+// it. A benchmark-shaped number that nobody can reproduce from the thing it
+// counts is worse than no number.
+uint64_t g_ops = 0;
+
+const char* kTypeName[6] = {"Limit", "Market", "IOC", "FOK",
+                            "StopMarket", "StopLimit"};
+
+}  // namespace
+
+namespace {
+
 int failures = 0;
 
 #define INVARIANT(cond, what)                                                  \
@@ -118,6 +140,7 @@ bool run_sequence(const uint8_t* data, size_t size) {
 
     while (!in.empty() && next_id < 250) {
         const uint8_t op = in.u8() % 10;
+        ++g_ops;
 
         if (op == 9) {
             // Cancel something at random.
@@ -136,7 +159,7 @@ bool run_sequence(const uint8_t* data, size_t size) {
             req.quantity = in.range(1, 200);
             req.price = base + static_cast<int32_t>(in.range(0, 20)) * 100;
 
-            switch (in.u8() % 8) {
+            switch (in.u8() % 10) {
                 case 0:  req.type = Type::Market; break;
                 case 1:  req.type = Type::IOC; break;
                 case 2:  req.type = Type::FOK; break;
@@ -144,8 +167,21 @@ bool run_sequence(const uint8_t* data, size_t size) {
                     req.type = Type::Limit;
                     req.display = in.range(1, req.quantity);
                     break;
+                case 4:
+                case 5:
+                    // Stops. The trigger sits inside the same narrow band as
+                    // the prices, so the market actually reaches it — a stop
+                    // parked outside the band is a stop that never fires and
+                    // tests only the parking. Both kinds are generated: a
+                    // StopMarket becomes a Market on trigger and a StopLimit
+                    // becomes a Limit at req.price, which is the branch that
+                    // had no coverage at all.
+                    req.type = (in.u8() & 1) ? Type::StopMarket : Type::StopLimit;
+                    req.stop_price = base + static_cast<int32_t>(in.range(0, 20)) * 100;
+                    break;
                 default: req.type = Type::Limit; break;
             }
+            ++g_emitted[static_cast<size_t>(req.type)];
             switch (in.u8() % 4) {
                 case 1: req.stp = Stp::CancelNewest; break;
                 case 2: req.stp = Stp::CancelOldest; break;
@@ -267,13 +303,12 @@ int main(int argc, char** argv) {
 
     std::mt19937_64 rng(seed);
     std::vector<uint8_t> buf;
-    uint64_t total_ops = 0;
 
     for (uint64_t i = 0; i < iterations; ++i) {
         const size_t n = 16 + (rng() % 240);
         buf.resize(n);
         for (size_t j = 0; j < n; ++j) buf[j] = static_cast<uint8_t>(rng());
-        total_ops += n;
+        (void)n;
         if (!run_sequence(buf.data(), buf.size())) {
             std::fprintf(stderr, "\nfailing input (seed %llu, iteration %llu):\n",
                          static_cast<unsigned long long>(seed),
@@ -287,10 +322,28 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
     }
-    std::printf("OK: %llu random order sequences, ~%llu operations, "
-                "no invariant violated\n",
+    std::printf("OK: %llu random order sequences, %llu operations "
+                "(submits + cancels), no invariant violated\n",
                 static_cast<unsigned long long>(iterations),
-                static_cast<unsigned long long>(total_ops));
+                static_cast<unsigned long long>(g_ops));
+
+    // Coverage is part of the result, not a footnote. A run that violated no
+    // invariant because it never exercised a type has not shown anything about
+    // that type, so say what was emitted and fail if anything was missed.
+    std::printf("  emitted:");
+    bool missing = false;
+    for (size_t i = 0; i < 6; ++i) {
+        std::printf(" %s=%llu", kTypeName[i], static_cast<unsigned long long>(g_emitted[i]));
+        if (g_emitted[i] == 0) missing = true;
+    }
+    std::printf("\n");
+    if (missing) {
+        std::fprintf(stderr,
+                     "FAIL: the generator never emitted one of the order types. "
+                     "Every type the engine implements must be exercised, or "
+                     "this run proves nothing about it.\n");
+        return 1;
+    }
     return failures == 0 ? 0 : 1;
 }
 #endif
