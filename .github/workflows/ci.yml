@@ -99,6 +99,17 @@ jobs:
       #
       # Then one of those symbols is sliced out and graded against the Python
       # oracle, so the chain closes: all-symbols == single-symbol == oracle.
+      # Phase 9 rewrote the inside of the book: the storage moved out from
+      # under it, every order gained a field, and messages now arrive through a
+      # router. None of that is supposed to change what a reconstruction
+      # produces. This records a known feed's output and compares it byte for
+      # byte -- snapshots, summary, and the all-symbols rows -- and it checks
+      # the FEED's hash first, because a generator whose output moved and a
+      # book whose output moved fail in the same place and mean opposite
+      # things.
+      - name: Regression gate (the same feed reconstructs to the same bytes)
+        run: ./scripts/regression-gate.sh
+
       - name: All symbols equals every symbol one at a time
         run: |
           python3 python/make_queue_feed.py data/raw/multi.gz --messages 200000 \
