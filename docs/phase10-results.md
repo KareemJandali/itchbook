@@ -34,7 +34,23 @@ Three specific reasons not to quote them:
    exists to answer, and on this hardware its answer is "cannot be determined".
 
 The real figures need a pinned Linux host with a measurable cross-core offset.
-When they exist, they replace the artifact and this document regenerates.
+When they exist, they replace the artifact and this document regenerates —
+`scripts/pinned-run.sh` is that run, end to end.
+
+**Pinning alone is not enough, and this was measured rather than assumed.** The
+container reports four cores and `pthread_setaffinity_np` succeeds on them, so
+the obvious hope was that pinning would rescue the numbers here. It does help:
+best-of-five sender lateness went from 562 µs unpinned to **39 µs pinned**, a
+14× improvement. It is still four times the 10 µs qualification bar, and the
+five runs ranged from 39 µs to 44 ms. Four vCPUs on shared hardware cannot hold
+a schedule however carefully the threads are placed, so the veto stands and the
+CV number still needs a quiet machine.
+
+What the same experiment did establish is that the CLOCK here is fine: pinned to
+two real cores, `tsc_offset` reports an invariant TSC and an offset bounded
+under 85 ns — not distinguishable from zero, and a rounding error against a
+wire-to-book latency in the microseconds. The clock was never the obstacle; the
+scheduler is.
 
 ## What the sweep does
 
@@ -78,6 +94,7 @@ as zero — "no drops" and "this platform cannot tell you" are different claims.
 | one times real time | 4,196 msg/s |
 | ring | 65,536 slots |
 | clock | rdtsc / rdtscp (per-core counter) |
+| cross-core clock offset | **bounded under 131 ns**, not measured — the estimate is smaller than the method can resolve (rdtsc / rdtscp (per-core counter)) |
 | threads pinned | **no** |
 | runs per rate | 2 (best of) |
 | rates on the ladder | 9 |
