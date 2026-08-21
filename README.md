@@ -3,9 +3,11 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–7 complete. Every claim below is measured on a real
-> NASDAQ trading day — MSFT, 30 December 2019, 1,221,484 messages — not on a
-> generated feed.
+> **Status:** Phases 1–7 complete. Correctness, fills and recovery are measured
+> on a real NASDAQ trading day — MSFT, 30 December 2019, 1,221,484 messages.
+> The performance numbers are not, and say so where they appear: they are
+> measured on a generated feed carrying a real day's message mix, because a
+> benchmark needs a feed you can regenerate on any machine.
 >
 > **Correct.** The C++ book and an independent Python oracle agree byte for
 > byte across **61,228 snapshot rows and 22 summary fields**, VWAP to ten
@@ -16,19 +18,22 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > **Fast.** **1.73× fewer cycles per message** (43.9M msg/s), traced by
 > hardware counter to the pool's slab allocation rather than anything on the
 > hot path: the page-fault count matches the removed 41.9 MB slab to 99.5%. Two
-> optimisations the plan predicted measured flat. See [`bench/`](bench/).
+> optimisations the plan predicted measured flat. Measured on a generated feed
+> with a real day's message mix. See [`bench/`](bench/).
 >
 > **Honest about fills.** A symmetric maker at the touch **loses money in all
 > four fill models**, with markouts negative at 100 ms, 1 s and 10 s — it is
-> being picked off. Shadowing 200 real orders that were pulled part-filled puts
-> the truth inside `[pessimistic, optimistic]` **200 times out of 200**, with
-> the reference-resolving model exact on every one.
+> being picked off. Shadowing the 50 real MSFT orders that were pulled
+> part-filled — the cases where the answer depends on queue position — puts the
+> truth inside `[pessimistic, optimistic]` **50 times out of 50**, with the
+> reference-resolving model exact on every one.
 > See [`docs/phase6-results.md`](docs/phase6-results.md).
 >
-> **Never silently wrong.** Twelve scenarios of packet damage over that day —
-> drops, duplicates, reordering, truncation, a 14:00 outage, an injected halt —
-> and in none of them does the system report a trusted book that differs from
-> the truth. The grader is proven able to fail.
+> **Never silently wrong.** Ten scenarios of packet damage over that day —
+> drops, duplicates, reordering, truncation, a 14:00 outage — plus two halt
+> scenarios on a generated feed, because MSFT did not halt that day. In none of
+> the twelve does the system report a trusted book that differs from the truth.
+> The grader is proven able to fail.
 > See [`docs/phase7-results.md`](docs/phase7-results.md).
 
 Reconstructing an order book from a raw exchange feed is not hard because the
@@ -178,13 +183,14 @@ Section 31 and TAF, in integer micro-dollars.
 
 The external check is the one that matters. `leave_one_out.py` replays the feed
 **unchanged** with a simulated order standing exactly where a real order stood,
-and grades the models against what that order actually filled. Over 200 real
+and grades the models against what that order actually filled. Over the 50 real
 MSFT orders that were pulled part-filled — the cases where the answer depends
-on queue position — the truth fell inside `[pessimistic, optimistic]` 200 times
-out of 200. `mbo` reproduced all 200 exactly; naive over-filled 89 and never
-under-filled; pessimistic under-filled 96 and never over-filled. Full numbers,
-figures and the limits in
-[`docs/phase6-results.md`](docs/phase6-results.md).
+on queue position — the truth fell inside `[pessimistic, optimistic]` 50 times
+out of 50. `mbo` reproduced all 50 exactly; naive over-filled 24 and never
+under-filled; pessimistic under-filled 21 and never over-filled. The same check
+on a generated feed, where 200 orders are available, holds the same shape:
+200/200 bracketed, `mbo` exact on every one. Full numbers, figures and the
+limits in [`docs/phase6-results.md`](docs/phase6-results.md).
 
 ## Matching engine
 
@@ -200,7 +206,10 @@ Result r = m.submit({.id = 2, .side = Side::Buy, .price = 100'5000, .quantity = 
 
 Limit, market, IOC, FOK, iceberg, stop and stop-limit; self-trade prevention in
 cancel-newest, cancel-oldest and cancel-both; and a state machine where an
-illegal transition asserts rather than quietly corrupting the share count.
+illegal transition asserts rather than quietly corrupting the share count. That
+assert is a plain `assert`, so it guards the Debug build and the tests, and
+`-DNDEBUG` compiles it out of Release — it is a development invariant, not a
+runtime check you would ship behind.
 
 Three rules carry most of the behaviour, and none of them is arbitrary:
 
@@ -255,8 +264,13 @@ loss. Then `mold_damage` does to them what a network does, and every scenario
 is graded:
 
 ```bash
-python3 python/analysis/adversarial.py data/sliced/MSFT.gz --build build
+python3 python/make_queue_feed.py data/raw/queue_long.gz \
+    --seed 7 --messages 200000 --gap-ns 300000
+python3 python/analysis/adversarial.py data/raw/queue_long.gz --build build
 ```
+
+An excerpt of the twelve-row matrix (full table in
+[`docs/phase7-results.md`](docs/phase7-results.md)):
 
 ```
 scenario             verdict     lost   gaps    dup  reord        state
@@ -267,7 +281,7 @@ reorder-1-in-100     CORRECT        0      0      0     56      trusted
 disconnect-long      CORRECT   16,231      1      0     64      trusted
 disconnect-to-end       SAFE        0      0      0      0       halted
 
-CAUTIOUS=1  CORRECT=5  SAFE=4        (0 WRONG)
+6 CORRECT  6 SAFE  0 CAUTIOUS        (0 WRONG)
 ```
 
 **CORRECT** means the book matched an undamaged replay and the system said so.
@@ -288,7 +302,7 @@ that keep being cancelled for the rest of the day. The verdicts stay SAFE
 throughout — the book differs and the system says so, which is the contract.
 
 The harness also has to be able to fail. Set the convergence bar to a single
-clean reference and three scenarios go WRONG; that run is in CI too, and must
+clean reference and five scenarios go WRONG; that run is in CI too, and must
 fail. It found two real bugs, including a stream that *stopped* rather than
 ended: 80,235 messages missing, every counter honestly zero, reported clean.
 Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
@@ -316,11 +330,13 @@ every pointer the levels hold stays valid.
 ## Reproduce it
 
 Every command below was run from a fresh clone with nothing cached, in order,
-and works as written — Linux, GCC 12 and Clang 16, Python 3.11, and separately
-on macOS with Apple Clang. Requires a C++20 compiler, CMake ≥ 3.20, zlib and
-Python 3.9+. No third-party libraries: the tests, the fuzzers, the charts and
-the analysis are stdlib only, deliberately, so this clones and builds without a
-package manager standing in the way.
+and works as written. CI re-runs almost all of it on every push — Ubuntu,
+Clang, Debug with sanitizers — so that path is continuously verified; the GCC,
+Release and macOS/Apple Clang builds were checked by hand and have no standing
+artifact here. Requires a C++20 compiler, CMake ≥ 3.20, zlib and Python 3.9+.
+No third-party libraries: the tests, the fuzzers, the charts and the analysis
+are stdlib only, deliberately, so this clones and builds without a package
+manager standing in the way.
 
 ```bash
 # macOS:  brew install cmake zlib
@@ -428,6 +444,14 @@ OK: 61228 snapshot rows identical
 22 summary fields identical
 ```
 
+Those 61,228 rows are the **whole file**, which runs to about 20:05 ET —
+1,221,484 messages. The graded record in [`validation/`](validation/) is a
+different window: `--utc-day 2019-12-30` cuts the session at 19:00 ET to match
+how Databento buckets a daily bar, leaving 1,220,796 messages and 57,291 rows.
+Both runs agree byte for byte; they are two questions, not two answers, and the
+688-message, 3,937-second difference between them is the after-hours tail. See
+[Validation](#validation) for why that cut is not optional.
+
 MSFT, 30 December 2019, 1,221,484 messages. Every sampled instant of the book,
 and every cumulative quantity between them — volume, notional, OHLC, VWAP to
 ten decimal places. The two comparisons fail differently: two books can agree
@@ -476,6 +500,12 @@ Databento's `XNAS.ITCH` daily bar exactly on all five fields. See
 [`validation/`](validation/) for the record and the one subtlety that first run
 turned up.
 
+What is committed is our side of that comparison — the reconstruction's summary
+JSON. Databento's bar is not: it is licensed, and `validate.py` fetches it live
+against your own API key. So the grade is reproducible with a key and an ITCH
+day, and not otherwise; the JSON in `validation/` is a record of a run, not a
+substitute for re-running it.
+
 ### Grading a reconstruction
 
 ```bash
@@ -491,11 +521,16 @@ python3 python/reference/replay.py data/sliced/MSFT.gz \
 pip install databento
 export DATABENTO_API_KEY=db-...          # never commit this
 python3 python/analysis/validate.py data/sliced/MSFT.json \
-    --symbol MSFT --date 2019-01-30
+    --symbol MSFT --date 2019-12-30
 
-# 3. confirm the C++ book agrees over the whole day
+# 3. confirm the C++ book agrees over the whole day.
+#    book_replay has no --utc-day; bound it with the same cutoff in ns, or
+#    book_diff compares a bounded CSV against an unbounded one and every run
+#    reports a row-count mismatch. 68400000000000 ns = 19:00 ET, which is what
+#    --utc-day 2019-12-30 resolves to.
 ./build/book_replay data/sliced/MSFT.gz \
-    --snapshots data/sliced/MSFT_book_cpp.csv --interval-ms 1000
+    --snapshots data/sliced/MSFT_book_cpp.csv --interval-ms 1000 \
+    --end-ns 68400000000000
 python3 python/analysis/book_diff.py \
     data/sliced/MSFT_book.csv data/sliced/MSFT_book_cpp.csv
 ```

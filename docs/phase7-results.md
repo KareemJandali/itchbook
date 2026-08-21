@@ -15,12 +15,16 @@ one that does not announce itself.
 ## 1. The done-condition
 
 ```
+python3 python/make_queue_feed.py data/raw/queue_long.gz \
+    --seed 7 --messages 200000 --gap-ns 300000
 python3 python/analysis/adversarial.py data/raw/queue_long.gz --build build
 ```
 
-Ten scenarios over a 200,056-message feed, wrapped into 4,929 MoldUDP64 packets
-and then damaged. Each run is graded on two facts: whether the final book
-matches an undamaged replay, and whether the system said it was trustworthy.
+Twelve scenarios over a 200,056-message feed, wrapped into 4,929 MoldUDP64
+packets and then damaged. The generator is seeded, so the table below is
+reproducible row for row from those two commands. Each run is graded on two
+facts: whether the final book matches an undamaged replay, and whether the
+system said it was trustworthy.
 
 | verdict | book | system said | meaning |
 |---|---|---|---|
@@ -93,7 +97,12 @@ python3 python/analysis/adversarial.py data/raw/queue_long.gz --build build \
 | bar | outcome |
 |---|---|
 | a 20,000-reference window | correct or safe in every scenario |
-| 1 | **WRONG in four scenarios**, exit 1 |
+| 1 | **WRONG in five scenarios**, exit 1 |
+
+At a bar of 1 the run reports `CORRECT=6 SAFE=1 WRONG=5`, silently wrong on
+`drop-1-in-1000`, `drop-1-in-100`, `truncate-1-in-500`, `everything` and
+`halt-and-drop`. That count is a function of the matrix: it was four before
+`halt-and-drop` joined it, and it will move again if the matrix grows.
 
 Both runs are in CI: the first must pass, the second must fail. The number is
 not derived from anything. It is the line between those two rows, which is why
@@ -171,8 +180,9 @@ outage, well before the close. And a run whose checkpoint book is empty fails
 outright rather than passing vacuously, on the same principle as the no-op
 scenario check — a comparison with nothing in it is not a passing comparison.
 
-The stricter comparison is also more sensitive: the self-test in section 2 now
-catches four scenarios where it caught three.
+The stricter comparison is also more sensitive: the self-test in section 2 went
+from catching three scenarios to four on the matrix as it then stood. It
+catches five now that `halt-and-drop` has joined that matrix.
 
 ### Recovery that could never happen
 
