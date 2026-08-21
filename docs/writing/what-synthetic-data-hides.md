@@ -82,9 +82,9 @@ did the book match an undamaged replay, and did the system *say* it was
 trustworthy? The only unacceptable outcome is a book that differs while
 claiming to be trusted.
 
-Ten scenarios, no failures. Then, instead of asking "does it survive this
-list", I asked "how much can it survive", and swept the outage length until
-something broke. At 2,000 packets it did:
+Ten scenarios at the time, no failures. Then, instead of asking "does it
+survive this list", I asked "how much can it survive", and swept the outage
+length until something broke. At 2,000 packets it did:
 
 ```
 0 messages lost, 0 gaps, state: trusted

@@ -68,8 +68,12 @@ def parse_adversarial(text):
 
 
 def render_oracle_table(o):
-    lines = ["| model | mean error | mean abs error | over | under | exact |",
-             "|---|---:|---:|---:|---:|---:|"]
+    """Rows only. The header and separator are part of the ANCHOR that
+    replace_block() matches on, so they are already in the file and are not
+    rewritten. Emitting them here too stacks a second header on every run
+    after the first — the tool stops being idempotent, which for something
+    whose whole job is to be run repeatedly is the one thing it must not be."""
+    lines = []
     for m in MODELS:
         r = o["rows"].get(m)
         if r is None:
