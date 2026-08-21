@@ -18,8 +18,10 @@ one that does not announce itself.
 python3 python/analysis/adversarial.py data/raw/queue_long.gz --build build
 ```
 
-Ten scenarios over a 200,056-message feed, wrapped into 4,929 MoldUDP64 packets
-and then damaged. Each run is graded on two facts: whether the final book
+Twelve scenarios over a 200,056-message feed, wrapped into 4,929 MoldUDP64
+packets and then damaged. The last two, `halt` and `halt-and-drop`, were added
+after the real-day run in section 9, which is why that section's matrix has ten
+rows and this one has twelve. Each run is graded on two facts: whether the final book
 matches an undamaged replay, and whether the system said it was trustworthy.
 
 | verdict | book | system said | meaning |
@@ -93,7 +95,7 @@ python3 python/analysis/adversarial.py data/raw/queue_long.gz --build build \
 | bar | outcome |
 |---|---|
 | a 20,000-reference window | correct or safe in every scenario |
-| 1 | **WRONG in four scenarios**, exit 1 |
+| 1 | **WRONG in five scenarios**, exit 1 |
 
 Both runs are in CI: the first must pass, the second must fail. The number is
 not derived from anything. It is the line between those two rows, which is why
@@ -172,7 +174,8 @@ outright rather than passing vacuously, on the same principle as the no-op
 scenario check — a comparison with nothing in it is not a passing comparison.
 
 The stricter comparison is also more sensitive: the self-test in section 2 now
-catches four scenarios where it caught three.
+catches five scenarios where it caught three — four at the time this was
+written, and five once `halt-and-drop` joined the matrix.
 
 ### Recovery that could never happen
 
@@ -293,8 +296,8 @@ that are already resting and no check at decision time can prevent that.
 
 Established:
 
-* Ten damage scenarios, and in none of them does the system report a trusted
-  book that differs from the truth.
+* Twelve damage scenarios, and in none of them does the system report a
+  trusted book that differs from the truth.
 * The grader detects silent wrongness when it is present — demonstrated by
   inducing it, not assumed.
 * Rebuild-forward converges from a 16,231-message hole to a byte-identical
@@ -339,7 +342,7 @@ cancels out. The pre-fix code measures 3.83x for 2x the input against a limit of
 MSFT, 30 December 2019, 1,221,484 messages, the outage at a real 14:00 ET and
 books compared at 90% of the session against a checkpoint holding **318
 levels**. Ten scenarios below; `halt` and `halt-and-drop` were added afterwards
-and bring the matrix to twelve:
+and bring the matrix to twelve — see section 1 for their rows:
 
 | scenario | verdict | lost | gaps | state |
 |---|---|---:|---:|---|

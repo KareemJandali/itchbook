@@ -390,6 +390,74 @@ void test_triggered_stop_takes_its_sequence_at_trigger_time() {
     CHECK(m.fills().back().maker_sequence < m.find(1)->sequence);
 }
 
+void test_stops_elected_together_queue_in_arrival_order() {
+    // One trade can elect several stops at once. They all join the book at
+    // that instant, so among themselves they must queue in ARRIVAL order,
+    // exactly as two limit orders sent at the same price would.
+    //
+    // fire_stops() used to remove a fired stop by swapping the back of
+    // pending_stops_ into its slot, which reordered the survivors: park 1, 2, 3
+    // and elect all three and they rest 1, 3, 2. Order 2 arrived before order 3
+    // and was elected at the same instant, yet 3 took priority. Giving a
+    // triggered stop a fresh arrival sequence stopped the property fuzzer
+    // reporting it, which made the defect silent rather than absent — so this
+    // test drives the queue directly and checks who actually fills first.
+    Matcher m;
+    m.submit(limit(1, Side::Sell, P(1000), 100));
+    m.submit(limit(2, Side::Buy, P(1000), 100));      // trade at 1000
+
+    // Three identical buy stop-limits: trigger 1010, limit 1005, 10 shares.
+    for (uint64_t id = 10; id <= 12; ++id) {
+        Result r = m.submit(stop(id, Side::Buy, Type::StopLimit, P(1010), P(1005), 10));
+        CHECK(r.state == State::Accepted);
+    }
+    CHECK_EQ(m.book().shares_at('B', P(1005)), 0u);   // all parked, none resting
+
+    // One trade at 1010 elects all three at the same instant.
+    m.submit(limit(13, Side::Sell, P(1010), 50));
+    m.submit(limit(14, Side::Buy, P(1010), 50));
+    CHECK_EQ(m.book().shares_at('B', P(1005)), 30u);
+
+    // Drain the level and read off who traded, in order.
+    const size_t before = m.fills().size();
+    m.submit(limit(15, Side::Sell, P(1005), 30));
+    CHECK_EQ(m.fills().size() - before, 3u);
+    CHECK_EQ(m.fills()[before + 0].maker, 10u);
+    CHECK_EQ(m.fills()[before + 1].maker, 11u);
+    CHECK_EQ(m.fills()[before + 2].maker, 12u);
+
+    // ...and the sequences they were given at election must be increasing in
+    // the same direction, since that is what every fill reports and what the
+    // phase 6 queue models read.
+    CHECK(m.find(10)->sequence < m.find(11)->sequence);
+    CHECK(m.find(11)->sequence < m.find(12)->sequence);
+}
+
+void test_cancelling_one_parked_stop_keeps_the_others_in_order() {
+    // The cancel path had the same swap-pop. Cancelling the middle stop must
+    // not promote the last one ahead of the ones that arrived before it.
+    Matcher m;
+    m.submit(limit(1, Side::Sell, P(1000), 100));
+    m.submit(limit(2, Side::Buy, P(1000), 100));
+
+    for (uint64_t id = 10; id <= 13; ++id) {
+        m.submit(stop(id, Side::Buy, Type::StopLimit, P(1010), P(1005), 10));
+    }
+    CHECK(m.cancel(11));
+    CHECK(m.find(11)->state == State::Cancelled);
+
+    m.submit(limit(20, Side::Sell, P(1010), 50));
+    m.submit(limit(21, Side::Buy, P(1010), 50));
+    CHECK_EQ(m.book().shares_at('B', P(1005)), 30u);
+
+    const size_t before = m.fills().size();
+    m.submit(limit(22, Side::Sell, P(1005), 30));
+    CHECK_EQ(m.fills().size() - before, 3u);
+    CHECK_EQ(m.fills()[before + 0].maker, 10u);
+    CHECK_EQ(m.fills()[before + 1].maker, 12u);
+    CHECK_EQ(m.fills()[before + 2].maker, 13u);
+}
+
 void test_stop_needs_a_trigger_price() {
     Matcher m;
     Result r = m.submit(stop(1, Side::Buy, Type::StopLimit, 0, P(1000), 50));
@@ -490,6 +558,8 @@ int main() {
     test_stop_limit_takes_liquidity_when_its_price_allows();
     test_stop_market_firing_into_an_empty_book_is_cancelled_not_rejected();
     test_triggered_stop_takes_its_sequence_at_trigger_time();
+    test_stops_elected_together_queue_in_arrival_order();
+    test_cancelling_one_parked_stop_keeps_the_others_in_order();
     test_stop_needs_a_trigger_price();
     test_sell_stop_triggers_downward();
     test_cancel_removes_resting_shares();

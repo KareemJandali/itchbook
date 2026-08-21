@@ -45,6 +45,7 @@ const char* type_name(char t) {
         case 'K': return "IPO Quoting Period Update";
         case 'J': return "LULD Auction Collar";
         case 'N': return "Retail Price Improvement";
+        case 'O': return "Direct Listing w/ Capital Raise";
         default:  return "";
     }
 }

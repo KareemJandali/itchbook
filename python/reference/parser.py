@@ -42,7 +42,7 @@ SPEC_LENGTH = {
     # Framed and length-checked, but not interpreted. See messages.hpp for what
     # each one is and why skipping it is safe.
     b"Y": 20, b"L": 26, b"V": 35, b"W": 12, b"K": 28, b"J": 35,
-    b"h": 21, b"B": 19, b"I": 50, b"N": 20,
+    b"h": 21, b"B": 19, b"I": 50, b"N": 20, b"O": 48,
 }
 
 # The seven types that mutate the book. Everything else is metadata or feeds the

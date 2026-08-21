@@ -73,6 +73,7 @@ int main() {
     CHECK(spec_length('B') == 19);   // Broken Trade
     CHECK(spec_length('I') == 50);   // NOII
     CHECK(spec_length('N') == 20);   // Retail Price Improvement
+    CHECK(spec_length('O') == 48);   // Direct Listing with Capital Raise
 
     // A type genuinely not in the spec must NOT get a guessed length: -1 means
     // "pass the frame through unchecked", which is the only safe answer.
@@ -87,6 +88,7 @@ int main() {
     CHECK(!modelled('V'));
     CHECK(!modelled('W'));
     CHECK(!modelled('B'));
+    CHECK(!modelled('O'));
     CHECK(!modelled('Z'));
 
     // Build a synthetic Add Order ('A', 36 bytes) and read its fields back.

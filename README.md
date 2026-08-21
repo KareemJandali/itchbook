@@ -80,6 +80,30 @@ cycles/msg, 25.3M → 43.9M messages/second), and the worst message improves 97�
 
 ### The distribution behind the percentiles
 
+Phase 4's done-condition is a **before/after** histogram, so here is the pool
+change as a change in shape rather than as two rows of a table:
+
+![Per-message book latency, before and after the pool change](docs/figures/latency-histogram-compare.svg)
+
+```bash
+# build the two pools, measure both, draw them on one pair of axes
+g++ -std=c++20 -O3 -Iinclude -DITCHBOOK_POOL_FIRST_CHUNK="(1u<<20)" \
+    -DITCHBOOK_POOL_MAX_CHUNK="(1u<<20)" tools/book_bench.cpp -lz -o bench_before
+./bench_before data/raw/bench.gz --histogram out/before.csv
+./build/book_bench data/raw/bench.gz --histogram out/after.csv
+python3 python/analysis/latency_histogram.py out/after.csv --compare out/before.csv \
+    --labels "one 42MB slab,geometric chunks" \
+    --svg docs/figures/latency-histogram-compare.svg
+```
+
+The bodies of the two distributions nearly coincide — the steady state was never
+the problem — and the whole change is in the right-hand tail, which is exactly
+what "the cost was one 42MB slab being faulted in, not the hot path" predicts.
+On this machine the worst single message goes from **67,370,328 cycles to
+631,192**, and throughput from 16.3M to 26.3M msg/s.
+
+The same tool draws one run on its own:
+
 ![Per-message book latency](docs/figures/latency-histogram.svg)
 
 ```bash
@@ -181,10 +205,16 @@ naive reports $401.35 MORE than pessimistic
 ![Total P&L by fill model, MSFT](docs/figures/MSFT-fills-total.svg)
 ![Shares filled by fill model, MSFT](docs/figures/MSFT-fills-shares.svg)
 
-Both panels, because either alone misleads. Per share the four models agree
-closely; they disagree by **47%** on how many shares were filled at all, and a
-per-share chart on its own would show four near-identical bars while hiding the
-entire result.
+Both panels, because either alone misleads — though not in the direction the
+synthetic feed suggested. There, the four models' per-share numbers were nearly
+identical and only the share counts separated them. On MSFT the ordering
+inverts: per share the models spread **1.69×** (−0.2860 to −0.4829), wider than
+the **1.47×** spread in shares filled and much wider than the **1.24×** spread
+in total P&L that the first panel shows. So on real data the per-share view is
+the *most* discriminating of the three, not the least. Both panels stay, because
+the total is what a P&L statement reports and the per-share is what actually
+separates the models — and which of them discriminates is itself a thing that
+changed between the generated feed and the real one.
 
 ![Post-fill drift, MSFT](docs/figures/MSFT-markout.svg)
 
@@ -263,18 +293,23 @@ its queue as an intrusive linked list, while arrival sequences are assigned by
 the engine and never touched by the book. A bug in either shows up as a
 disagreement.
 
-Run to date: **1,000,000 sequences on each of seeds 1–5 — 677M operations** —
+Run to date: **1,000,000 sequences on each of seeds 1–5 — 99.5M operations** —
 no invariant violated, with every one of the six order types emitted and the
 count reported, because a run that violated nothing because it never exercised
 something has not shown anything about it. CI runs a million on every push and
 fails if any type goes unemitted.
 
-Stops were the type it never emitted. Adding them found two bugs immediately: a
-parked stop firing into an empty book attempted `Accepted -> Rejected`, which
-the state machine forbids and which aborted the process; and a triggered stop
-kept the arrival sequence it was given at submit time, so a stop parked in the
-morning could claim priority over orders that had been queued at that price all
-day. Both have regression tests that fail without their fix.
+Stops were the type it never emitted. Adding them found three bugs. A parked
+stop firing into an empty book attempted `Accepted -> Rejected`, which the state
+machine forbids and which aborted the process. A triggered stop kept the arrival
+sequence it was given at submit time, so a stop parked in the morning could
+claim priority over orders queued at that price all day. And `fire_stops()`
+removed elected stops from its pending list by swapping the back into the gap,
+so several stops elected by the same trade rested in the wrong order among
+themselves — park 1, 2, 3 and they queue 1, 3, 2. That third one is worth
+dwelling on: fixing the sequence *first* stopped the fuzzer reporting it, which
+turned a detectable bug into a silent one for exactly as long as it took to
+notice. All three have regression tests that fail without their fix.
 
 Input is a byte buffer decoded into operations, so the same file runs under
 libFuzzer where its runtime is available:
@@ -321,7 +356,7 @@ Those are the ten scenarios as recorded on MSFT. `halt` and `halt-and-drop`
 were added to the harness afterwards, so a run today prints twelve rows; both
 inject a halt and its resume, and MSFT did not halt on 30 December 2019, which
 is why the recorded numbers for them are on a generated feed
-([`docs/phase7-results.md`](docs/phase7-results.md) §2).
+([`docs/phase7-results.md`](docs/phase7-results.md) §1).
 
 **CORRECT** means the book matched an undamaged replay and the system said so.
 **SAFE** means it did not match and the system said *that*. **WRONG** — a book
@@ -341,7 +376,8 @@ that keep being cancelled for the rest of the day. The verdicts stay SAFE
 throughout — the book differs and the system says so, which is the contract.
 
 The harness also has to be able to fail. Set the convergence bar to a single
-clean reference and four scenarios go WRONG; that run is in CI too, and must
+clean reference and five scenarios go WRONG — drop-1-in-1000, drop-1-in-100,
+truncate-1-in-500, everything and halt-and-drop; that run is in CI too, and must
 fail. It found two real bugs, including a stream that *stopped* rather than
 ended: 80,235 messages missing, every counter honestly zero, reported clean.
 Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
@@ -557,10 +593,18 @@ against our own Python oracle. Both would pass happily if our reading of the
 ITCH spec were wrong *in the same way in both implementations*. Only an outside
 number settles that, and until one has been matched this project knows nothing.
 
-That is phase 2's done-condition, and it is **met**: MSFT on 30 Dec 2019 matches
-Databento's `XNAS.ITCH` daily bar exactly on all five fields. See
-[`validation/`](validation/) for the record and the one subtlety that first run
-turned up.
+That is phase 2's done-condition, and it is met **with a substitution worth
+stating here rather than only in the appendix**: MSFT on 30 Dec 2019 matches
+Databento's `XNAS.ITCH` daily bar exactly on all five fields — but the plan
+named "NASDAQ's published daily summary" or "LOBSTER's published orderbook
+file", and Databento is neither. It is venue-specific, which is the property
+that matters, and arguably a stronger oracle since it is a full independent
+reconstruction rather than an aggregate; it is also a paid subscription, which
+means this particular check is not one a reader can reproduce for free. Why the
+two free sources do not answer the question, and what does,
+is in [`validation/`](validation/) — along with the one subtlety the first
+grading run turned up, and a free check of the auction prices that is still
+ungraded.
 
 ### Grading a reconstruction
 
