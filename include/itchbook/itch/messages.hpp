@@ -100,6 +100,20 @@ enum class Type : char {
 // types are listed here too: the handler ignores them, but the frame is still
 // checked, so a desync that lands inside a metadata message is caught at that
 // message rather than at the next one this book happens to care about.
+//
+// VERIFIED AGAINST REAL BYTES on 12302019.NASDAQ_ITCH50.gz — the whole day,
+// every symbol: 268,744,780 messages, 8.25 GB, no length mismatch. That run
+// exercised 18 of these types. The six unmodelled ones it reached are marked
+// below; 'V' appeared exactly once, which was enough to prove it is not
+// transposed with 'W' (they are both circuit-breaker messages and differ by 23
+// bytes, so a swap throws on the first occurrence).
+//
+// The five marked UNCONFIRMED are read from the spec and have never been
+// checked against a real message, because that day contained none: nothing
+// breached a circuit-breaker level, operationally halted, busted a trade, or
+// published retail price improvement, and 'O' postdates the file. No generator
+// here emits them either, so CI cannot reach them. Run itch_census on a more
+// eventful day before trusting them.
 constexpr int spec_length(char t) {
     switch (t) {
         // Modelled.
@@ -116,17 +130,17 @@ constexpr int spec_length(char t) {
         case 'Q': return 40;
         case 'H': return 25;
         // Framed and length-checked, but not modelled. See the note above.
-        case 'Y': return 20;
-        case 'L': return 26;
-        case 'V': return 35;
-        case 'W': return 12;
-        case 'K': return 28;
-        case 'J': return 35;
-        case 'h': return 21;
-        case 'B': return 19;
-        case 'I': return 50;
-        case 'N': return 20;
-        case 'O': return 48;
+        case 'Y': return 20;  // seen: 9,013
+        case 'L': return 26;  // seen: 215,161
+        case 'V': return 35;  // seen: 1 — proves V/W not transposed
+        case 'W': return 12;  // UNCONFIRMED
+        case 'K': return 28;  // seen: 3
+        case 'J': return 35;  // seen: 34
+        case 'h': return 21;  // UNCONFIRMED
+        case 'B': return 19;  // UNCONFIRMED
+        case 'I': return 50;  // seen: 4,024,315
+        case 'N': return 20;  // UNCONFIRMED
+        case 'O': return 48;  // UNCONFIRMED
         default:  return -1;  // genuinely unknown — do not guess a length
     }
 }

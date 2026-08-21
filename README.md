@@ -10,9 +10,11 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > time to mean anything, so those numbers come from a generated feed built to
 > that day's message mix.
 >
-> **Correct.** Replaying the whole file, the C++ book and an independent
-> Python oracle agree byte for byte across **61,228 snapshot rows and 22
-> summary fields**, VWAP to ten decimal places, zero unknown order references.
+> **Correct.** The framing is checked against a whole day of every symbol —
+> **268,744,780 messages, 8.25 GB, no length mismatch**. Replaying one symbol's
+> file, the C++ book and an independent Python oracle then agree byte for byte
+> across **61,228 snapshot rows and 22 summary fields**, VWAP to ten decimal
+> places, zero unknown order references.
 > The reconstruction matches **Databento's published daily bar exactly** —
 > volume, open, high, low, close, to the share and the cent.
 > See [Validation](#validation).

@@ -58,6 +58,52 @@ now refuses to grade a reconstruction whose window does not match the oracle's,
 rather than reporting a confusing FAIL.
 
 
+## The framing, checked against a whole day of every symbol
+
+Everything else on this page is about one symbol. This is about the wire format
+itself, and it is the only check here that needs the *full* file rather than a
+slice — a single-symbol slice contains that symbol's messages and the system
+events, so it can never exercise a type the symbol did not produce.
+
+```
+./build-release/itch_census 12302019.NASDAQ_ITCH50.gz
+```
+
+**268,744,780 messages. 8.25 GB. No length mismatch.**
+
+| | |
+|---|---:|
+| distinct message types present | 18 |
+| modelled (the book interprets them) | 12 |
+| framed and length-checked, not interpreted | 6 |
+| messages not modelled | 4,248,527 — 1.58% |
+
+The parser throws on a prefix that disagrees with the type's spec length, so
+completing at all means every one of those 268M frames agreed with the table in
+`messages.hpp`. That is the strongest evidence in the repository that the
+framing is right, and it is cheap: one pass, no oracle, no subscription.
+
+It also settles a question the synthetic feeds could not. Ten spec lengths were
+added for types the book does not model, so that a desync landing inside one is
+caught at that message rather than at the next one the book cares about. No
+generator in this repository emits them, so CI cannot reach them, and a wrong
+constant would have sat there until someone ran a real file. This day exercised
+six of the ten — `I` (4,024,315 of them), `L`, `Y`, `J`, `K` and `V` — and all
+six framed correctly.
+
+`V` is the interesting one. It appears **exactly once**, at 35 bytes, which is
+the MWCB Decline Level published at the start of the session. Had `V` and `W`
+been transposed — the obvious mistake, since both are circuit-breaker messages
+— that single message would have been checked against 12 bytes and thrown
+immediately. One occurrence in 268 million was enough.
+
+**Still unexercised: `W`, `h`, `B`, `N`, `O`.** Nothing on this day breached a
+circuit-breaker level, operationally halted a symbol, busted a trade, or
+published retail price improvement, and `O` postdates the file. Those five
+constants remain read from the spec and unconfirmed against real bytes. A day
+containing a halt would settle `h` and `W`; that is the argument for running
+this against a second, more eventful day.
+
 ## Which oracle, and why not the one the plan named
 
 The build plan's done-condition says match "NASDAQ's published daily summary
