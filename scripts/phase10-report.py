@@ -26,6 +26,31 @@ def n(v, unit=""):
     return f"{v:,.0f}{unit}"
 
 
+def clock_row():
+    """The cross-core offset, from tsc_offset's own artifact.
+
+    Optional: the sweep can be run without it, and the container this was
+    developed in cannot produce a meaningful one. But when it exists it MUST
+    come from the file rather than from whoever read the terminal -- the
+    wire-to-book sample is a subtraction between two cores' clocks, so the bound
+    on their offset is part of the measurement, not a footnote to it.
+    """
+    art = V / "tsc-offset.json"
+    if not art.exists():
+        return ["| cross-core clock offset | not measured — "
+                "run tools/tsc_offset on the measurement host |"]
+    d = json.loads(art.read_text())
+    if not d.get("pinned"):
+        return ["| cross-core clock offset | **unpinned** — the two stamps did not "
+                "come from the two cores being compared |"]
+    if d.get("resolvable"):
+        return [f"| cross-core clock offset | measured, {d['resolution_ns']:.0f} ns "
+                f"resolution ({d['timestamp_source']}) |"]
+    return [f"| cross-core clock offset | **bounded under {d['resolution_ns']:.0f} ns**, "
+            f"not measured — the estimate is smaller than the method can resolve "
+            f"({d['timestamp_source']}) |"]
+
+
 def build(d):
     feed = d["feed"]
     L = [BEGIN, ""]
@@ -36,7 +61,7 @@ def build(d):
           f"{feed['session_seconds']:,.1f} s of session |",
           f"| one times real time | {n(feed['real_time_msg_per_s'])} msg/s |",
           f"| ring | {n(d['ring_slots'])} slots |",
-          f"| clock | {d['clock']} |",
+          f"| clock | {d['clock']} |"] + clock_row() + [
           f"| threads pinned | {'yes' if d['pinned'] else '**no**'} |",
           f"| runs per rate | {d['repeats']} (best of) |",
           f"| rates on the ladder | {d['rates_tried']} |",

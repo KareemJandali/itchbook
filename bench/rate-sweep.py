@@ -90,22 +90,43 @@ def real_time_rate(build, feed, work):
     return t
 
 
-def one_run(build, packets, rate, port, ring_log2, work, expect):
-    """One offered rate. Returns the merged sender and receiver record."""
+def one_run(build, packets, rate, port, ring_log2, work, expect, cpus):
+    """One offered rate. Returns the merged sender and receiver record.
+
+    `cpus` is (recv, book, sender) or (None, None, None). Pinning matters more
+    here than anywhere else in this repository: phase 4 measured 19.3%
+    run-to-run variance on a single-threaded benchmark without it, and this has
+    three threads competing across two processes. An unpinned sweep measures the
+    scheduler, which is what every number in docs/phase10-results.md currently
+    admits to.
+
+    The two pipeline threads pin themselves -- wire_to_book takes --cpu-recv and
+    --cpu-book -- but the SENDER has no such flag, and it is the process whose
+    lateness decides whether a run counts at all. taskset puts it on its own
+    core from the outside, which is the same mechanism and one fewer flag to
+    keep in sync.
+    """
+    cpu_recv, cpu_book, cpu_send = cpus
     rj = os.path.join(work, "recv.json")
     sj = os.path.join(work, "send.json")
     hist = os.path.join(work, "hist.csv")
-    recv = subprocess.Popen(
-        [os.path.join(build, "wire_to_book"), "--port", str(port),
-         "--ring-log2", str(ring_log2), "--timeout-ms", "5000", "--rcvbuf-mb", "16",
-         "--expect-messages", str(expect), "--json", rj, "--hist-csv", hist, "--quiet"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    recv_cmd = [os.path.join(build, "wire_to_book"), "--port", str(port),
+                "--ring-log2", str(ring_log2), "--timeout-ms", "5000",
+                "--rcvbuf-mb", "16", "--expect-messages", str(expect),
+                "--json", rj, "--hist-csv", hist, "--quiet"]
+    if cpu_recv is not None:
+        recv_cmd += ["--cpu-recv", str(cpu_recv), "--cpu-book", str(cpu_book)]
+    recv = subprocess.Popen(recv_cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)
     if not wait_bound(port):
         recv.kill()
         recv.wait()
         return None
-    send = run([os.path.join(build, "mold_replay_udp"), packets, "--host", "127.0.0.1",
-                "--port", str(port), "--rate", str(int(rate)), "--json", sj, "--quiet"])
+    send_cmd = [os.path.join(build, "mold_replay_udp"), packets, "--host", "127.0.0.1",
+                "--port", str(port), "--rate", str(int(rate)), "--json", sj, "--quiet"]
+    if cpu_send is not None:
+        send_cmd = ["taskset", "-c", str(cpu_send)] + send_cmd
+    send = run(send_cmd)
     tail = recv.communicate()[0]
     rc = recv.returncode
     if rc not in (0, 3, 4) or not os.path.exists(rj):
@@ -160,6 +181,10 @@ def main():
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--ring-log2", type=int, default=16)
     ap.add_argument("--port", type=int, default=27100)
+    ap.add_argument("--cpu-recv", type=int, help="pin the receiver thread to this core")
+    ap.add_argument("--cpu-book", type=int, help="pin the book thread to this core")
+    ap.add_argument("--cpu-sender", type=int,
+                    help="run the load generator on this core, via taskset")
     ap.add_argument("--multipliers", default="1,2,5,10,25,50,100,200,400,800",
                     help="offered rate as multiples of one times real time")
     ap.add_argument("--extend", type=int, default=6,
@@ -195,6 +220,17 @@ def main():
         if run([os.path.join(build, "mold_wrap"), feed, packets]).returncode != 0:
             sys.exit("mold_wrap failed")
 
+        # All three or none: pinning two of the three threads and letting the
+        # rest float is worse than not pinning at all, because it looks pinned
+        # in the output while the unpinned one still decides the tail.
+        pins = (a.cpu_recv, a.cpu_book, a.cpu_sender)
+        if any(p is not None for p in pins) and any(p is None for p in pins):
+            sys.exit("--cpu-recv, --cpu-book and --cpu-sender must be given "
+                     "together or not at all")
+        if pins[0] is not None and len(set(pins)) != 3:
+            sys.exit("the three cores must be distinct; sharing one is not pinning")
+        cpus = pins
+
         mults = [float(x) for x in a.multipliers.split(",")]
         expect = int(n_msgs * 1.5)
         rows = []
@@ -209,7 +245,8 @@ def main():
             runs = []
             for _ in range(a.repeats):
                 port += 1
-                got = one_run(build, packets, rate, port, a.ring_log2, work, expect)
+                got = one_run(build, packets, rate, port, a.ring_log2, work, expect,
+                              cpus)
                 if got is not None:
                     runs.append(got)
             if not runs:
@@ -302,6 +339,7 @@ def main():
                      "real_time_msg_per_s": base},
             "ring_slots": rows[0]["ring_slots"],
             "pinned": rows[0]["pinned_receiver"] and rows[0]["pinned_book"],
+            "cpus": {"receiver": cpus[0], "book": cpus[1], "sender": cpus[2]},
             "clock": rows[0]["clock"],
             "repeats": a.repeats,
             "baseline_p99_ns": baseline,
