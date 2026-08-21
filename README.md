@@ -678,14 +678,28 @@ history settles it.
 
 ```bash
 python3 python/analysis/check_cross.py validation/MSFT_2019-12-30.json \
-    --official-open <open> --official-close <close>
+    --official-close 157.59 --source "nasdaq.com historical quotes"
 ```
 
-This is a real test rather than a formality. Cross handling is the part of an
-ITCH book most likely to be quietly wrong: it is rare, it is a separate message
-type, and it never appears in a day's ordinary flow, so nothing else exercises
-it. [`validation/`](validation/) has the two-minute recipe, including which of
-the two prices is the strong signal and why.
+```
+auction                 ours   published  verdict
+----------------------------------------------------
+official close      157.5900      157.59  match
+```
+
+**Done, and it matches to the cent** against nasdaq.com's own historical-quotes
+CSV. This is a real test rather than a formality: cross handling is the part of
+an ITCH book most likely to be quietly wrong, because it is rare, it is a
+separate message type, and nothing in a day's ordinary flow exercises it.
+
+The *opening* cross is not checkable from that source, and working out why was
+worth more than the check. Its `Open` column gives $158.987 — a sub-penny
+price, which an auction cannot print, since crosses clear at a single price
+built from orders priced in pennies. So that column is some other quantity,
+most likely the first consolidated print. An earlier version of this script
+compared at two decimals, rounded $158.987 to $158.99, and reported a match
+against our $158.9900; it now refuses a figure that is not on a penny increment
+and explains why. [`validation/`](validation/) has the full record.
 
 ### Two things worth knowing before you start
 
