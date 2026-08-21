@@ -104,6 +104,46 @@ constants remain read from the spec and unconfirmed against real bytes. A day
 containing a halt would settle `h` and `W`; that is the argument for running
 this against a second, more eventful day.
 
+## Sizing phase 9, out of the same pass
+
+Phase 9 puts every symbol in one process, which means one shared reference map
+and one shared pool. Both have to be sized from something, and the only honest
+something is a count of the real file. Two opt-in flags do it in the same pass
+that checks the framing:
+
+```bash
+time ./build-release/itch_census 12302019.NASDAQ_ITCH50.gz \
+    --peak-orders --per-symbol validation/census-2019-12-30.json
+ls -l 12302019.NASDAQ_ITCH50.gz            # the compressed size, next to the 8.25 GB
+```
+
+`--peak-orders` reports the high-water mark of orders resting simultaneously
+across every symbol. It keeps twelve bytes per live order rather than the book's
+forty — no levels, no pool — because the question is how many, not where. The
+structure also reports whether `inserted == live + removed + emptied`, which is
+an identity rather than an estimate: if it does not hold, the count is worthless
+and says so.
+
+`--per-symbol` writes one record per locate: message counts by kind, the range
+of prices that symbol actually **quoted** (trade prints excluded, because the
+dense band has to cover where orders rest and a cross prints outside it),
+opening and closing cross counts, and the two message types that can make a
+vendor's daily bar legitimately disagree with ours — `B` broken trades and `h`
+operational halts.
+
+`time` is not decoration. This pass decompresses, frames and length-checks the
+whole file while building nothing, so its wall clock is the **floor** for any
+all-symbols replay: no end-to-end number phase 9 reports can be below it, and
+the gap between the two is the book's own cost. It is the cheapest measurement
+in the project and it was skipped the first time this ran.
+
+**Status: not yet run with these flags.** The numbers land in
+`validation/census-2019-12-30.json` and in the table above it when they do —
+they are not typed into this file by hand. What *is* already checked, on every
+push, is that the census and the book agree: two implementations that share no
+code count the live orders in the same generated feed and must return the same
+number.
+
 ## Which oracle, and why not the one the plan named
 
 The build plan's done-condition says match "NASDAQ's published daily summary
