@@ -997,6 +997,76 @@ than the consumer starves (ring empty), because B > D. If the consumer is the
 one starving, the feed is decompression-bound and P1's arithmetic was built on
 the wrong half.
 
+### 10.8 — what actually happened
+
+`include/itchbook/pipe/reader_thread.hpp`, `book_replay --reader-thread
+[--reader-chunk-kb 64|256|1024]`, `bench/reader-overlap.py` →
+`validation/reader-overlap.json` → `scripts/phase10-8-report.py --check`. The
+graded verdicts against P1–P5 are in `docs/phase10-results.md` and are computed
+from the artifact, not typed.
+
+**The second consumer of the phase-10 ring, with a different slot type.** A chunk
+of 64 KB rather than a message, because one release store per 64 KB is a
+rounding error where one per 40 bytes would not be. Chunks break *between*
+messages by construction — a message that does not fit is carried whole to the
+next one — so the consumer never reassembles anything, which is the bug this
+design exists to make impossible rather than to handle.
+
+**Two bugs, and only one was findable by comparing books.**
+
+1. *It hung.* The producer's fill limit was `c.len + 2 + 65535 > ChunkBytes`,
+   which with the default 64 KB chunk is `c.len + 65537 > 65536` — true on the
+   first iteration and every one after. It broke out before reading a byte,
+   published nothing, never reached EOF, spun forever. The reservation was
+   larger than the buffer it reserved from. Found by running a tool and waiting.
+2. *A heap-buffer-overflow that no book comparison could see.* The carried
+   message was `memcpy`'d into the next chunk with no size check. A 902-byte
+   message behind a 50-byte one, with a 256-byte chunk, wrote 902 bytes into
+   256. ASan caught it on the first run of the new test — and it can never fire
+   on real data, because ITCH messages top out at 50 bytes and the default chunk
+   is 64 KB, which is exactly why the test picks hostile chunk sizes rather than
+   realistic ones. Whether a message fits is a property of the message and the
+   chunk size, not of what is staged, so it is now answered on the read.
+
+**P1 is falsified, and it is the most useful thing this step produced.** The
+measured speedup went *through* the (D + B) / max(D, B) ceiling at every chunk
+size. A pipeline cannot beat max(D, B), so the decomposition was at fault: the
+model assumed the work is invariant under the split. Two measured reasons —
+`gzread` reads an uncompressed file transparently, so the same binaries on the
+same bytes isolate the book from inflate. B by subtraction overstates the book's
+isolated cost (zlib's window and the ref map contend when interleaved on one
+core), and the split additionally moves the per-message `gzread` and vector
+resize off the consumer, which now walks a contiguous chunk. The second effect
+is a cheaper inner loop rather than overlap, and it lands in the same number.
+The arithmetic is still the right way to reason about what overlap can buy; it
+is not a bound on what this change buys.
+
+**P4 is undecided rather than graded, and that is deliberate.** Two runs of the
+sweep measured 10.9% and 7.6% chunk-size spread against a 10% flatness bar, so a
+single threshold would have decided it by coin flip. What is stable across both
+runs is the *order* — bigger chunks were faster at every size — so the report
+says both and claims neither more than the data supports.
+
+**P5 is withdrawn, not graded.** It predicted the producer would stall more often
+than the consumer, on the grounds that B > D. The counters cannot support that
+comparison: they count *polls*, and a poll costs a different amount on each side
+— the consumer's empty poll is a load and a compare, while the producer's full
+poll goes through `writable()`, which refreshes the consumer's cache line
+whenever it would report zero. `book_replay` printed "bottleneck:
+decompression" from exactly that comparison on a feed whose own timings said the
+book was the larger half. The counters now say what they are, and which half is
+slower is settled by time — measure decompression alone, measure the whole run,
+subtract. That is the third instrument this phase has had to demote from
+authoritative to indicative.
+
+**Tests compare the message stream, not the book.** Two paths can agree on a book
+while disagreeing about which messages they saw.
+`tests/test_reader_thread.cpp` checks types, bytes, order, count, and identical
+failures on identical malformed input, at chunk sizes of 512 B, 1 KB and 4 KB
+where almost every message straddles a boundary. It runs under ASan/UBSan and
+under ThreadSanitizer, and CI additionally requires a byte-identical book at all
+three production chunk sizes.
+
 ### Done — Phase 10
 
 - [ ] Wire-to-book p50/p99/p99.9 **and the bucket distribution** at 1×

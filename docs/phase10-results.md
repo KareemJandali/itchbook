@@ -167,6 +167,102 @@ for two reasons: it is the second time in this phase that a single-sample
 measurement produced a confident and wrong mechanism, and the first thing a
 reader of the sweep output will reach for is the same hypothesis.
 
+<!-- generated:overlap:begin -->
+
+## 10.8 — decompressing on its own thread
+
+The prediction was that the ceiling is arithmetic: decompression costs D, the book costs B, `parse()` alternates between them on one thread, so the sequential path pays D + B and the overlapped path cannot beat max(D, B). Available speedup (D + B) / max(D, B), at most 2×.
+
+**The measurement went straight through that ceiling** — at every chunk size, by 24% to 37%. A pipeline cannot beat max(D, B), so the fault is in the decomposition, and the model's hidden assumption is the culprit: that the work is *invariant under the split*. It is not.
+
+| | |
+|---|---:|
+| feed | 3,775,300 messages |
+| D — decompress, frame, length-check, build nothing | 0.63 s |
+| B — the book, by subtraction (T_seq − D) | 1.70 s |
+| D + B — the single-threaded path | 2.33 s |
+| model ceiling (D + B) / max(D, B) | 1.37× |
+| larger half | book |
+| runs per configuration | 3 (best of) |
+
+### Why the ceiling leaks, measured
+
+`gzread` reads an uncompressed file transparently, so the same binaries run on the same bytes with inflate taken out of the picture. That separates *what the book costs* from *what the book appears to cost while interleaved with inflate*.
+
+| | |
+|---|---:|
+| frame only, no inflate | 0.15 s |
+| frame + book, no inflate | 1.71 s |
+| **B isolated** | **1.56 s** |
+| subtraction overstates the book by | 9% |
+
+Two effects, both real, and neither one is overlap:
+
+1. **Inflate and the book contend.** B by subtraction is 1.70 s; the book's isolated cost is 1.56 s. zlib's 32 KB window and the book's ref map do not fit in the same cache together, so interleaving them on one core costs more than running either alone.
+
+2. **The split moves work off the consumer.** Framing alone is 0.15 s for 3,775,300 messages — two `gzread` calls and a vector resize each. In the pipeline the producer absorbs all of it and the consumer walks a contiguous chunk instead. That is a cheaper inner loop, not overlap, and it lands in the same number.
+
+Stall columns are **poll counts, not time**, and are not comparable across the two sides: a consumer's empty poll is a load and a compare, while a producer's full poll goes through `writable()`, which refreshes the consumer's cache line. Which half is slower is settled above, by time.
+
+| chunk | wall clock | speedup | % of ceiling | producer polls | consumer polls | chunks |
+|---:|---:|---:|---:|---:|---:|---:|
+| 64 KB | 1.41 s | 1.65× | 121% | 410,731,923 | 33,034,560 | 1,733 |
+| 256 KB | 1.40 s | 1.66× | 121% | 307,704,380 | 6,535,549 | 433 |
+| 1024 KB | 1.31 s | 1.78× | 130% | 295,867,029 | 5,297,243 | 109 |
+
+### The predictions, graded
+
+| | predicted | measured | verdict |
+|---|---|---|:--|
+| P1 the ceiling is arithmetic | measured speedup ≤ (D+B)/max(D,B) | ceiling 1.37×, best 1.78× (130%) | **falsified — the model assumed the work is invariant under the split, and it is not** |
+| P2 speedup here | 1.2–1.7× | 1.78× at 1024 KB | **falsified — above the range** |
+| P3 falsification | refuted if overlapped ≥ 0.95× sequential | 0.56× sequential | **holds** |
+| P4 chunk size | FLAT | 7.6% spread across 64 KB / 256 KB / 1 MB, monotonic | **undecided** — spread is within the noise of this machine, but bigger chunks were faster at every size and in both runs of the sweep. A real effect too small to separate here |
+| P5 which side stalls | producer more often (B > D) | producer 410,731,923, consumer 33,034,560 | **withdrawn — poll counts are not comparable across the sides; see above** |
+
+<!-- generated:overlap:end -->
+
+## What 10.8 does and does not close
+
+Phase 9 reported a full trading day end to end and then reported, honestly and
+repeatedly, that a large part of that number was gzip. Those two costs were
+strictly sequential: `parse()` called `gzread`, then the handler, then `gzread`
+again, on one thread. The reader thread puts them on two, through the same ring
+phase 10 already built — a different slot type, a chunk instead of a message,
+because one publish per 64 KB is a rounding error where one publish per 40 bytes
+would not be.
+
+What it does not close is the *decompression* cost itself. Overlap hides the
+smaller half behind the larger one; it does not make either faster, and the
+ceiling above says exactly how much is on the table. A feed that is
+decompression-bound has almost nothing to gain and the table will say so.
+
+**Two bugs, and only one of them was findable by comparing books.**
+
+The first hung. The producer's fill limit was `c.len + 2 + 65535 > ChunkBytes`,
+which with the default 64 KB chunk is `c.len + 65537 > 65536` — true on the
+first iteration and every one after. It broke out before reading a byte,
+published nothing, never reached EOF, and spun forever. The reservation was
+larger than the buffer it was reserving from. It was found by running a tool and
+waiting, which is the slowest way to find anything.
+
+The second was a heap-buffer-overflow, and no book comparison could have caught
+it. A message that does not fit alongside what is already staged is carried
+whole to the next chunk — and the carry was `memcpy`'d in at the top of that
+chunk with no size check. A 902-byte message behind a 50-byte one, with a
+256-byte chunk, wrote 902 bytes into 256. ASan caught it on the first run of the
+new test. It could never fire on real data, because ITCH messages top out at 50
+bytes and the default chunk is 64 KB — which is exactly why it needed a test
+that chooses hostile chunk sizes rather than realistic ones. The check now
+happens on the read, where whether a message fits is a property of the message
+and the chunk size rather than of what happens to be staged.
+
+`tests/test_reader_thread.cpp` compares the **message stream**, not the book:
+same types, same bytes, same order, same count, same failures on the same
+malformed input, at chunk sizes of 512 B, 1 KB and 4 KB where almost every
+message straddles a boundary. Two paths can agree on a book while disagreeing
+about which messages they saw.
+
 ## Figures
 
 - `docs/figures/rate-latency.svg` — p50/p99/p99.9 against offered rate,

@@ -16,12 +16,30 @@
 // lock-free ring precisely so two stages could overlap, and the reader path is
 // the second stage in this repository that wants one.
 //
-// The ceiling is arithmetic and worth stating before any measurement: if
-// decompression costs D and the book costs B, the sequential total is D + B and
-// the overlapped total cannot beat max(D, B). The speedup available is
-// (D + B) / max(D, B), which is at most 2x and reaches it only when the two
-// halves are exactly balanced. Anyone expecting more has mistaken a pipeline
-// for a parallel algorithm.
+// The obvious ceiling is arithmetic: if decompression costs D and the book costs
+// B, the sequential total is D + B, the overlapped total cannot beat max(D, B),
+// and the available speedup is (D + B) / max(D, B) -- at most 2x, and 2x only
+// when the halves are balanced.
+//
+// MEASURED SPEEDUP WENT THROUGH THAT CEILING, at every chunk size, by 21% to
+// 30%. Not because a pipeline can beat max(D, B), but because the ceiling
+// assumes the WORK IS INVARIANT under the split, and it is not. Two measured
+// reasons, both in docs/phase10-results.md:
+//
+//   * B derived as (sequential - D) overstates the book. Running the same feed
+//     uncompressed -- gzread reads a plain file transparently, so it is the same
+//     binaries on the same bytes -- puts the book's isolated cost 9% below the
+//     subtraction. zlib's window and the book's ref map do not sit in the same
+//     cache comfortably, so interleaving them costs more than either alone.
+//   * The split moves work OFF the consumer. In the sequential path every
+//     message costs two gzread calls and a vector resize; here the producer
+//     absorbs those and the consumer walks a contiguous chunk. That is a
+//     cheaper inner loop, not overlap, and it lands in the same number.
+//
+// So the arithmetic is still the right way to think about what overlap can buy,
+// and it is not a bound on what this change buys. A measurement above it is the
+// signal that the decomposition is leaking -- which is worth more than the
+// ceiling was.
 //
 // THE SLOT IS A CHUNK, NOT A MESSAGE. wire_to_book puts one message in a slot
 // because a message is what arrives from a socket. Here the producer is reading
@@ -32,13 +50,22 @@
 // reassemble a message that straddles two slots, which is the bug this design
 // exists to make impossible rather than to handle.
 //
-// WHICH SIDE IS THE BOTTLENECK IS AN OUTPUT. The producer counts the polls
-// where the ring was full and the consumer counts the polls where it was empty.
-// A run whose producer stalls is a run where the book is the slow half; a run
-// whose consumer stalls is decompression-bound. Without those two counters
-// "overlap did not help" and "overlap helped and the other half got slower" are
-// the same observation, and phase 9's whole story is about not being able to
-// tell those apart.
+// THE STALL COUNTERS COUNT POLLS, NOT TIME, AND THAT IS A TRAP. The producer
+// counts polls where the ring was full and the consumer counts polls where it
+// was empty, which answers "did either side ever wait" and "did the ring ever
+// fill". It does NOT support the obvious inference that more producer stalls
+// means the book is the slow half, because a poll costs a different amount on
+// each side: the consumer's empty poll is a load and a compare, while the
+// producer's full poll goes through writable(), which refreshes the consumer's
+// cache line whenever it would report zero. The consumer therefore spins many
+// more times per second, and the raw counts are not comparable across the
+// boundary.
+//
+// book_replay printed "bottleneck: decompression" from exactly that comparison,
+// on a feed whose own timings said the book was the larger half. Which side is
+// slower is a question about TIME, and the only sound way to answer it is to
+// measure decompression alone, measure the whole run, and subtract -- which is
+// what bench/reader-overlap.py does.
 //
 #include <zlib.h>
 
@@ -108,6 +135,10 @@ uint64_t parse_threaded(const std::string& path, Handler& handler,
     gzbuffer(gz, 1u << 20);          // matches Reader, so the comparison is fair
 
     std::thread producer([&] {
+        // One message's worth of staging, so a message that does not fit in the
+        // chunk being filled is carried to the next one rather than re-read.
+        alignas(8) uint8_t carry[2 + 65535];
+        size_t carry_len = 0;
         try {
             for (;;) {
                 while (shared->ring.writable() == 0) {
@@ -115,27 +146,72 @@ uint64_t parse_threaded(const std::string& path, Handler& handler,
                 }
                 Slot& c = shared->ring.write_slot(0);
                 c.len = 0;
+                // A message read but not yet placed, because it did not fit in
+                // the chunk that was being filled. It goes at the front of this
+                // one.
+                //
+                // The first version of this tried to avoid the carry by
+                // stopping while a maximum-size message would still fit:
+                // `if (c.len + 2 + 65535 > ChunkBytes) break;`. With the
+                // default 64 KB chunk that condition is c.len + 65537 > 65536,
+                // which is true on the first iteration and every iteration
+                // after it -- so the producer broke out before reading a byte,
+                // published nothing, never saw EOF, and spun forever. The
+                // reservation was larger than the buffer it was reserving from.
+                if (carry_len > 0) {
+                    // Guaranteed to fit: nothing larger than a chunk is ever
+                    // carried, because the read above refuses it outright.
+                    if (carry_len > ChunkBytes) {
+                        throw std::runtime_error("reader: carried message exceeds the chunk");
+                    }
+                    std::memcpy(c.bytes, carry, carry_len);
+                    c.len = static_cast<uint32_t>(carry_len);
+                    carry_len = 0;
+                }
                 bool eof = false;
                 for (;;) {
-                    // Stop while a maximum-size message would still fit, so the
-                    // read below never has to be undone. Messages break between
-                    // slots by construction.
-                    if (c.len + 2 + 65535 > ChunkBytes) break;
                     uint8_t lb[2];
                     const int n = gzread(gz, lb, 2);
                     if (n == 0) { eof = true; break; }
                     if (n != 2) throw std::runtime_error("reader: truncated length prefix");
                     const auto len = static_cast<uint16_t>(
                         (static_cast<uint16_t>(lb[0]) << 8) | lb[1]);
-                    c.bytes[c.len] = lb[0];
-                    c.bytes[c.len + 1] = lb[1];
-                    const int m = gzread(gz, c.bytes + c.len + 2, len);
+                    carry[0] = lb[0];
+                    carry[1] = lb[1];
+                    const int m = gzread(gz, carry + 2, len);
                     if (m != static_cast<int>(len)) {
                         throw std::runtime_error("reader: truncated message body");
                     }
-                    c.len += 2u + len;
                     ++shared->stats.messages;
                     shared->stats.bytes += 2u + len;
+                    // Refuse it HERE, on the read, not on the placement.
+                    //
+                    // The first version asked "does it fit in the chunk I am
+                    // filling, and is that chunk empty?" -- which is the right
+                    // question one message too late. A message that does not
+                    // fit alongside what is already staged gets carried to the
+                    // next chunk, and the carry was memcpy'd in at the top of
+                    // that chunk with no size check at all. A 902-byte message
+                    // behind a 50-byte one, with a 256-byte chunk, wrote 902
+                    // bytes into 256. ASan caught it; the "identical book"
+                    // comparison never could, because real ITCH messages are at
+                    // most 50 bytes and a 64 KB chunk never gets near this.
+                    //
+                    // Whether a message fits is a property of the message and
+                    // the chunk size, not of what happens to be staged, so it
+                    // is answered once, on the way in.
+                    if (2u + len > ChunkBytes) {
+                        throw std::runtime_error(
+                            "reader: message of " + std::to_string(2 + len) +
+                            " bytes exceeds the reader chunk of " +
+                            std::to_string(ChunkBytes) + " bytes");
+                    }
+                    if (c.len + 2u + len > ChunkBytes) {
+                        carry_len = 2u + len;      // whole, into the next chunk
+                        break;
+                    }
+                    std::memcpy(c.bytes + c.len, carry, 2u + len);
+                    c.len += 2u + len;
                 }
                 if (c.len > 0) {
                     ++shared->stats.chunks;
@@ -143,7 +219,7 @@ uint64_t parse_threaded(const std::string& path, Handler& handler,
                     if (occ > shared->stats.max_occupancy) shared->stats.max_occupancy = occ;
                     shared->ring.publish(1);
                 }
-                if (eof) break;
+                if (eof && carry_len == 0) break;
             }
         } catch (...) {
             shared->error = std::current_exception();
