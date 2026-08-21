@@ -35,3 +35,5 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+build-verify-gcc/
+build-verify-clang/
