@@ -46,9 +46,11 @@
 // separately from ring drops at every rate.
 //
 // Usage:
-//   wire_to_book [--port N] [--rcvbuf-mb N] [--ring-log2 N] [--timeout-ms N] [--band-levels N]
-//                [--refs-capacity N] [--expect-messages N] [--json out.json]
-//                [--hist-csv out.csv] [--cpu-recv N] [--cpu-book N] [--quiet]
+//   wire_to_book [--port N] [--rcvbuf-mb N] [--ring-log2 N] [--timeout-ms N]
+//                [--band-levels N] [--refs-capacity N] [--tick N]
+//                [--expect-messages N] [--json out.json] [--hist-csv out.csv]
+//                [--per-symbol out.csv] [--applied-out out.gz]
+//                [--cpu-recv N] [--cpu-book N] [--quiet]
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -67,6 +69,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <zlib.h>
+
 #include <string>
 #include <thread>
 #include <vector>
@@ -75,6 +79,7 @@
 #include "itchbook/bench/rdtsc.hpp"
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
+#include "itchbook/book/report.hpp"
 #include "itchbook/itch/messages.hpp"
 #include "itchbook/mold/packet.hpp"
 #include "itchbook/mold/sequencer.hpp"
@@ -128,6 +133,13 @@ struct Options {
     size_t expect_messages = size_t{1} << 22;
     const char* json = nullptr;
     const char* hist_csv = nullptr;
+    const char* per_symbol = nullptr;
+    // Records the raw bytes of every message the book thread applied, in the
+    // order it applied them. This is the phase 10.6 torture instrument, and it
+    // is NOT a measurement mode: it memcpys every message inside the measured
+    // loop, so a run with it on reports timings that describe the recording.
+    const char* applied_out = nullptr;
+    int32_t tick = 100;
     int cpu_recv = -1;
     int cpu_book = -1;
     bool quiet = false;
@@ -251,6 +263,9 @@ int main(int argc, char** argv) {
         else if (a == "--refs-capacity") opt.refs_capacity = std::strtoull(next("--refs-capacity"), nullptr, 10);
         else if (a == "--expect-messages")
             opt.expect_messages = std::strtoull(next("--expect-messages"), nullptr, 10);
+        else if (a == "--per-symbol") opt.per_symbol = next("--per-symbol");
+        else if (a == "--applied-out") opt.applied_out = next("--applied-out");
+        else if (a == "--tick") opt.tick = std::atoi(next("--tick"));
         else if (a == "--json") opt.json = next("--json");
         else if (a == "--hist-csv") opt.hist_csv = next("--hist-csv");
         else if (a == "--cpu-recv") opt.cpu_recv = std::atoi(next("--cpu-recv"));
@@ -260,6 +275,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                 "usage: %s [--port N] [--rcvbuf-mb N] [--timeout-ms N] [--band-levels N]\n"
                 "       [--ring-log2 10|12|14|16|18] [--expect-messages N]\n"
+                "       [--per-symbol out.csv] [--applied-out out.gz] [--tick N]\n"
                 "       [--refs-capacity N] [--json out.json] [--hist-csv out.csv]\n"
                 "       [--cpu-recv N] [--cpu-book N] [--quiet]\n", argv[0]);
             return 2;
@@ -363,16 +379,38 @@ int run(const Options& opt) {
             msgs[i].msg_hdr.msg_iovlen = 1;
         }
 
-        // Free slots, for real. writable() is a LOWER bound by contract -- it
-        // reads a cached copy of the consumer's cursor and refreshes only when
-        // that copy says zero -- so a small answer means "at least this many",
-        // not "only this many". Deciding to DROP a packet on a lower bound
-        // counts drops that never happened and makes the rate-latency curve
-        // report a cliff the pipeline does not have. size() reads the real
-        // cursor; pay for that only once the cheap answer is not enough.
-        auto free_slots = [&] {
+        // Free slots, and the comparison has to be against what this packet
+        // NEEDS.
+        //
+        // writable() is a LOWER bound by contract: it reads a cached copy of
+        // the consumer's cursor and refreshes only when that copy says zero, so
+        // a small answer means "at least this many", not "only this many". The
+        // staleness grows with every publish and is a function of how many
+        // messages have gone by, not of the clock -- which is why the first
+        // version of this dropped an IDENTICAL 2,464 packets at 30,000 and at
+        // 90,000 msg/s, with peak ring occupancy at 1,683 of 4,096 slots. It
+        // was refusing packets for want of room in a ring that was 41% full,
+        // reproducibly, because the cheap answer was stale and nothing asked
+        // for the real one.
+        //
+        // So: take the cheap answer when it is already enough, and pay for the
+        // true figure before declaring a drop. Never the other way round. That
+        // earlier version compared the cheap answer against kBatch instead of
+        // against `need`, which is the same mistake wearing a plausible
+        // constant.
+        //
+        // And the true figure comes from writable_exact(), NOT from
+        // `capacity() - size()`. Those two return the same number and are not
+        // interchangeable: writable_exact() also refreshes the producer's
+        // cached view of the consumer, which is what keeps the next writable()
+        // call honest. Publishing against a figure writable() did not issue
+        // leaves `head - cached_tail_` past Capacity, and the next writable()
+        // underflows to eighteen quintillion free slots. That version applied
+        // messages out of order by exactly one lap of the ring and passed every
+        // count-based check, because nothing was lost -- only reordered.
+        auto free_slots = [&](size_t need) {
             const size_t cheap = shared.ring.writable();
-            return cheap >= kBatch ? cheap : Ring::capacity() - shared.ring.size();
+            return cheap >= need ? cheap : shared.ring.writable_exact();
         };
 
         // Stage whatever the sequencer emits for one packet, then publish once.
@@ -439,7 +477,7 @@ int run(const Options& opt) {
                 // sequencer would have delivered part of a block and the gap
                 // would be invisible.
                 const size_t need = hdr.message_count() == 0 ? 1 : hdr.message_count();
-                const size_t room = free_slots();
+                const size_t room = free_slots(need);
                 if (room < need) {
                     shared.ring_full_drops.fetch_add(1, std::memory_order_relaxed);
                     continue;      // the sequencer never sees it: a real gap
@@ -482,7 +520,12 @@ int run(const Options& opt) {
     });
 
     // ---- book thread --------------------------------------------------------
-    book::BookSet books(opt.refs_capacity, 100, 20, opt.band_levels);
+    // Same construction arguments as book_replay's --all-symbols, because
+    // 10.6 diffs the two books byte for byte and the band policy is visible in
+    // the output (off_band_adds, recentres). A tick or a band width that
+    // differed would make them disagree for a reason that has nothing to do
+    // with the pipeline.
+    book::BookSet books(opt.refs_capacity, opt.tick, 20, opt.band_levels);
     // The samples, as (cycles, type) pairs in two reserved vectors.
     //
     // The plan asks for a histogram per message type. 256 Histograms, each
@@ -496,6 +539,12 @@ int run(const Options& opt) {
     std::vector<uint8_t> sample_type;
     sample_cycles.reserve(opt.expect_messages);
     sample_type.reserve(opt.expect_messages);
+    // [len][payload], the framing the rest of the repo reads, accumulated in
+    // memory and written after the run. Reserved up front for the same reason
+    // everything else here is: growing it mid-run would allocate on the
+    // consumer path.
+    std::vector<uint8_t> applied_bytes;
+    if (opt.applied_out != nullptr) applied_bytes.reserve(opt.expect_messages * (kMaxMessage + 2));
     uint64_t applied = 0;
     uint64_t consumed = 0;
 
@@ -513,6 +562,11 @@ int run(const Options& opt) {
                 const Slot& s = shared.ring.read_slot(k);
                 const char type = static_cast<char>(s.bytes[0]);
                 if (book::apply(books, type, s.bytes)) ++applied;
+                if (opt.applied_out != nullptr) {
+                    applied_bytes.push_back(static_cast<uint8_t>(s.len >> 8));
+                    applied_bytes.push_back(static_cast<uint8_t>(s.len & 0xff));
+                    applied_bytes.insert(applied_bytes.end(), s.bytes, s.bytes + s.len);
+                }
                 // The sample. Taken after apply, inside the loop, into a
                 // preallocated histogram: no allocation, no I/O, no printing in
                 // the measured region -- the phase-4 rules, which were about a
@@ -640,6 +694,11 @@ int run(const Options& opt) {
                         "Re-run with --expect-messages above %zu.\n",
                         opt.expect_messages, overall.count(), overall.count());
         }
+        if (opt.applied_out != nullptr) {
+            std::printf("\nRECORDING. --applied-out memcpys every message inside the measured\n"
+                        "loop, so the figures above describe the recording as much as the\n"
+                        "pipeline. This mode exists to prove what was applied, not how fast.\n");
+        }
         if (!recv_pinned || !book_pinned) {
             std::printf("\nUNPINNED. docs/phase10-methodology.md section 4 requires pinning,\n"
                         "and phase 4 measured 19.3%% run-to-run variance without it. These\n"
@@ -655,6 +714,24 @@ int run(const Options& opt) {
     if (opt.hist_csv != nullptr && !overall.write_buckets_csv(opt.hist_csv)) {
         std::fprintf(stderr, "error: cannot write %s\n", opt.hist_csv);
         return 1;
+    }
+    if (opt.per_symbol != nullptr && !book::write_per_symbol(books, opt.per_symbol)) {
+        return 1;
+    }
+    if (opt.applied_out != nullptr) {
+        gzFile g = gzopen(opt.applied_out, "wb");
+        if (g == nullptr) {
+            std::fprintf(stderr, "error: cannot write %s\n", opt.applied_out);
+            return 1;
+        }
+        const bool wrote = applied_bytes.empty() ||
+                           gzwrite(g, applied_bytes.data(),
+                                   static_cast<unsigned>(applied_bytes.size())) ==
+                               static_cast<int>(applied_bytes.size());
+        if (gzclose(g) != Z_OK || !wrote) {
+            std::fprintf(stderr, "error: cannot write %s\n", opt.applied_out);
+            return 1;
+        }
     }
     if (opt.json != nullptr) {
         std::FILE* f = std::fopen(opt.json, "w");

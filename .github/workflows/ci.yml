@@ -315,6 +315,30 @@ jobs:
           grep -q "FAIL: exit 3, expected 0" /tmp/neg.txt
           echo "gate correctly rejected a lossy run"
 
+      # Phase 10.6. The pipeline may reorder time; it may never reorder effect.
+      #
+      # Gate A: below the knee, the book two threads build over a socket must be
+      # byte-identical to the one book_replay builds synchronously from the same
+      # file -- across three ring sizes and two rates, because one configuration
+      # matching proves the code ran and six matching proves the answer does not
+      # depend on the schedule. Configurations that drop are above the knee on
+      # this runner and are skipped BY NAME, with the gate failing if too few
+      # stayed clean: a machine that dropped everything must not report a pass
+      # having compared nothing.
+      #
+      # Gate B: above the knee, every message applied must be one the sender
+      # sent, exactly once, in order -- checked against the SENDER's feed rather
+      # than by replaying the recording, because a corrupted slot reproduces the
+      # same wrong book on both sides and a book-to-book diff cannot see it.
+      #
+      # This is the gate that found the ring bug: publishing against a free
+      # count writable() had not issued left its cached cursor past capacity,
+      # the next call underflowed to 18 quintillion free slots, and messages
+      # were applied out of order by exactly one lap. Nothing was lost, so every
+      # count-based check passed.
+      - name: Determinism gate (the pipeline's book equals the synchronous book)
+        run: ./scripts/determinism-gate.sh build
+
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh
 

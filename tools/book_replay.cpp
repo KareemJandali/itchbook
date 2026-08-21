@@ -27,6 +27,7 @@
 #include "itchbook/book/book.hpp"
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
+#include "itchbook/book/report.hpp"
 #include "itchbook/itch/messages.hpp"
 #include "itchbook/itch/parser.hpp"
 #include "itchbook/itch/reader.hpp"
@@ -235,54 +236,6 @@ struct AllSymbols {
         if (itchbook::book::apply(set, type, p)) ++applied;
     }
 };
-
-// One row per security, with the fields a single-symbol run also reports, so
-// that a row can be diffed against `--symbol X` on the same feed. That
-// comparison is the only thing standing between "the routing works" and "the
-// routing appears to work": every book here runs the same code as before, so
-// if a symbol's numbers change, it is the routing that changed them.
-bool write_per_symbol(const AllSymbols& a, const char* path) {
-    std::FILE* f = std::fopen(path, "w");
-    if (f == nullptr) {
-        std::fprintf(stderr, "error: cannot write %s\n", path);
-        return false;
-    }
-    std::fputs("locate,symbol,directoried,resting_orders,resting_shares,volume,notional,"
-               "trades,hidden_volume,cross_volume,open,high,low,close,best_bid,best_ask,"
-               "unknown_refs,locate_mismatch,overflow_levels,trading_state,system_event,"
-               "operational_halts,broken_trades,tradable,adds,off_band_adds,recentres\n", f);
-    a.set.for_each_book([&](uint16_t locate, const itchbook::book::Book& b,
-                            const itchbook::book::SymbolInfo& info) {
-        int32_t bid = 0;
-        int32_t ask = 0;
-        const bool have_bid = b.best_bid(&bid);
-        const bool have_ask = b.best_ask(&ask);
-        // Absent is empty, not a sentinel. The single-symbol summary learned
-        // this the hard way on a real day (see write_json): a -1 read as a
-        // price manufactures a disagreement out of two spellings of "there
-        // isn't one", and this file exists to be compared against that one.
-        auto opt_px = [](int32_t v) { return v < 0 ? std::string() : std::to_string(v); };
-        std::fprintf(f,
-                     "%u,%s,%s,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-                     ",%" PRIu64 ",%s,%s,%s,%s,%s,%s,%" PRIu64 ",%" PRIu64 ",%zu,%c,%c"
-                     ",%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
-                     locate, info.symbol, info.directoried ? "yes" : "no",
-                     b.resting_orders(), b.resting_shares(), b.volume(), b.notional(),
-                     b.trades(), b.hidden_volume(), b.cross_volume(),
-                     opt_px(b.open()).c_str(), opt_px(b.high()).c_str(),
-                     opt_px(b.low()).c_str(), opt_px(b.close()).c_str(),
-                     (have_bid ? std::to_string(bid) : std::string()).c_str(),
-                     (have_ask ? std::to_string(ask) : std::string()).c_str(),
-                     b.unknown_ref(), b.locate_mismatch(), b.overflow_levels(),
-                     b.trading_state() == 0 ? '-' : b.trading_state(),
-                     b.system_event() == 0 ? '-' : b.system_event(),
-                     info.operational_halts, info.broken_trades,
-                     a.set.tradable(locate) ? "yes" : "no",
-                     b.adds(), b.off_band_adds(), b.recentres());
-    });
-    const bool bad = std::ferror(f) != 0;
-    return std::fclose(f) == 0 && !bad;
-}
 
 // Peak resident set, from the OS rather than from an accounting of what we
 // meant to allocate. VmHWM on Linux; ru_maxrss on macOS and the BSDs, where it
@@ -689,7 +642,8 @@ int main(int argc, char** argv) {
                 std::chrono::steady_clock::now() - started).count();
             a.peak_rss_bytes = peak_rss();
             if (!opt.quiet) print_all_summary(a);
-            if (opt.per_symbol != nullptr && !write_per_symbol(a, opt.per_symbol)) return 1;
+            if (opt.per_symbol != nullptr &&
+                !itchbook::book::write_per_symbol(a.set, opt.per_symbol)) return 1;
             if (opt.json != nullptr && !write_all_json(a, opt.json)) return 1;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "error: %s\n", e.what());

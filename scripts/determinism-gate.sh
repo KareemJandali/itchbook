@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+#
+# determinism-gate.sh — the pipeline may reorder time. It may never reorder
+# effect.
+#
+# GATE A. Below the knee, with drops at zero, the book built by two threads over
+# a socket must be BYTE IDENTICAL to the book book_replay builds synchronously
+# from the same file. Not close. Identical.
+#
+# And identical across timing regimes, not once. Three ring sizes and two rates
+# means six different patterns of how full the ring got, how often the consumer
+# starved, and how many messages a publish batched -- six different orderings in
+# time, one book. A single configuration matching proves the code ran; six
+# matching proves the answer does not depend on the schedule.
+#
+# Both sides use the same writer (include/itchbook/book/report.hpp) and the same
+# BookSet construction. A second copy of the formatting would have made this
+# comparison worthless in both directions: failing on a trailing zero, or
+# passing because both copies were wrong in the same way.
+#
+# GATE B. Above the knee, when the pipeline IS dropping, every message it
+# applied must be one the sender sent, exactly once, in order.
+#
+# The obvious test -- replay what was applied and compare books -- cannot detect
+# the failure that matters. If the ring ever handed the consumer a slot the
+# producer had already overwritten, the recording contains the corrupted message
+# and a synchronous replay of the recording reproduces the same wrong book, and
+# the comparison passes. So the recording is checked against the SENDER's feed
+# instead: the applied stream must be an exact in-order subsequence of what was
+# sent. That catches duplication, corruption, and reordering, none of which a
+# book-to-book diff can see.
+#
+# Usage: scripts/determinism-gate.sh [build-dir]
+set -uo pipefail
+
+BUILD="${1:-build}"
+PORT=${PORT:-26550}
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+for t in wire_to_book mold_replay_udp mold_wrap book_replay; do
+    if [[ ! -x "$BUILD/$t" ]]; then echo "missing $BUILD/$t" >&2; exit 2; fi
+done
+
+wait_bound() {
+    if [[ ! -r /proc/net/udp ]]; then sleep 2; return 0; fi
+    local hex; hex=$(printf '%04X' "$1")
+    for _ in $(seq 1 100); do
+        if grep -qi ":$hex " /proc/net/udp 2>/dev/null; then return 0; fi
+        sleep 0.1
+    done
+    echo "    receiver never bound port $1" >&2
+    return 1
+}
+
+echo "==> feed"
+python3 scripts/make-synthetic-feed.py "$WORK/feed.gz" --messages 200000 --symbols 64
+"$BUILD/mold_wrap" "$WORK/feed.gz" "$WORK/feed.pkt.gz" >/dev/null
+
+echo "==> the synchronous book (book_replay --all-symbols)"
+"$BUILD/book_replay" "$WORK/feed.gz" --all-symbols --per-symbol "$WORK/sync.csv" --quiet
+echo "    $(wc -l < "$WORK/sync.csv") rows"
+
+fail=0
+clean_runs=0
+skipped=0
+
+# ---- Gate A -----------------------------------------------------------------
+#
+# A configuration that DROPS is above the knee on this machine, and a book built
+# from a feed with holes in it is not supposed to match one built from the whole
+# feed. Such a run is skipped rather than failed -- but it is counted and named,
+# and the gate fails if too few configurations stayed below the knee. Silently
+# skipping every run would let a machine that drops everything report a pass
+# having compared nothing, which is the same shape of lie as a clean sheet by
+# construction.
+port=$PORT
+for ring in 12 14 16; do
+    for rate in 30000 90000; do
+        port=$((port + 1))
+        "$BUILD/wire_to_book" --port "$port" --ring-log2 "$ring" --timeout-ms 4000 \
+            --rcvbuf-mb 16 --expect-messages 400000 --per-symbol "$WORK/wire.csv" \
+            --json "$WORK/wire.json" --quiet > "$WORK/wire.txt" 2>&1 &
+        pid=$!
+        if ! wait_bound "$port"; then kill $pid 2>/dev/null; wait $pid 2>/dev/null; fail=1; continue; fi
+        "$BUILD/mold_replay_udp" "$WORK/feed.pkt.gz" --host 127.0.0.1 --port "$port" \
+            --rate "$rate" --quiet >/dev/null 2>&1
+        wait $pid
+        rc=$?
+        if [[ $rc -eq 3 ]]; then
+            drops=$(python3 -c "import json;j=json.load(open('$WORK/wire.json'));print(j['ring_full_drops'],'ring-full,',j['kernel_drops'],'kernel')" 2>/dev/null || echo "?")
+            echo "    ring 2^$ring @ ${rate} msg/s: SKIP — above the knee here ($drops)"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        if [[ $rc -ne 0 ]]; then
+            echo "    ring 2^$ring @ ${rate} msg/s: FAIL — wire_to_book exited $rc"
+            cat "$WORK/wire.txt"
+            fail=1
+            continue
+        fi
+        if ! cmp -s "$WORK/sync.csv" "$WORK/wire.csv"; then
+            echo "    ring 2^$ring @ ${rate} msg/s: FAIL — the pipeline's book differs"
+            diff "$WORK/sync.csv" "$WORK/wire.csv" | head -10
+            fail=1
+            continue
+        fi
+        echo "    ring 2^$ring @ ${rate} msg/s: identical"
+        clean_runs=$((clean_runs + 1))
+    done
+done
+
+# Four of the six configurations must have stayed below the knee, and they must
+# span more than one ring size -- otherwise "identical" could be one lucky
+# schedule rather than a property that survives changing the schedule.
+echo "    $clean_runs below the knee, $skipped skipped"
+if [[ $clean_runs -lt 4 ]]; then
+    echo "    FAIL: only $clean_runs configurations ran clean; the gate compared too little"
+    fail=1
+fi
+
+# ---- Gate B -----------------------------------------------------------------
+echo
+echo "==> torture: overload, then check what was applied against what was sent"
+port=$((port + 1))
+"$BUILD/wire_to_book" --port "$port" --ring-log2 10 --timeout-ms 4000 \
+    --rcvbuf-mb 16 --expect-messages 400000 --applied-out "$WORK/applied.gz" \
+    --json "$WORK/torture.json" --quiet > "$WORK/torture.txt" 2>&1 &
+pid=$!
+if wait_bound "$port"; then
+    "$BUILD/mold_replay_udp" "$WORK/feed.pkt.gz" --host 127.0.0.1 --port "$port" \
+        --rate 3000000 --quiet >/dev/null 2>&1
+    wait $pid
+    rc=$?
+    if [[ $rc -ne 3 ]]; then
+        echo "    FAIL: expected exit 3 (lossy), got $rc — the overload did not overload"
+        cat "$WORK/torture.txt"
+        fail=1
+    else
+        python3 - "$WORK/feed.gz" "$WORK/applied.gz" "$WORK/torture.json" <<'PY' || fail=1
+import gzip, json, struct, sys
+
+def messages(path):
+    with gzip.open(path, "rb") as f:
+        while True:
+            h = f.read(2)
+            if len(h) < 2: return
+            n = struct.unpack(">H", h)[0]
+            b = f.read(n)
+            if len(b) < n: return
+            yield b
+
+sent = list(messages(sys.argv[1]))
+got = list(messages(sys.argv[2]))
+j = json.load(open(sys.argv[3]))
+
+# In-order subsequence, two pointers. A duplicated message fails because the
+# second copy has no unconsumed match ahead of it; a corrupted one fails because
+# its bytes match nothing; a reordered one fails because the match is behind.
+i = 0
+for k, m in enumerate(got):
+    while i < len(sent) and sent[i] != m:
+        i += 1
+    if i == len(sent):
+        print(f"    FAIL: applied message {k} is not in the sent feed at or after "
+              f"this point (duplicate, corrupt, or out of order)")
+        sys.exit(1)
+    i += 1
+
+if not got:
+    print("    FAIL: the overload applied nothing at all")
+    sys.exit(1)
+
+# ...and the arithmetic has to close. Everything sent is applied, unmodelled,
+# or accounted as loss.
+applied = j["messages_applied"]
+if len(got) != j["messages_into_ring"]:
+    print(f"    FAIL: recorded {len(got)} applied, tool counted "
+          f"{j['messages_into_ring']} into the ring")
+    sys.exit(1)
+accounted = (j["messages_into_ring"] + j["oversize_messages"] + j["staging_overflow"]
+             + j["messages_lost"] + j["lost_before_sequencer"] + j["lost_after_sequencer"])
+if accounted != j["wire_messages"]:
+    print(f"    FAIL: {j['wire_messages']} on the wire, {accounted} accounted for")
+    sys.exit(1)
+print(f"    {len(got)} applied, every one an in-order match against the sent feed")
+print(f"    {j['messages_lost']} declared lost; all {j['wire_messages']} accounted for")
+PY
+    fi
+else
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null; fail=1
+fi
+
+echo
+if [[ $fail -ne 0 ]]; then echo "determinism gate FAILED"; exit 1; fi
+echo "determinism gate PASSED"
