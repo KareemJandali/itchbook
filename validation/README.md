@@ -125,8 +125,45 @@ message type, and it never appears in a day's ordinary flow, so nothing else
 exercises it. Note it is a different number from the summary's `close`, which
 is the last trade of the session including late prints.
 
-**Status: not yet independently verified.** The reconstruction produces
-$158.99 for the opening cross and $157.59 for the closing cross on
-2019-12-30. Those need checking against a published quote history before this
-section claims anything — filling in numbers from memory and then agreeing with
-them is not validation.
+**Status: the closing cross is verified. The opening cross is not, and cannot
+be from this source.**
+
+```
+auction                 ours   published  verdict
+----------------------------------------------------
+official open       158.9900    158.9870  NOT AN AUCTION PRICE
+official close      157.5900      157.59  match
+----------------------------------------------------
+PASS — 1 auction price(s) match nasdaq.com historical quotes CSV, MSFT 2019-12-30
+```
+
+Source: nasdaq.com's own historical-quotes CSV (MAX range, downloaded), row
+`12/30/2019,$157.59,16356720,$158.987,$159.02,$156.73`.
+
+**The close matches to the cent, from NASDAQ's own website.** For a
+NASDAQ-listed security the official closing price *is* the closing cross, so
+this is the auction print itself and not a proxy for it — and cross handling is
+the part of an ITCH book most likely to be quietly wrong, because it is rare, it
+is a separate message type, and nothing in a day's ordinary flow exercises it.
+That is now checked against a figure anyone can download for free, which is
+what the Databento comparison above is not.
+
+**The open is a different quantity, and finding that out was the point.** That
+CSV gives $158.987 — a sub-penny price. NASDAQ's crosses clear at a single
+price built from orders that are themselves priced in pennies, since Reg NMS
+Rule 612 forbids sub-penny quoting at or above $1.00, so an auction cannot
+print at $158.987. Whatever that column is — most likely the first consolidated
+print of the session, which *can* be sub-penny — it is not the opening cross,
+and it cannot check ours.
+
+The first version of this check reported it as a MATCH. It compared at two
+decimals, rounded $158.987 to $158.99, and agreed with our $158.9900. That is a
+check passing by discarding the precision that would have shown its two inputs
+were not the same kind of number. `check_cross.py` now refuses a figure that is
+not on a penny increment and says why, rather than rounding it into agreement.
+
+The rest of the day's OHLC corroborates the reading. That CSV's low, $156.73,
+equals ours exactly; its high, $159.02, is below our $159.30, and its volume,
+16,356,720, is 2.7x our 6,154,278 — which is what a regular-session
+consolidated figure should look like against a full-session NASDAQ-only one.
+Same day, different windows and different venues, agreeing where they overlap.

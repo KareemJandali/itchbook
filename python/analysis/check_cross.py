@@ -63,6 +63,7 @@ def main():
 
     checked = 0
     bad = 0
+    unusable = 0
     for code, label, arg in CHECKED:
         want = getattr(a, arg)
         if code not in crosses:
@@ -71,15 +72,40 @@ def main():
         if want is None:
             print(f"{label:<16}{ours:>12.4f}{'—':>12}  not checked")
             continue
+        # A figure that is not a whole number of cents cannot be a cross
+        # price, so it cannot check one. NASDAQ's opening and closing crosses
+        # clear at a single price built from orders that are themselves priced
+        # in pennies — Reg NMS Rule 612 forbids sub-penny quoting at or above
+        # $1.00 — so an auction at $158.987 is not a thing that happens.
+        #
+        # This is not pedantry. nasdaq.com's own historical-quotes CSV gives
+        # MSFT's 2019-12-30 open as $158.987, and an earlier version of this
+        # script compared at two decimals, rounded that to $158.99, and
+        # reported a MATCH against our $158.9900. It was not a match. It was
+        # two different quantities agreeing after the difference between them
+        # had been rounded away — a check passing by discarding the precision
+        # that would have shown its inputs were not comparable.
+        if ours >= 1.0 and abs(round(want * 100) - want * 100) > 1e-6:
+            print(f"{label:<16}{ours:>12.4f}{want:>12.4f}  NOT AN AUCTION PRICE")
+            unusable += 1
+            continue
         checked += 1
-        # Published prices carry cents; ours carry four decimals. Compare at
-        # the precision the published figure actually has.
-        same = abs(round(ours, 2) - round(want, 2)) < 1e-9
+        # Both sides are now exact cent values, so compare them as such rather
+        # than at some rounded precision.
+        same = abs(ours - want) < 1e-6
         if not same:
             bad += 1
         print(f"{label:<16}{ours:>12.4f}{want:>12.2f}  {'match' if same else 'DIFFER'}")
 
     print("-" * 52)
+    if unusable:
+        print(f"\n{unusable} published figure(s) are not on a penny increment, so they are")
+        print("not auction prices and cannot check one. That column of your source")
+        print("means something else — most likely the first consolidated print of")
+        print("the session, which can be sub-penny, rather than the opening cross.")
+        print("Find a source that publishes the cross itself, or check the close")
+        print("alone: for a NASDAQ-listed stock the official closing price IS the")
+        print("closing cross, and every quote history reports it.")
     if checked == 0:
         print("\nNothing was checked. Pass --official-open and/or "
               "--official-close.")
