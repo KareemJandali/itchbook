@@ -13,10 +13,10 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 >
 > **A whole market, not a symbol.** One process reconstructs **every one of
 > 8,906 securities** for 30 December 2019 — 268,744,780 messages, 971 million
-> shares — in **87 s** at 484 MB, with **zero unknown order references and zero
-> locate mismatches across the entire feed**. The single-symbol benchmark says
-> 22.8 ns per message; at market scale it is 263 ns, an 11.5x cost for a working
-> set that stopped fitting in cache — predicted before the run, in print.
+> shares — in **44.6 s** at 551 MB, with **zero unknown order references and zero
+> locate mismatches across the entire feed**. It took 87 s until a swept load
+> factor found **2.42x** in the reference map, against a written prediction that
+> the knob would measure flat.
 > See [`docs/phase9-results.md`](docs/phase9-results.md).
 >
 > **Correct.** The framing is checked against a whole day of every symbol —

@@ -39,11 +39,12 @@ Decompression is **37%** of the run.
 
 ## The prediction
 
-| | |
-|---|---|
-| written before the run | book-only 60–120 s, end-to-end 80–140 s, 5–20x worse per message than the cache-hot benchmark |
-| measured | book-only **28.1 s**, end-to-end **44.6 s**, **4.6x** |
-| verdict | **kept** |
+> book-only 60–120 s, end-to-end 80–140 s, 5–20x worse per message than the cache-hot benchmark
+
+| configuration | book-only | end-to-end | vs cache-hot | inside the prediction |
+|---|---:|---:|---:|---|
+| as predicted against — 4.19M map slots, 46% load | 68.8 s | 85.3 s | 11.2x | **yes** |
+| as it stands — 8.39M map slots, 23% load | 28.1 s | 44.6 s | 4.6x | no |
 
 The single-symbol benchmark reports 22.8 ns per message. Across a whole day of every symbol it is **104 ns**.
 
@@ -124,15 +125,29 @@ now what it will be sold as.
 ### The cache-hot benchmark does not survive scale, and that is the phase
 
 `bench/` reports 22.8 ns per message on a one-symbol feed whose working set is a
-few megabytes. The same code over a whole day, with 8,906 books, a 67 MB
-reference map and 292 MB of bands, costs an order of magnitude more per message.
-Nothing about the algorithm changed. The working set did.
+few megabytes. The same code over a whole day — 8,906 books, a reference map and
+bands that together are most of half a gigabyte — costs several times that per
+message. Nothing about the algorithm changed. The working set did.
 
-That number was predicted before the run rather than explained after it, which is
-the only reason it is worth anything. The census had already priced the mechanism:
+That was predicted before the run rather than explained after it, which is the
+only reason it is worth anything. The census had already priced the mechanism:
 adding live-order tracking to a framing pass cost 49 s for ~285 M hash operations
 against a 67 MB table — about 172 ns each, memory-bound — and the book's reference
 map does the same shape of work.
+
+**And then the prediction stopped being true, because the system got faster.**
+The table above grades it twice on purpose. Against the configuration it was
+written for — the reference map pre-sized to twice the peak, which was the
+default at the time — every one of its three bounds held. Phase 9.9 then swept
+the load factor, found 2.42x sitting in it, and moved the default; the same code
+on the same file now runs *below* the range predicted for it.
+
+Both rows belong in this document. Deleting the first would hide that the
+prediction was right about the mechanism and the magnitude; deleting the second
+would leave a claim standing that the current build does not support. An earlier
+version of the script that generates this section printed the word "kept" as a
+literal beside whatever the latest numbers happened to be, and went on printing
+it after they moved outside the range. It computes the verdict now.
 
 ### The band is where the design actually failed
 
