@@ -58,10 +58,16 @@ SWEEPS = {
              [("shared", []),
               ("per-book/64", ["--per-book-pools", "--pool-first-chunk", "64"]),
               ("per-book/256", ["--per-book-pools", "--pool-first-chunk", "256"])]),
+    # Requested slots, NOT load factors. RefMap grows when (size+1)*2 exceeds
+    # its capacity, so any request below 2x the peak silently doubles itself
+    # mid-run and lands somewhere else entirely -- a "2M slots" variant against
+    # a 1.92M peak is a 4M-slot run with a rehash in it, and labelling it 92%
+    # load is a lie the harness told itself on its first outing. The achieved
+    # capacity is read back from the run and printed next to what was asked for.
     "load": ("reference map slots (peak live orders was 1,924,078)",
-             [("4M slots (46% load)", ["--refs-capacity", "4194304"]),
-              ("8M slots (23% load)", ["--refs-capacity", "8388608"]),
-              ("2M slots (92% load)", ["--refs-capacity", "2097152"])]),
+             [("ask 4M", ["--refs-capacity", "4194304"]),
+              ("ask 8M", ["--refs-capacity", "8388608"]),
+              ("ask 16M", ["--refs-capacity", "16777216"])]),
 }
 
 
@@ -125,9 +131,9 @@ def main():
                 print(f"  round {r + 1}  {name:<22} {res['elapsed_seconds']:7.2f} s  "
                       f"{res['peak_rss_bytes'] / 1e6:7.1f} MB")
 
-    print(f"\n{'variant':<22} {'seconds':>9} {'spread':>8} {'M msg/s':>9} "
-          f"{'peak MB':>9} {'vs first':>9}")
-    print("-" * 70)
+    print(f"\n{'variant':<16} {'slots':>12} {'load':>7} {'median s':>9} {'min':>8} "
+          f"{'max':>8} {'peak MB':>9} {'vs first':>9}")
+    print("-" * 86)
     rows_out = []
     base = None
     for name, _ in variants:
@@ -137,17 +143,37 @@ def main():
         peak = st.median(s["peak_rss_bytes"] for s in samples[name]) / 1e6
         if base is None:
             base = med
-        rate = facts[name]["messages_read"] / med / 1e6
-        print(f"{name:<22} {med:9.2f} {spread:7.1f}% {rate:9.2f} {peak:9.1f} "
-              f"{med / base:8.2f}x")
+        slots = facts[name].get("ref_map_slots") or 0
+        # 1,924,078 is the peak from the census, and the load factor that
+        # matters is the one at that peak against the capacity the run ACTUALLY
+        # ended with.
+        load = 1924078 / slots * 100 if slots else 0.0
+        print(f"{name:<16} {slots:>12,} {load:6.1f}% {med:9.2f} {min(secs):8.2f} "
+              f"{max(secs):8.2f} {peak:9.1f} {med / base:8.2f}x")
+        if max(secs) > 2 * med:
+            print(f"{'':16} ^ one sample is {max(secs) / med:.1f}x the median. Something else "
+                  "was running; the median survives it, the spread does not.")
         rows_out.append({"variant": name, "median_seconds": med, "spread_percent": spread,
                          "peak_rss_bytes": facts[name]["peak_rss_bytes"],
                          "pool_capacity_orders": facts[name].get("pool_capacity_orders"),
                          "pools": facts[name].get("pools"),
                          "ref_map_slots": facts[name].get("ref_map_slots"),
+                         "load_factor_at_peak": (1924078 / facts[name]["ref_map_slots"]
+                                                 if facts[name].get("ref_map_slots") else None),
                          "band_levels": facts[name].get("band_levels"),
                          "off_band_adds": facts[name].get("off_band_adds"),
                          "samples": secs})
+
+    # Two variants that ended at the same capacity did not test anything. Say
+    # so, rather than reporting the difference between them as a measurement.
+    by_slots = {}
+    for r in rows_out:
+        by_slots.setdefault(r["ref_map_slots"], []).append(r["variant"])
+    for slots, names in by_slots.items():
+        if slots and len(names) > 1:
+            print(f"\nNOTE: {' and '.join(names)} both ended at {slots:,} slots. "
+                  "The map grew to meet the peak, so those are the same configuration "
+                  "and the difference between them is a rehash, not a load factor.")
 
     worst = max(r["spread_percent"] for r in rows_out)
     best, slowest = min(r["median_seconds"] for r in rows_out), max(r["median_seconds"] for r in rows_out)
