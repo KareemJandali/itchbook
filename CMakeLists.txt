@@ -11,7 +11,16 @@ endif()
 
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+# ThreadSanitizer instead of ASan/UBSan, because they cannot share a binary.
+# Phase 10 is the first code here with two threads in it, and a lock-free
+# structure that has never been under a race detector is an assertion rather
+# than a result -- so this is a third CI job, not a flag nobody sets.
+option(ITCHBOOK_TSAN "Build with ThreadSanitizer instead of ASan/UBSan" OFF)
+
+if(ITCHBOOK_TSAN)
+  add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g -O1)
+  add_link_options(-fsanitize=thread)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
   # -fno-sanitize-recover is the flag that makes UBSan mean something. Without
   # it UBSan DIAGNOSES and CONTINUES: it prints "runtime error: signed integer
   # overflow" to stderr, the process exits 0, and CI goes green with undefined
@@ -21,6 +30,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
                       -fno-omit-frame-pointer -g)
   add_link_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined)
 endif()
+
+add_executable(spsc_stress tests/stress/spsc_stress.cpp)
+target_link_libraries(spsc_stress PRIVATE itchbook)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   add_compile_options(-O3)
@@ -32,11 +44,17 @@ endif()
 
 find_package(ZLIB REQUIRED)
 
+# Phase 10 is the first thing here with a thread in it. Threads::Threads rather
+# than -pthread by hand: the flag differs between platforms and toolchains, and
+# a race that only appears in one of them is not a race anyone wants to debug.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 # The library is header-only for now (Phase 1). This INTERFACE target carries
 # the public include path and the zlib dependency to everything that links it.
 add_library(itchbook INTERFACE)
 target_include_directories(itchbook INTERFACE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(itchbook INTERFACE ZLIB::ZLIB)
+target_link_libraries(itchbook INTERFACE ZLIB::ZLIB Threads::Threads)
 
 # ---- Tools (Phase 1 deliverables) ----
 add_executable(itch_dump   tools/itch_dump.cpp)
@@ -71,7 +89,7 @@ endforeach()
 
 # ---- Tests ----
 enable_testing()
-foreach(t test_parser test_book test_book_set test_live_orders test_matcher test_fees test_queue test_ledger
+foreach(t test_parser test_book test_book_set test_live_orders test_spsc_ring test_matcher test_fees test_queue test_ledger
           test_sim test_kill_switch test_mold test_recover test_restart)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)

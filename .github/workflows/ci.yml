@@ -34,6 +34,70 @@ jobs:
       - name: Unit tests (C++)
         run: ctest --test-dir build-gcc --output-on-failure
 
+  # A third job, because ThreadSanitizer and AddressSanitizer cannot share a
+  # binary. Phase 10 is the first code here with two threads in it, and a
+  # lock-free structure that has never been under a race detector is an
+  # assertion rather than a result: the ring's whole safety argument is one
+  # release/acquire pair, and x86-64's strong memory model would hide a missing
+  # release behind correct-looking output for as long as anyone cared to run it.
+  tsan-spsc-ring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build zlib1g-dev g++
+
+      # Before trusting a green TSan job, prove TSan is armed. A runner without
+      # the runtime, or a flag that silently did not apply, produces a job that
+      # passes because it detected nothing -- which looks identical to a job
+      # that passes because there was nothing to detect. This program has a
+      # deliberate race and the step FAILS if the sanitizer does not catch it.
+      - name: Prove the race detector detects races
+        run: |
+          cat > /tmp/race.cpp <<'CPP'
+          #include <thread>
+          int shared = 0;
+          int main() {
+            std::thread t([]{ for (int i = 0; i < 100000; ++i) shared++; });
+            for (int i = 0; i < 100000; ++i) shared++;
+            t.join();
+          }
+          CPP
+          g++ -std=c++20 -fsanitize=thread -fno-omit-frame-pointer -g -O1 -o /tmp/race /tmp/race.cpp
+          if /tmp/race 2>/tmp/race.err; then
+            echo "TSan did not flag a deliberate data race -- the detector is not armed."
+            cat /tmp/race.err
+            exit 1
+          fi
+          grep -q "WARNING: ThreadSanitizer: data race" /tmp/race.err
+          echo "TSan armed: a deliberate race is caught and the process exits non-zero."
+
+      - name: Configure (ThreadSanitizer)
+        env:
+          CC: gcc
+          CXX: g++
+        run: cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DITCHBOOK_TSAN=ON
+
+      - name: Build
+        run: cmake --build build-tsan --target test_spsc_ring spsc_stress
+
+      - name: Ring unit tests, race-detected
+        run: ./build-tsan/test_spsc_ring
+
+      # halt_on_error stops at the first race rather than reporting thousands of
+      # instances of one bug. The stress run randomises batch sizes and stalls
+      # both threads at random points, including between writing a slot and
+      # publishing it -- the exact window the release store closes.
+      #
+      # It also fails if the ring never reached full AND never reached empty: a
+      # run that stayed comfortably in the middle exercised no boundary and
+      # proves nothing, however many operations it did.
+      - name: Ring stress, race-detected
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ./build-tsan/spsc_stress --ops 20000000 --seed 3
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:
