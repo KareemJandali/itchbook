@@ -236,6 +236,57 @@ void test_clearing_one_book_leaves_its_neighbours_untouched() {
     CHECK(a.best_bid(&px));
     CHECK_EQ(px, 1000100);
     CHECK_EQ(store.pool.live(), 3u);
+    CHECK_EQ(a.locate_mismatch(), 0u);
+    CHECK_EQ(b.locate_mismatch(), 0u);
+}
+
+void test_a_reference_belonging_to_another_symbol_is_refused() {
+    // One reference map for every symbol means a lookup that goes wrong does
+    // not return nothing — it returns another symbol's order, and mutating it
+    // would be individually plausible in both books and wrong in aggregate.
+    //
+    // A real feed cannot produce this: ITCH references are unique across the
+    // whole day. That is exactly why it has to be constructed here. A check
+    // that only fires on a bug nobody can reach is a check nobody has seen
+    // work.
+    itchbook::book::Storage store;
+    itchbook::book::Book a(store, /*locate=*/1);
+    itchbook::book::Book b(store, /*locate=*/2);
+
+    a.add(10, 'B', 1000000, 100);
+    b.add(20, 'S', 2000000, 200);
+    CHECK_EQ(a.locate_mismatch(), 0u);
+    CHECK_EQ(b.locate_mismatch(), 0u);
+
+    // b is handed a's reference, five different ways.
+    b.remove(10);
+    b.execute(10, 50);
+    b.cancel(10, 10);
+    b.replace(10, 99, 1000100, 300);
+    b.take(10, 5);
+
+    CHECK_EQ(b.locate_mismatch(), 5u);
+    // Not "unknown". The reference exists; it is someone else's. Two different
+    // facts, and collapsing them would hide the one that means something.
+    CHECK_EQ(b.unknown_ref(), 0u);
+
+    // a is untouched: same order, same size, same count.
+    const itchbook::book::Order* a10 = a.find(10);
+    CHECK(a10 != nullptr);
+    if (a10 != nullptr) CHECK_EQ(a10->shares, 100u);
+    CHECK_EQ(a.resting_orders(), 1u);
+    CHECK_EQ(a.resting_shares(), 100u);
+
+    // b is untouched too, in both directions: no phantom trade on its tape,
+    // and the refused replace did not smuggle in a new order.
+    CHECK_EQ(b.resting_orders(), 1u);
+    CHECK_EQ(b.volume(), 0u);
+    CHECK(b.find(99) == nullptr);
+
+    // find() has to agree with the mutators, or apply_ex() would record a
+    // pre-mutation state for an order the mutation refused to touch.
+    CHECK(b.find(10) == nullptr);
+    CHECK_EQ(a.locate_mismatch(), 0u);
 }
 
 void test_shared_storage_keeps_two_books_apart_under_ordinary_flow() {
@@ -272,6 +323,10 @@ void test_shared_storage_keeps_two_books_apart_under_ordinary_flow() {
 
     CHECK_EQ(a.locate(), 1u);
     CHECK_EQ(b.locate(), 2u);
+    // Ordinary flow never trips the check. A cross-check that fires on correct
+    // input is worse than none: it gets muted.
+    CHECK_EQ(a.locate_mismatch(), 0u);
+    CHECK_EQ(b.locate_mismatch(), 0u);
 }
 
 void test_a_message_about_the_pre_gap_world_is_expected_not_an_error() {
@@ -342,6 +397,7 @@ int main() {
     test_clearing_a_book_keeps_the_tape_and_drops_the_orders();
     test_clearing_one_book_leaves_its_neighbours_untouched();
     test_shared_storage_keeps_two_books_apart_under_ordinary_flow();
+    test_a_reference_belonging_to_another_symbol_is_refused();
     test_one_straggler_does_not_block_recovery_forever();
     test_a_sustained_rate_of_stragglers_does_block_recovery();
     test_a_message_about_the_pre_gap_world_is_expected_not_an_error();
