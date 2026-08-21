@@ -169,7 +169,7 @@ Nothing here was typed off a terminal.
 | cancels that did not | 2,787,676 |
 | **references naming no live order** | **0** |
 
-The pass took **66.14 s** — 125 MB/s of feed, 4.06 M msg/s — and it was the `framing + live-order tracking` pass.
+The pass took **65.94 s** — 125 MB/s of feed, 4.08 M msg/s — and it was the `framing + live-order tracking` pass.
 
 **Stub quotes, and why a symbol's quoted range sizes nothing.**
 
@@ -185,9 +185,9 @@ The consequence is concrete: the range of prices a symbol *quoted* spans almost 
 | pass | seconds | MB/s | M msg/s |
 |---|---:|---:|---:|
 | `framing only` | **16.51** | 500 | 16.28 |
-| `framing + live-order tracking` | 66.14 | 125 | 4.06 |
+| `framing + live-order tracking` | 65.94 | 125 | 4.08 |
 
-No replay of this file can beat 16.51 s, and the difference between that and any end-to-end number is what the book costs. The second row prices the live-order table on its own: **49.6 s** for roughly 263 M hash operations against a table far larger than L2 — which is the same shape of work the book's reference map does, and the reason the multi-symbol throughput prediction in the build plan is what it is.
+No replay of this file can beat 16.51 s, and the difference between that and any end-to-end number is what the book costs. The second row prices the live-order table on its own: **49.4 s** for roughly 263 M hash operations against a table far larger than L2 — which is the same shape of work the book's reference map does, and the reason the multi-symbol throughput prediction in the build plan is what it is.
 <!-- census:end -->
 
 
