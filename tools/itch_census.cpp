@@ -221,34 +221,7 @@ struct Census {
     }
 };
 
-const char* type_name(char t) {
-    switch (t) {
-        case 'S': return "System Event";
-        case 'R': return "Stock Directory";
-        case 'H': return "Stock Trading Action";
-        case 'Y': return "Reg SHO Restriction";
-        case 'L': return "Market Participant Position";
-        case 'A': return "Add Order";
-        case 'F': return "Add Order w/ MPID";
-        case 'E': return "Order Executed";
-        case 'C': return "Order Executed w/ Price";
-        case 'X': return "Order Cancel";
-        case 'D': return "Order Delete";
-        case 'U': return "Order Replace";
-        case 'P': return "Trade (non-cross)";
-        case 'Q': return "Cross Trade";
-        case 'B': return "Broken Trade";
-        case 'I': return "NOII";
-        case 'h': return "Operational Halt";
-        case 'V': return "MWCB Decline Level";
-        case 'W': return "MWCB Status";
-        case 'K': return "IPO Quoting Period Update";
-        case 'J': return "LULD Auction Collar";
-        case 'N': return "Retail Price Improvement";
-        case 'O': return "Direct Listing w/ Capital Raise";
-        default:  return "";
-    }
-}
+using itchbook::itch::type_name;
 
 void print_price(std::FILE* f, const char* key, int32_t px) {
     if (px < 0) std::fprintf(f, "\"%s\":null", key);

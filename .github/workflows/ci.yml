@@ -80,7 +80,9 @@ jobs:
         run: cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DITCHBOOK_TSAN=ON
 
       - name: Build
-        run: cmake --build build-tsan --target test_spsc_ring spsc_stress
+        run: |
+          cmake --build build-tsan --target test_spsc_ring spsc_stress
+          cmake --build build-tsan --target wire_to_book mold_replay_udp mold_wrap
 
       - name: Ring unit tests, race-detected
         run: ./build-tsan/test_spsc_ring
@@ -97,6 +99,43 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1
         run: ./build-tsan/spsc_stress --ops 20000000 --seed 3
+
+      # The stress test drives the ring with two threads that do nothing else.
+      # This drives it the way the system actually does: a producer whose pace
+      # is set by a socket, a consumer that parses and mutates books between
+      # pops, and the publish/consume batching that only the real receiver
+      # performs. A missing release store would be invisible in both on x86 and
+      # is exactly what this job exists to catch, so the real consumer belongs
+      # under the detector and not only the synthetic one.
+      #
+      # The rate is low and the ring large on purpose: under TSan every memory
+      # access is instrumented, and the interesting property here is the
+      # handoff, not the throughput.
+      - name: The real pipeline under the race detector
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          python3 scripts/make-synthetic-feed.py /tmp/tsan-feed.gz --messages 100000
+          ./build-tsan/mold_wrap /tmp/tsan-feed.gz /tmp/tsan-feed.pkt.gz >/dev/null
+          ./build-tsan/wire_to_book --port 26701 --ring-log2 16 --timeout-ms 8000 \
+            --rcvbuf-mb 16 --expect-messages 200000 --json /tmp/tsan-wire.json \
+            > /tmp/tsan-wire.txt 2>&1 &
+          pid=$!
+          for _ in $(seq 1 100); do
+            if grep -qi ":684D " /proc/net/udp; then break; fi
+            sleep 0.1
+          done
+          ./build-tsan/mold_replay_udp /tmp/tsan-feed.pkt.gz --host 127.0.0.1 \
+            --port 26701 --rate 20000 --quiet
+          rc=0
+          wait $pid || rc=$?
+          cat /tmp/tsan-wire.txt
+          if grep -q "WARNING: ThreadSanitizer" /tmp/tsan-wire.txt; then
+            echo "FAIL: ThreadSanitizer flagged the pipeline"
+            exit 1
+          fi
+          test "$rc" = 0
+          echo "pipeline race-clean end to end"
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -241,6 +280,40 @@ jobs:
           print('offset tool reports:', d['timestamp_source'],
                 '| resolvable' if d['resolvable'] else '| bounded at %.0f ns' % d['resolution_ns'])
           "
+
+      # Phase 10.4/10.5: the first latency in this repository that crosses a
+      # thread boundary, and therefore the first that can lose a message. Two
+      # runs. The first must deliver every message with zero drops at three
+      # layers -- kernel, ring, and mid-block -- and the second must lose
+      # thousands on purpose and account for every one of them.
+      #
+      # The second run is the one worth having. A receiver that counted nothing
+      # would sail through the first. What is under test is not "nothing was
+      # lost" but "nothing was lost without being counted", and that is only
+      # testable by overloading the thing until it drops packets.
+      #
+      # No timing is asserted. A shared runner cannot support a latency claim
+      # and the tool says so itself; the numbers come from a pinned host.
+      - name: Wire-to-book pipeline loses nothing, and notices when it does
+        env:
+          CLEAN_RATE: 40000
+        run: ./scripts/wire-to-book-check.sh build
+
+      # ...and the gate must be able to fail. Told to expect a clean run from a
+      # configuration that cannot deliver one, it has to report the loss rather
+      # than accept it.
+      - name: Wire-to-book gate self-test (it must reject a lossy run)
+        run: |
+          sed 's/CLEAN_RING:-16/CLEAN_RING:-10/; s/CLEAN_RATE:-60000/CLEAN_RATE:-3000000/' \
+            scripts/wire-to-book-check.sh > /tmp/neg.sh
+          chmod +x /tmp/neg.sh
+          if PORT_OK=26601 PORT_LOSSY=26602 /tmp/neg.sh build > /tmp/neg.txt 2>&1; then
+            cat /tmp/neg.txt
+            echo "FAIL: the gate passed a run that dropped thousands of packets"
+            exit 1
+          fi
+          grep -q "FAIL: exit 3, expected 0" /tmp/neg.txt
+          echo "gate correctly rejected a lossy run"
 
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh
