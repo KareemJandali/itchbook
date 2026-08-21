@@ -480,6 +480,11 @@ python3 python/analysis/fill_comparison.py out.json
 
 # packet damage, graded
 python3 python/analysis/adversarial.py data/raw/day.gz --build build
+
+# everything above on a real day, in one pass, then fold the numbers back
+# into the docs rather than retyping them
+./scripts/real-data-run.sh <day>.NASDAQ_ITCH50.gz MSFT 200
+python3 scripts/update-real-numbers.py --out out/real --symbol MSFT
 ```
 
 For a release build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`, plus

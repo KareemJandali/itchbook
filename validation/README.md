@@ -91,10 +91,33 @@ and is checkable in a minute: the **official opening and closing prices**. Both
 are auctions, both arrive in the feed as `Q` cross trades, and for a
 NASDAQ-listed stock the official closing price *is* the closing cross.
 
+Two minutes, start to finish:
+
+1. Open `www.nasdaq.com/market-activity/stocks/msft/historical`. Set a custom
+   date range covering **30 December 2019** — the picker goes back ten years,
+   unlike NasdaqTrader's, which is why this route works where the volume one
+   does not. Or hit *Download historical data* for the CSV.
+2. Read `Open` and `Close/Last` off that row.
+3. Run:
+
 ```bash
 python3 python/analysis/check_cross.py validation/MSFT_2019-12-30.json \
-    --official-close <close> --official-open <open>
+    --official-open <open> --official-close <close> \
+    --source "nasdaq.com historical quotes, MSFT 2019-12-30"
 ```
+
+Read those two numbers off the page yourself. Do not take them from a chat
+transcript, a model, or this file — the whole value of the check is that the
+figure came from somewhere that is not this project, and supplying it from
+memory and then agreeing with it is not validation, it is a tautology with
+extra steps.
+
+Expect the **close** to be the strong signal. For a NASDAQ-listed security the
+official closing price *is* the closing cross, so a match verifies the `C`
+reconstruction outright. The **open** is weaker: some sources publish the
+opening cross and others the first consolidated print of the day, which are
+different numbers. If the close matches and the open does not, find out which
+definition that page uses before concluding the reconstruction is wrong.
 
 This is a real test rather than a formality. Cross handling is the part of an
 ITCH book most likely to be quietly wrong — it is rare, it is a separate
