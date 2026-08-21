@@ -193,6 +193,20 @@ jobs:
       - name: Scaling guard (the backtester must stay linear in feed length)
         run: python3 python/analysis/scaling_check.py --build build
 
+      # The latency histogram is a build-plan deliverable and had no coverage
+      # at all, so the whole path — bench -> bucket CSV -> SVG — could rot
+      # without anything noticing until someone tried to regenerate the figure.
+      # This asserts nothing about the timings, which mean nothing on a shared
+      # runner; it asserts the pipeline still runs and produces a chart.
+      - name: Latency histogram renders end to end
+        run: |
+          python3 python/make_bench_feed.py data/raw/hist.gz --messages 50000
+          ./build/book_bench data/raw/hist.gz --histogram /tmp/latency.csv
+          python3 python/analysis/latency_histogram.py /tmp/latency.csv \
+            --svg /tmp/latency.svg
+          test -s /tmp/latency.svg
+          grep -q '</svg>' /tmp/latency.svg
+
       # The phase 7 done-condition. Twelve scenarios of packet damage, each
       # graded CORRECT / SAFE / CAUTIOUS / WRONG. Any WRONG — the book diverged
       # while the system called itself trusted — fails the build. The feed here

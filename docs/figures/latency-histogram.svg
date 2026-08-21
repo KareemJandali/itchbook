@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" width="720" height="440" role="img" aria-label="Per-message book latency, 1M-message benchmark feed">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="720" height="440"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Per-message book latency, 1M-message benchmark feed</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">1,000,005 messages, 10-1,482,910 cycles, 57 occupied buckets</text>
+<line class="grid" x1="79" y1="378.0" x2="690" y2="378.0"/>
+<text class="muted" x="71" y="382.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1</text>
+<line class="grid" x1="79" y1="333.7" x2="690" y2="333.7"/>
+<text class="muted" x="71" y="337.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10</text>
+<line class="grid" x1="79" y1="289.3" x2="690" y2="289.3"/>
+<text class="muted" x="71" y="293.3" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100</text>
+<line class="grid" x1="79" y1="245.0" x2="690" y2="245.0"/>
+<text class="muted" x="71" y="249.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1,000</text>
+<line class="grid" x1="79" y1="200.7" x2="690" y2="200.7"/>
+<text class="muted" x="71" y="204.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10,000</text>
+<line class="grid" x1="79" y1="156.3" x2="690" y2="156.3"/>
+<text class="muted" x="71" y="160.3" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100,000</text>
+<line class="grid" x1="79" y1="112.0" x2="690" y2="112.0"/>
+<text class="muted" x="71" y="116.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1,000,000</text>
+<line class="grid" x1="79.0" y1="112" x2="79.0" y2="378"/>
+<text class="muted" x="79.0" y="396" text-anchor="start" font-family="ui-monospace,monospace" font-size="10.5">10</text>
+<line class="grid" x1="180.8" y1="112" x2="180.8" y2="378"/>
+<text class="muted" x="180.8" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100</text>
+<line class="grid" x1="282.7" y1="112" x2="282.7" y2="378"/>
+<text class="muted" x="282.7" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1,000</text>
+<line class="grid" x1="384.5" y1="112" x2="384.5" y2="378"/>
+<text class="muted" x="384.5" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10,000</text>
+<line class="grid" x1="486.3" y1="112" x2="486.3" y2="378"/>
+<text class="muted" x="486.3" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100,000</text>
+<line class="grid" x1="588.2" y1="112" x2="588.2" y2="378"/>
+<text class="muted" x="588.2" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1,000,000</text>
+<line class="grid" x1="690.0" y1="112" x2="690.0" y2="378"/>
+<text class="muted" x="690.0" y="396" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10,000,000</text>
+<rect class="s1" x="80.0" y="376.8" width="2.2" height="1.2" rx="2"/>
+<rect class="s1" x="84.2" y="258.5" width="5.4" height="119.5" rx="2"/>
+<rect class="s1" x="91.6" y="233.7" width="7.2" height="144.3" rx="2"/>
+<rect class="s1" x="100.8" y="248.8" width="5.6" height="129.2" rx="2"/>
+<rect class="s1" x="108.4" y="290.5" width="6.4" height="87.5" rx="2"/>
+<rect class="s1" x="116.8" y="303.5" width="5.1" height="74.5" rx="2"/>
+<rect class="s1" x="123.9" y="297.0" width="5.5" height="81.0" rx="2"/>
+<rect class="s1" x="131.4" y="257.1" width="5.6" height="120.9" rx="2"/>
+<rect class="s1" x="139.0" y="242.4" width="5.5" height="135.6" rx="2"/>
+<rect class="s1" x="146.5" y="216.6" width="6.1" height="161.4" rx="2"/>
+<rect class="s1" x="154.6" y="188.3" width="5.5" height="189.7" rx="2"/>
+<rect class="s1" x="162.1" y="147.4" width="5.6" height="230.6" rx="2"/>
+<rect class="s1" x="169.7" y="138.0" width="6.0" height="240.0" rx="2"/>
+<rect class="s1" x="177.7" y="152.8" width="5.6" height="225.2" rx="2"/>
+<rect class="s1" x="185.2" y="153.3" width="5.5" height="224.7" rx="2"/>
+<rect class="s1" x="192.8" y="160.5" width="5.6" height="217.5" rx="2"/>
+<rect class="s1" x="200.4" y="163.6" width="5.7" height="214.4" rx="2"/>
+<rect class="s1" x="208.1" y="172.6" width="5.6" height="205.4" rx="2"/>
+<rect class="s1" x="215.7" y="182.5" width="5.7" height="195.5" rx="2"/>
+<rect class="s1" x="223.4" y="187.1" width="5.6" height="190.9" rx="2"/>
+<rect class="s1" x="231.0" y="188.7" width="5.7" height="189.3" rx="2"/>
+<rect class="s1" x="238.7" y="192.6" width="5.7" height="185.4" rx="2"/>
+<rect class="s1" x="246.4" y="186.5" width="5.6" height="191.5" rx="2"/>
+<rect class="s1" x="254.1" y="201.1" width="5.7" height="176.9" rx="2"/>
+<rect class="s1" x="261.7" y="214.5" width="5.6" height="163.5" rx="2"/>
+<rect class="s1" x="269.4" y="223.3" width="5.7" height="154.7" rx="2"/>
+<rect class="s1" x="277.0" y="229.1" width="5.7" height="148.9" rx="2"/>
+<rect class="s1" x="284.7" y="237.7" width="5.7" height="140.3" rx="2"/>
+<rect class="s1" x="292.4" y="247.9" width="5.6" height="130.1" rx="2"/>
+<rect class="s1" x="300.0" y="265.8" width="5.7" height="112.2" rx="2"/>
+<rect class="s1" x="307.7" y="283.1" width="5.7" height="94.9" rx="2"/>
+<rect class="s1" x="315.4" y="274.2" width="5.7" height="103.8" rx="2"/>
+<rect class="s1" x="323.0" y="304.7" width="5.7" height="73.3" rx="2"/>
+<rect class="s1" x="330.7" y="331.8" width="5.7" height="46.2" rx="2"/>
+<rect class="s1" x="338.4" y="338.0" width="5.7" height="40.0" rx="2"/>
+<rect class="s1" x="346.0" y="364.7" width="5.7" height="13.3" rx="2"/>
+<rect class="s1" x="361.4" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="369.0" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="376.7" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="384.3" y="343.5" width="5.7" height="34.5" rx="2"/>
+<rect class="s1" x="392.0" y="351.3" width="5.7" height="26.7" rx="2"/>
+<rect class="s1" x="399.7" y="308.0" width="5.7" height="70.0" rx="2"/>
+<rect class="s1" x="407.3" y="323.5" width="5.7" height="54.5" rx="2"/>
+<rect class="s1" x="415.0" y="338.0" width="5.7" height="40.0" rx="2"/>
+<rect class="s1" x="422.7" y="364.7" width="5.7" height="13.3" rx="2"/>
+<rect class="s1" x="438.0" y="347.0" width="5.7" height="31.0" rx="2"/>
+<rect class="s1" x="445.7" y="364.7" width="5.7" height="13.3" rx="2"/>
+<rect class="s1" x="453.3" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="461.0" y="323.5" width="5.7" height="54.5" rx="2"/>
+<rect class="s1" x="468.6" y="308.5" width="5.7" height="69.5" rx="2"/>
+<rect class="s1" x="476.3" y="321.3" width="5.7" height="56.7" rx="2"/>
+<rect class="s1" x="484.0" y="340.5" width="5.7" height="37.5" rx="2"/>
+<rect class="s1" x="491.6" y="364.7" width="5.7" height="13.3" rx="2"/>
+<rect class="s1" x="499.3" y="347.0" width="5.7" height="31.0" rx="2"/>
+<rect class="s1" x="522.3" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="568.3" y="376.8" width="5.7" height="1.2" rx="2"/>
+<rect class="s1" x="598.9" y="376.8" width="5.7" height="1.2" rx="2"/>
+<line class="axis" x1="79" y1="378" x2="690" y2="378"/>
+<line class="axis" x1="176.7" y1="106" x2="176.7" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="176.7" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p50 91</text>
+<line class="axis" x1="260.7" y1="106" x2="260.7" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="260.7" y="82" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99 609</text>
+<line class="axis" x1="291.4" y1="106" x2="291.4" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="291.4" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99.9 1,218</text>
+<text class="muted" x="384" y="414" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">cycles per message — log scale</text>
+<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">messages — log</text>
+</svg>

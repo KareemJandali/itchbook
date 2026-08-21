@@ -112,6 +112,7 @@ struct Result {
 int main(int argc, char** argv) {
     const char* path = nullptr;
     const char* json_path = nullptr;
+    const char* hist_path = nullptr;
     int32_t tick = 100;
     int repeat = 3;
     int refs_bits = 20;   // ref map slots = 1 << refs_bits
@@ -120,6 +121,8 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         if (a == "--json" && i + 1 < argc) {
             json_path = argv[++i];
+        } else if (a == "--histogram" && i + 1 < argc) {
+            hist_path = argv[++i];
         } else if (a == "--tick" && i + 1 < argc) {
             tick = static_cast<int32_t>(std::atol(argv[++i]));
         } else if (a == "--repeat" && i + 1 < argc) {
@@ -134,7 +137,9 @@ int main(int argc, char** argv) {
         }
     }
     if (path == nullptr) {
-        std::fprintf(stderr, "usage: %s <feed.gz> [--json out.json] [--tick N] [--repeat N]\n",
+        std::fprintf(stderr,
+                     "usage: %s <feed.gz> [--json out.json] [--histogram out.csv]\n"
+                     "           [--tick N] [--repeat N] [--refs-bits N]\n",
                      argv[0]);
         return 2;
     }
@@ -201,6 +206,11 @@ int main(int argc, char** argv) {
 
     r.overall.finalize();
     for (auto& h : r.per_type) h.finalize();
+
+    if (hist_path != nullptr && !r.overall.write_buckets_csv(hist_path)) {
+        std::fprintf(stderr, "error: cannot write %s\n", hist_path);
+        return 1;
+    }
 
     // ---- report ----
     std::printf("calibration    %.4f cycles/ns    harness overhead %u cycles (subtracted)\n\n",

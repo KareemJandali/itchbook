@@ -78,6 +78,30 @@ uninstrumented replay, so it is the honest end-to-end number.
 **1.65× faster on this machine, 1.73× on the PMU machine** (142.31 → 82.04
 cycles/msg, 25.3M → 43.9M messages/second), and the worst message improves 97×.
 
+### The distribution behind the percentiles
+
+![Per-message book latency](docs/figures/latency-histogram.svg)
+
+```bash
+./build/book_bench data/raw/bench.gz --histogram out/latency.csv
+python3 python/analysis/latency_histogram.py out/latency.csv \
+    --svg docs/figures/latency-histogram.svg
+```
+
+Five numbers cannot show a shape. The table above is identical between a
+distribution with one tight mode and a few stragglers and one with three
+separate modes — and the second is a mechanism you can go and find. This feed
+has three: the steady state just under 100 cycles, a second population three
+orders of magnitude out where a level allocates, and the descheduling tail past
+100k. Both axes are logarithmic and labelled as such; a linear one is a single
+bar against the origin and six screens of white space.
+
+The markers are the same percentiles as the table, drawn at bucket resolution,
+so the picture and the numbers are visibly one measurement. **This figure was
+produced on a third machine** — the container this repository's checks run in —
+so its absolute cycles sit above both columns above. The shape is the part that
+transfers; regenerate it with the two commands above to get your own.
+
 ### The counter behind it
 
 Weighted by share, the per-type p50s come to ~62 cycles/msg. Throughput said
