@@ -39,6 +39,18 @@ came out flat. The one that mattered was not on the list.
 1,000,000 messages, mix taken from the validated MSFT 2019-12-30 day (47% `A`,
 45% `D`, 4.5% `U`, 2.9% `E`). Intel Xeon @ 2.10GHz, invariant TSC, `-O3`.
 
+**Which artifact backs which number.** The table below is `compare.py`'s output:
+the **median of nine interleaved, pinned rounds**, for the reason the section
+above gives — a single run on this machine varies by 19% unpinned and ~2%
+pinned, so one measurement is not a number. `baseline.json` and `after.json`
+beside this file are something else: single `book_bench --json` runs, kept
+because they carry the full per-message-type breakdown that the summary table
+does not. They will not equal the table, and should not — a single sample and a
+median of nine are different statistics of the same thing. Where they differ
+most is the tail, which is exactly where a single run is least trustworthy:
+`baseline.json` records a worst message of 51,348,830 cycles against the
+table's median-of-nine 53,508,092.
+
 Per-message figures come from an `rdtsc` pair around each handler; the harness
 measures its own overhead (~40 cycles, comparable to the work itself) and
 subtracts it. Throughput comes from a separate, completely uninstrumented

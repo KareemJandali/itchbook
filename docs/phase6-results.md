@@ -34,7 +34,7 @@ position limit, at 250 µs one-way latency.
 
 **It loses money in every model.** That is the phase's stated done-condition —
 "run a strategy you know is unprofitable and confirm it loses money" — met on a
-real day rather than by construction. Naive still flatters: it reports $401.35
+real day rather than by construction. Naive still flatters: it reports $401.34
 more than pessimistic. But the size of that flattery is nothing like the
 synthetic feed's, and the *shape* of the result is different in a way worth
 being explicit about.
@@ -162,7 +162,11 @@ climbs further. For a strategy that loses money, filling more is losing more —
 the rising share count and the worsening per-share number are the same fact
 twice.
 
+![P&L vs latency, MSFT](figures/MSFT-latency-pnl.svg)
 ![Fill volume vs latency, MSFT](figures/MSFT-latency-shares.svg)
+
+Both panels, for the reason the table gives: the per-share number worsens while
+the share count climbs, and either panel alone shows half of that.
 
 This is not an argument for slow infrastructure. It is an argument that
 `TouchMaker` requotes too eagerly, and it is only visible because the queue

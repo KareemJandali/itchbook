@@ -104,7 +104,10 @@ run). That is the shape of the claim: a tail event removed, not a hot path sped
 up. Both runs' full summaries are committed next to the figure as
 [`latency-before.json`](docs/figures/latency-before.json) and
 [`latency-after.json`](docs/figures/latency-after.json), so every number in this
-paragraph is checkable without rerunning anything.
+paragraph is checkable without rerunning anything, along with the bucket
+counts each chart is drawn from
+([`latency-histogram.csv`](docs/figures/latency-histogram.csv) and
+[`latency-histogram-before.csv`](docs/figures/latency-histogram-before.csv)).
 
 The same tool draws one run on its own:
 
@@ -207,7 +210,7 @@ optimistic       12261   814,786    -3065.75     -0.3763      0.0841
 mbo               9892   709,308    -3425.35     -0.4829     -0.1102
 pessimistic       8548   655,232    -3154.44     -0.4814     -0.2179
 
-naive reports $401.35 MORE than pessimistic
+naive reports $401.34 MORE than pessimistic
 ```
 
 ![Total P&L by fill model, MSFT](docs/figures/MSFT-fills-total.svg)
