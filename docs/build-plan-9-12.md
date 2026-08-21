@@ -359,13 +359,31 @@ verbatim: pin, interleave, ≥5% or it is not a result.
 
 - **Shared pool vs per-book pools.** Prediction: shared *wins*, because
   allocation order tracks arrival order — orders that arrive together sit
-  together, and a line pulled in for one message is warm for the next. The
-  per-book variant is only runnable with a tiny first chunk (4,096 orders ×
-  9,000 books is 1.4 GB of mostly-empty slab), and that shrinkage is part of
-  what is being measured. Report it that way.
+  together, and a line pulled in for one message is warm for the next.
+
+  Built: `--per-book-pools`, `--pool-first-chunk`, `--pool-max-chunk`. The
+  per-book variant is only runnable with a shrunken first chunk — 4,096 orders ×
+  8,906 books is 1.4 GB of mostly-empty slab — and that shrinkage is part of
+  what is being measured, so it is reported alongside rather than tuned away.
+  The waste is intrinsic to the *chunk*, not to the arrangement: below a
+  symbol's order count, per-book is the tighter of the two, because a shared
+  pool's doubling overshoots. Both directions are asserted in
+  `tests/test_book_set.cpp` so the timing is read against a cost model that is
+  understood rather than assumed.
 - **Ref map load factor.** Prediction: flat between 25% and 50%, because the
   probe is one cache line either way and the table is far past L2 in both cases.
   A flat result is a result and gets reported, not deleted.
+
+- **The band width, which 9.8 graded without sweeping.** Not a prediction, an
+  open question: the off-band fraction and the wall clock against N, one
+  full-day run per point.
+
+All three run through `bench/full-day-sweep.py`, which applies phase 4's rules
+to a run that takes a minute and a half rather than a second — interleaved,
+medians, pinned where the platform has `taskset` (macOS does not, and it says
+so), and refusing any difference that falls inside the within-variant spread. It
+reports no timing at all until every variant has reconstructed a byte-identical
+book: a knob that changes the day is not a knob.
 
 ### 9.10 — The framing path
 
