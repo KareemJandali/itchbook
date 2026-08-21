@@ -121,6 +121,34 @@ def trading_action(ns, state, reason="", symbol=SYMBOL):  # 'H', 25
             reason.encode().ljust(4)[:4])
 
 
+# ---- the three that do not touch a book, and had no generator -----------------
+#
+# From the repository's own census note: "Nothing in this repository generates
+# those types, so CI cannot reach them." These three are the ones that matter —
+# two decide whether a symbol may trade and the third decides whether a day's
+# volume is final — so they get builders, and fuzz_feed.py emits them.
+#
+# What that does and does not prove, stated plainly because it is easy to
+# overclaim: building a message from the same length constant that parses it
+# says NOTHING about whether the constant matches NASDAQ's wire. It exercises
+# the handling path — the routing, the counters, the tradability derivation —
+# which had no coverage at all and could rot silently between here and the day
+# someone runs a file that contains one. The constants themselves stay
+# unconfirmed until a real message meets them.
+
+
+def operational_halt(ns, action, market=b"Q", symbol=SYMBOL):  # 'h', 21
+    return header(b"h", ns) + stock(symbol) + market + action
+
+
+def mwcb_status(ns, level):  # 'W', 12
+    return header(b"W", ns) + level
+
+
+def broken_trade(ns, match):  # 'B', 19
+    return header(b"B", ns) + struct.pack(">Q", match)
+
+
 def build() -> bytes:
     out = bytearray()
     t = T0

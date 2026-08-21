@@ -21,6 +21,10 @@ What it aims at, and why each one matters to the C++ implementation:
   * executions larger than the resting size  -> unsigned underflow in C++
   * messages naming refs that never existed  -> the unknown-ref path
   * a second symbol on another stock locate  -> the symbol filter
+  * 'h', 'W' and 'B'                          -> the three tradability messages
+                                                nothing else in this repository
+                                                emits, so nothing else covers
+                                                their handling
 
 Everything emitted is a structurally valid ITCH message with a correct length
 prefix; this fuzzes the book, not the framing. Given the same seed it produces
@@ -191,6 +195,25 @@ def build(seed, n_messages):
                                  rng.choice([b"O", b"C", b"H", b"I"])))
             match += 1
         emitted += 1
+
+    # The three that touch no book. Emitted near the end so the run's ordinary
+    # flow is not spent halted, and emitted at all because until now nothing in
+    # this repository produced them: their handling path — routing, counters,
+    # the tradability derivation — had no coverage of any kind.
+    #
+    # This does not confirm their length constants. Generating a message from
+    # the same number that parses it is circular, and the header in messages.hpp
+    # still marks all three UNCONFIRMED. What it covers is everything after the
+    # parse.
+    t += rng.randint(1, 1000)
+    emit(gen.operational_halt(t, b"H"))          # venue-level halt...
+    t += rng.randint(1, 1000)
+    emit(gen.broken_trade(t, match))             # ...a print busted while halted
+    match += 1
+    t += rng.randint(1, 1000)
+    emit(gen.mwcb_status(t, b"1"))               # ...and a market-wide breach
+    t += rng.randint(1, 1000)
+    emit(gen.operational_halt(t, b"T"))          # resumed
 
     emit(gen.trading_action(t, b"T"))
     emit(gen.system_event(t, b"M"))
