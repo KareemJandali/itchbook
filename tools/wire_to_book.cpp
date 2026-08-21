@@ -63,6 +63,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -84,6 +85,8 @@
 #include "itchbook/mold/packet.hpp"
 #include "itchbook/mold/sequencer.hpp"
 #include "itchbook/pipe/spsc_ring.hpp"
+#include "itchbook/recover/gap_policy.hpp"
+#include "itchbook/risk/kill_switch.hpp"
 
 using namespace itchbook;
 
@@ -98,10 +101,35 @@ namespace {
 // breaks the build instead of the run.
 constexpr size_t kMaxMessage = 54;
 
+// A GAP TRAVELS THROUGH THE RING LIKE A MESSAGE, and it has to.
+//
+// The sequencer runs on the receiver thread and the book runs on the consumer,
+// so a gap is DETECTED on one side and ACTED ON on the other. Handing it over
+// out of band -- an atomic counter, a flag the consumer polls -- would arrive
+// at the wrong point in the stream: rebuild-forward means discarding the book
+// at exactly the message the gap precedes, and a flag that overtakes the
+// messages still in flight discards the wrong ones. So a gap occupies a slot,
+// in order, and the consumer sees it exactly where it happened.
+//
+// len == 0 is the marker; a real message is never zero-length, because the
+// sequencer only delivers a message when msg_len > 0.
+constexpr uint16_t kGapMarker = 0;
+
 struct Slot {
     uint64_t arrival = 0;
     uint16_t len = 0;
     uint8_t bytes[kMaxMessage] = {};
+
+    bool is_gap() const { return len == kGapMarker; }
+    uint64_t gap_count() const {
+        uint64_t n = 0;
+        std::memcpy(&n, bytes, sizeof(n));
+        return n;
+    }
+    void set_gap(uint64_t count) {
+        len = kGapMarker;
+        std::memcpy(bytes, &count, sizeof(count));
+    }
 };
 static_assert(sizeof(Slot) == 64, "the slot is a cache line; keep it one");
 
@@ -166,6 +194,16 @@ struct Options {
     // loop, so a run with it on reports timings that describe the recording.
     const char* applied_out = nullptr;
     int32_t tick = 100;
+    // Phase 7's machinery, on phase 10's pipeline. Rebuild-forward on a gap,
+    // and a convergence window before the book is called trusted again.
+    uint64_t recover_after = 20000;
+    // Phase 10's new kill-switch input. Zero disables, like every other limit.
+    uint64_t kill_ring_occupancy = 0;
+    uint64_t kill_backlog_ms = 100;
+    // The consumer-slow scenario's knob: burn this many nanoseconds per
+    // message in the book thread, so the ring fills and the receiver is forced
+    // to drop packets. Backpressure on demand.
+    uint64_t slow_consumer_ns = 0;
     int cpu_recv = -1;
     int cpu_book = -1;
     bool quiet = false;
@@ -225,7 +263,12 @@ struct SharedState {
     std::atomic<bool> done{false};
     std::atomic<uint64_t> packets{0};
     std::atomic<uint64_t> ring_full_drops{0};     // packets refused for want of room
-    std::atomic<uint64_t> pushed{0};              // messages into the ring
+    // SLOTS published, which since 10.9 is messages PLUS gap markers. Every
+    // reader of this wants one or the other and never their sum, so the
+    // reporting below separates them rather than leaving each caller to
+    // remember -- the scripts that did not remember failed the accounting
+    // identity by exactly the gap count, which is how this was found.
+    std::atomic<uint64_t> pushed{0};
     std::atomic<uint64_t> recv_errors{0};
     std::atomic<uint64_t> max_occupancy{0};
 };
@@ -246,6 +289,7 @@ struct ToRing {
     // overrun of slots the consumer has not finished with.
     size_t budget = 0;
     uint64_t overflow = 0;
+    uint64_t gap_overflow = 0;
     uint64_t oversize = 0;
     uint64_t gaps = 0;
     uint64_t lost = 0;
@@ -259,9 +303,19 @@ struct ToRing {
         std::memcpy(s.bytes, payload, len);
         ++staged;
     }
+    // Staged like a message, so the consumer discards the book at the point
+    // in the stream where the loss actually happened. A gap that cannot be
+    // staged is worse than one that is: the consumer would apply the messages
+    // after it as though nothing were missing, which is the silent wrongness
+    // phase 7 is named after. So it is counted separately and reported.
     void on_gap(uint64_t, uint64_t count) {
         ++gaps;
         lost += count;
+        if (staged >= budget) { ++gap_overflow; return; }
+        Slot& s = sh->ring.write_slot(staged);
+        s.arrival = arrival;
+        s.set_gap(count);
+        ++staged;
     }
 };
 
@@ -290,6 +344,14 @@ int main(int argc, char** argv) {
         else if (a == "--expect-messages")
             opt.expect_messages = std::strtoull(next("--expect-messages"), nullptr, 10);
         else if (a == "--per-symbol") opt.per_symbol = next("--per-symbol");
+        else if (a == "--recover-after")
+            opt.recover_after = std::strtoull(next("--recover-after"), nullptr, 10);
+        else if (a == "--kill-ring-occupancy")
+            opt.kill_ring_occupancy = std::strtoull(next("--kill-ring-occupancy"), nullptr, 10);
+        else if (a == "--kill-backlog-ms")
+            opt.kill_backlog_ms = std::strtoull(next("--kill-backlog-ms"), nullptr, 10);
+        else if (a == "--slow-consumer-ns")
+            opt.slow_consumer_ns = std::strtoull(next("--slow-consumer-ns"), nullptr, 10);
         else if (a == "--applied-out") opt.applied_out = next("--applied-out");
         else if (a == "--tick") opt.tick = std::atoi(next("--tick"));
         else if (a == "--json") opt.json = next("--json");
@@ -302,6 +364,8 @@ int main(int argc, char** argv) {
                 "usage: %s [--port N] [--rcvbuf-mb N] [--timeout-ms N] [--band-levels N]\n"
                 "       [--ring-log2 10|12|14|16|18] [--expect-messages N]\n"
                 "       [--per-symbol out.csv] [--applied-out out.gz] [--tick N]\n"
+                "       [--recover-after N] [--slow-consumer-ns N]\n"
+                "       [--kill-ring-occupancy N] [--kill-backlog-ms N]\n"
                 "       [--refs-capacity N] [--json out.json] [--hist-csv out.csv]\n"
                 "       [--cpu-recv N] [--cpu-book N] [--quiet]\n", argv[0]);
             return 2;
@@ -376,6 +440,7 @@ int run(const Options& opt) {
     bool book_pinned = false;
     uint64_t oversize = 0;
     uint64_t stage_overflow = 0;
+    uint64_t gap_overflow_out = 0;
     uint64_t malformed = 0;
     // Sequence bookkeeping, kept by the RECEIVER rather than the sequencer,
     // because the sequencer only ever sees the packets that were not dropped.
@@ -542,6 +607,7 @@ int run(const Options& opt) {
         seq_stats = seq.stats();
         oversize = sink.oversize;
         stage_overflow = sink.overflow;
+        gap_overflow_out = sink.gap_overflow;
         shared.done.store(true, std::memory_order_release);
     });
 
@@ -551,6 +617,11 @@ int run(const Options& opt) {
     // the output (off_band_adds, recentres). A tick or a band width that
     // differed would make them disagree for a reason that has nothing to do
     // with the pipeline.
+    // Calibrated before the threads start: the throttle converts nanoseconds
+    // to cycles, and calibrating inside the measured loop would be both slow
+    // and wrong.
+    const double cyc_per_ns_for_throttle = bench::calibrate_cycles_per_ns();
+
     book::BookSet books(opt.refs_capacity, opt.tick, 20, opt.band_levels);
     // The samples, as (cycles, type) pairs in two reserved vectors.
     //
@@ -574,6 +645,16 @@ int run(const Options& opt) {
     uint64_t applied = 0;
     uint64_t consumed = 0;
 
+    recover::GapConfig gcfg;
+    gcfg.recovery_window = opt.recover_after;
+    recover::GapTracker gap(gcfg);
+    risk::KillSwitchConfig kcfg;
+    kcfg.max_ring_occupancy = opt.kill_ring_occupancy;
+    kcfg.backlog_sustained_ns = opt.kill_backlog_ms * 1000000ULL;
+    risk::KillSwitch kill(kcfg);
+    uint64_t gaps_seen = 0;
+    uint64_t messages_lost = 0;
+
     std::thread bookthread([&] {
         book_pinned = pin_to(opt.cpu_book);
         for (;;) {
@@ -584,10 +665,64 @@ int run(const Options& opt) {
                 }
                 continue;
             }
+            // The kill switch sees the queue from the side that drains it,
+            // once per batch rather than once per message: the limit is about a
+            // backlog that persists over milliseconds, and sampling it a
+            // million times a second measures the sampler.
+            //
+            // NANOSECONDS, from a clock that is in nanoseconds. The first
+            // version passed bench::cycles_end() here, which is a TSC reading
+            // -- so "sustained for 100 ms" was silently compared against a
+            // cycle count and meant whatever the core's frequency happened to
+            // make it. A risk control is the last place to infer a unit. This
+            // is a monotonic clock read once per batch, which costs nothing at
+            // this granularity and cannot be misread.
+            kill.on_ring_occupancy(
+                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count()),
+                shared.ring.size());
+
             for (size_t k = 0; k < ready; ++k) {
                 const Slot& s = shared.ring.read_slot(k);
+
+                // A gap arrives here in stream order, which is the whole reason
+                // it travelled through the ring. Rebuild-forward: discard every
+                // resting order and keep going. The books that come out hold no
+                // wrong orders, only missing ones.
+                if (s.is_gap()) {
+                    ++gaps_seen;
+                    messages_lost += s.gap_count();
+                    if (gap.on_gap(0, s.gap_count())) books.clear_all_orders();
+                    continue;
+                }
+
                 const char type = static_cast<char>(s.bytes[0]);
+
+                // Whether a reference resolved is the recovery signal. Reading
+                // it needs the ONE book the message routes to -- BookSet's
+                // unknown_ref() sums every book, which is O(symbols) and would
+                // cost more per message than the book update itself.
+                const bool carries_ref = (type == 'E' || type == 'C' || type == 'X' ||
+                                          type == 'D' || type == 'U');
+                uint64_t before = 0;
+                book::Book* one = nullptr;
+                if (carries_ref) {
+                    one = &books.at(itch::stock_locate(s.bytes));
+                    before = one->unknown_ref();
+                }
                 if (book::apply(books, type, s.bytes)) ++applied;
+                if (carries_ref) gap.on_reference(one->unknown_ref() == before);
+
+                // The throttle. A spin rather than a sleep: sleeping hands the
+                // core to the receiver, which is the opposite of what a slow
+                // consumer does to a pipeline, and would make the scenario test
+                // the scheduler instead of the backpressure path.
+                if (opt.slow_consumer_ns > 0) {
+                    const uint64_t until = bench::cycles_end() +
+                        static_cast<uint64_t>(static_cast<double>(opt.slow_consumer_ns) *
+                                              cyc_per_ns_for_throttle);
+                    while (bench::cycles_end() < until) { }
+                }
                 if (opt.applied_out != nullptr) {
                     applied_bytes.push_back(static_cast<uint8_t>(s.len >> 8));
                     applied_bytes.push_back(static_cast<uint8_t>(s.len & 0xff));
@@ -638,7 +773,9 @@ int run(const Options& opt) {
         std::printf("%-32s %zu slots\n", "ring", Ring::capacity());
         std::printf("\n%-32s %14" PRIu64 "\n", "packets received",
                     shared.packets.load());
-        std::printf("%-32s %14" PRIu64 "\n", "messages into the ring", shared.pushed.load());
+        std::printf("%-32s %14" PRIu64 "\n", "messages into the ring",
+                    shared.pushed.load() - gaps_seen);
+        std::printf("%-32s %14" PRIu64 "\n", "  gap markers into the ring", gaps_seen);
         std::printf("%-32s %14" PRIu64 "\n", "messages applied to books", applied);
         std::printf("%-32s %14zu\n", "peak ring occupancy",
                     static_cast<size_t>(shared.max_occupancy.load()));
@@ -658,6 +795,27 @@ int run(const Options& opt) {
         }
         std::printf("%-32s %14" PRIu64 "\n", "sequence gaps declared", seq_stats.gaps);
         std::printf("%-32s %14" PRIu64 "\n", "messages lost to gaps", seq_stats.messages_lost);
+        std::printf("%-32s %14" PRIu64 "\n", "  gaps that reached the book", gaps_seen);
+        std::printf("%-32s %14" PRIu64 "\n", "  gaps lost to a full ring", gap_overflow_out);
+
+        // Phase 7's verdict inputs, on phase 10's pipeline. "Trusted" is a
+        // claim about the book, and it is the half of the CORRECT / SAFE /
+        // CAUTIOUS / WRONG grading that a book comparison cannot supply.
+        std::printf("\n%-32s %14s\n", "feed state", recover::to_string(gap.state()));
+        std::printf("%-32s %14s\n", "book trusted", gap.trusted() ? "yes" : "no");
+        std::printf("%-32s %14" PRIu64 "\n", "rebuilds", gap.stats().rebuilds);
+        std::printf("%-32s %14" PRIu64 "\n", "recoveries", gap.stats().recoveries);
+        if (opt.kill_ring_occupancy > 0) {
+            std::printf("%-32s %14s\n", "kill switch",
+                        kill.live() ? "live" : risk::to_string(kill.report().reason));
+            if (!kill.live()) {
+                std::printf("%-32s %14lld (limit %lld)\n", "  tripped at occupancy",
+                            static_cast<long long>(kill.report().observed),
+                            static_cast<long long>(kill.report().limit));
+            }
+            std::printf("%-32s %14" PRIu64 "\n", "  peak occupancy seen",
+                        kill.peak_ring_occupancy());
+        }
         std::printf("%-32s %14" PRIu64 "\n", "malformed packets", malformed);
         std::printf("%-32s %14" PRIu64 "\n", "oversize messages refused", oversize);
         // Not "must be 0" -- it is 0 at every sustainable rate and non-zero
@@ -769,6 +927,7 @@ int run(const Options& opt) {
             "{\n  \"clock\": \"%s\",\n  \"pinned_receiver\": %s,\n  \"pinned_book\": %s,\n"
             "  \"rcvbuf_bytes_granted\": %d,\n  \"ring_slots\": %zu,\n"
             "  \"packets\": %" PRIu64 ",\n  \"messages_into_ring\": %" PRIu64 ",\n"
+            "  \"slots_into_ring\": %" PRIu64 ",\n"
             "  \"messages_applied\": %" PRIu64 ",\n  \"peak_ring_occupancy\": %zu,\n"
             "  \"books\": %zu,\n"
             "  \"ring_full_drops\": %" PRIu64 ",\n"
@@ -777,6 +936,14 @@ int run(const Options& opt) {
             "  \"oversize_messages\": %" PRIu64 ",\n"
             "  \"malformed_packets\": %" PRIu64 ",\n"
             "  \"staging_overflow\": %" PRIu64 ",\n"
+            "  \"gaps_to_book\": %" PRIu64 ",\n"
+            "  \"gaps_lost_to_full_ring\": %" PRIu64 ",\n"
+            "  \"state\": \"%s\",\n"
+            "  \"trusted\": %s,\n"
+            "  \"rebuilds\": %" PRIu64 ",\n"
+            "  \"recoveries\": %" PRIu64 ",\n"
+            "  \"kill_switch\": \"%s\",\n"
+            "  \"kill_peak_occupancy\": %" PRIu64 ",\n"
             "  \"wire_messages\": %" PRIu64 ",\n"
             "  \"lost_before_sequencer\": %" PRIu64 ",\n"
             "  \"lost_after_sequencer\": %" PRIu64 ",\n"
@@ -786,12 +953,20 @@ int run(const Options& opt) {
             "}\n",
             bench::clock_name(), recv_pinned ? "true" : "false",
             book_pinned ? "true" : "false", got, Ring::capacity(),
-            shared.packets.load(), shared.pushed.load(), applied,
+            shared.packets.load(), shared.pushed.load() - gaps_seen,
+            shared.pushed.load(), applied,
             static_cast<size_t>(shared.max_occupancy.load()), books.books(),
             shared.ring_full_drops.load(),
             kernel_known ? std::to_string(kernel_lost).c_str() : "null",
             seq_stats.gaps, seq_stats.messages_lost, oversize, malformed,
             stage_overflow,
+            gaps_seen, gap_overflow_out,
+            recover::to_string(gap.state()), gap.trusted() ? "true" : "false",
+            gap.stats().rebuilds, gap.stats().recoveries,
+            opt.kill_ring_occupancy == 0
+                ? "disabled"
+                : (kill.live() ? "live" : risk::to_string(kill.report().reason)),
+            kill.peak_ring_occupancy(),
             last_end > first_seq ? last_end - first_seq : 0,
             have_start ? seq_start - first_seq : last_end - first_seq,
             have_start && last_end > seq_end ? last_end - seq_end : 0,
@@ -817,10 +992,25 @@ int run(const Options& opt) {
 
     // 1. Every message the sequencer delivered was staged, refused for size, or
     //    refused for room. There is no fourth outcome.
-    if (seq_stats.messages != shared.pushed.load() + oversize + stage_overflow) {
+    //
+    // The ring now carries gap markers as well as messages, so what was pushed
+    // is not all messages. Subtracting the gaps is not bookkeeping tidiness: if
+    // it were left out the identity would fail on every lossy run, and an
+    // identity that fails whenever the interesting thing happens gets switched
+    // off within a week.
+    const uint64_t pushed_messages = shared.pushed.load() - gaps_seen;
+    if (seq_stats.messages != pushed_messages + oversize + stage_overflow) {
         std::fprintf(stderr, "\nFAIL: sequencer delivered %" PRIu64 " but %" PRIu64
                              " staged + %" PRIu64 " oversize + %" PRIu64 " overflow.\n",
-                     seq_stats.messages, shared.pushed.load(), oversize, stage_overflow);
+                     seq_stats.messages, pushed_messages, oversize, stage_overflow);
+        ++failures;
+    }
+    // 1b. Every gap the sequencer declared reached the book or was counted as
+    //     unreachable. A gap that vanished is the silent wrongness itself.
+    if (seq_stats.gaps != gaps_seen + gap_overflow_out) {
+        std::fprintf(stderr, "\nFAIL: sequencer declared %" PRIu64 " gaps, %" PRIu64
+                             " reached the book, %" PRIu64 " were refused.\n",
+                     seq_stats.gaps, gaps_seen, gap_overflow_out);
         ++failures;
     }
     // 2. The sequencer's cursor moved exactly once per message it delivered and
@@ -838,6 +1028,17 @@ int run(const Options& opt) {
         ++failures;
     }
     if (failures != 0) return 1;
+
+    // A gap the ring could not hold is the one failure mode this whole design
+    // was built to avoid: the consumer goes on applying the messages after it
+    // without ever being told anything is missing. Backpressure is supposed to
+    // BECOME a graded gap, not erase one.
+    if (gap_overflow_out != 0) {
+        std::fprintf(stderr, "\nFAIL: %" PRIu64 " gaps could not be staged, so the book "
+                             "applied\nthe messages after them without being told "
+                             "anything was missing.\n", gap_overflow_out);
+        return 1;
+    }
 
     // Conservation across the thread boundary: everything the ring accepted
     // came out of it. This is the one failure the whole structure exists to
