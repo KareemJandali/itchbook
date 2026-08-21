@@ -22,140 +22,18 @@
 //
 // Usage:  itch_census <file.gz> [--peak-orders] [--per-symbol out.json]
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include "itchbook/itch/live_orders.hpp"
 #include "itchbook/itch/parser.hpp"
 #include "itchbook/itch/reader.hpp"
 
 namespace {
-
-// ---- ref -> remaining shares -------------------------------------------------
-//
-// Deliberately NOT book::RefMap. That maps a reference to an Order*, so reusing
-// it would mean allocating a 40-byte Order for every order live in the day just
-// to count them. This stores the twelve bytes the count actually needs.
-//
-// The deletion algorithm is the same backward shift, and for the same reason:
-// nearly every order in a trading day is eventually deleted or executed away,
-// so tombstones would accumulate until the table degraded into a linear scan.
-class LiveOrders {
-public:
-    explicit LiveOrders(size_t capacity = 1u << 20) {
-        size_t cap = 16;
-        while (cap < capacity) cap <<= 1;
-        slots_.assign(cap, Slot{});
-        mask_ = cap - 1;
-    }
-
-    void insert(uint64_t ref, uint32_t shares) {
-        if ((size_ + 1) * 2 > slots_.size()) grow();
-        size_t i = ref & mask_;
-        while (slots_[i].used) {
-            if (slots_[i].ref == ref) {          // last writer wins, as RefMap does
-                slots_[i].shares = shares;
-                ++duplicates_;
-                return;
-            }
-            i = (i + 1) & mask_;
-        }
-        slots_[i] = Slot{ref, shares, true};
-        ++inserts_;
-        ++size_;
-        if (size_ > peak_) peak_ = size_;
-    }
-
-    // Mirrors Book::reduce: comparing before subtracting, because an execution
-    // larger than the resting size would wrap an unsigned count to something
-    // enormous. Returns true if this emptied the order.
-    bool reduce(uint64_t ref, uint32_t by) {
-        size_t i = find(ref);
-        if (i == npos) { ++unknown_; return false; }
-        if (by >= slots_[i].shares) { erase_at(i); ++emptied_; return true; }
-        slots_[i].shares -= by;
-        return false;
-    }
-
-    bool erase(uint64_t ref) {
-        size_t i = find(ref);
-        if (i == npos) { ++unknown_; return false; }
-        erase_at(i);
-        ++removed_;
-        return true;
-    }
-
-    size_t size() const { return size_; }
-    size_t peak() const { return peak_; }
-    uint64_t unknown() const { return unknown_; }
-    uint64_t inserts() const { return inserts_; }
-    uint64_t duplicates() const { return duplicates_; }
-    uint64_t removed() const { return removed_; }
-    uint64_t emptied() const { return emptied_; }
-
-    // Every slot that exists was inserted, and left either by a removal or by
-    // being emptied. Nothing else touches the count, so this is an identity and
-    // not an estimate: if it does not hold, this structure has a bug and every
-    // number it reports is worthless.
-    bool accounts() const { return inserts_ == size_ + removed_ + emptied_; }
-
-private:
-    struct Slot {
-        uint64_t ref = 0;
-        uint32_t shares = 0;
-        bool used = false;
-    };
-    static constexpr size_t npos = static_cast<size_t>(-1);
-
-    size_t find(uint64_t ref) const {
-        size_t i = ref & mask_;
-        while (slots_[i].used) {
-            if (slots_[i].ref == ref) return i;
-            i = (i + 1) & mask_;
-        }
-        return npos;
-    }
-
-    void erase_at(size_t i) {
-        slots_[i].used = false;
-        --size_;
-        size_t j = i;
-        for (;;) {
-            j = (j + 1) & mask_;
-            if (!slots_[j].used) break;
-            size_t k = slots_[j].ref & mask_;
-            bool movable = (j > i) ? (k <= i || k > j) : (k <= i && k > j);
-            if (movable) {
-                slots_[i] = slots_[j];
-                slots_[j].used = false;
-                i = j;
-            }
-        }
-    }
-
-    void grow() {
-        std::vector<Slot> old;
-        old.swap(slots_);
-        slots_.assign(old.size() * 2, Slot{});
-        mask_ = slots_.size() - 1;
-        size_ = 0;
-        for (const Slot& s : old) {
-            if (s.used) insert(s.ref, s.shares);
-        }
-    }
-
-    std::vector<Slot> slots_;
-    size_t mask_ = 0;
-    size_t size_ = 0;
-    size_t peak_ = 0;
-    uint64_t unknown_ = 0;
-    uint64_t inserts_ = 0;
-    uint64_t duplicates_ = 0;
-    uint64_t removed_ = 0;
-    uint64_t emptied_ = 0;
-};
 
 // ---- per-locate ---------------------------------------------------------------
 
@@ -196,7 +74,7 @@ struct Census {
     std::array<uint64_t, 256> counts{};
     bool track_live = false;
     bool track_symbols = false;
-    LiveOrders live;
+    itchbook::itch::LiveOrders live;
     std::vector<PerSymbol> sym;
     uint64_t adds = 0, deletes = 0, replaces = 0;
     uint64_t full_executions = 0, partial_executions = 0;
@@ -332,13 +210,33 @@ void print_price(std::FILE* f, const char* key, int32_t px) {
     else std::fprintf(f, "\"%s\":%.4f", key, static_cast<double>(px) / 10000.0);
 }
 
+// The size of the file on disk, which is not the size of the feed. Recorded
+// next to it because the ratio between them is what any decompression argument
+// rests on, and a number nobody wrote down is a number that gets guessed.
+uint64_t file_size(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (f == nullptr) return 0;
+    std::fseek(f, 0, SEEK_END);
+    const long n = std::ftell(f);
+    std::fclose(f);
+    return n < 0 ? 0 : static_cast<uint64_t>(n);
+}
+
 bool write_per_symbol(const std::string& path, const std::string& file, uint64_t total,
-                      uint64_t bytes, const Census& c) {
+                      uint64_t bytes, double elapsed_s, const Census& c) {
     std::FILE* f = std::fopen(path.c_str(), "w");
     if (f == nullptr) return false;
     std::fprintf(f, "{\n  \"file\": \"%s\",\n", file.c_str());
     std::fprintf(f, "  \"messages\": %llu,\n", static_cast<unsigned long long>(total));
     std::fprintf(f, "  \"bytes\": %llu,\n", static_cast<unsigned long long>(bytes));
+    std::fprintf(f, "  \"compressed_bytes\": %llu,\n",
+                 static_cast<unsigned long long>(file_size(file)));
+    // Written by the tool rather than transcribed from `time`, for the same
+    // reason every other number here is: a figure that passes through a human
+    // and a keyboard is a figure that can drift from its run.
+    std::fprintf(f, "  \"elapsed_seconds\": %.2f,\n", elapsed_s);
+    std::fprintf(f, "  \"pass\": \"%s\",\n",
+                 c.track_live ? "framing + live-order tracking" : "framing only");
     if (c.track_live) {
         std::fprintf(f, "  \"live_orders\": {\"peak\": %llu, \"final\": %llu, \"adds\": %llu, "
                         "\"deletes\": %llu, \"replaces\": %llu, \"full_executions\": %llu, "
@@ -428,6 +326,7 @@ int main(int argc, char** argv) {
     }
 
     try {
+        const auto started = std::chrono::steady_clock::now();
         itchbook::Reader reader(path);
         Census census;
         census.track_live = peak_orders;
@@ -437,6 +336,8 @@ int main(int argc, char** argv) {
         // symbols a day is allowed to have.
         if (census.track_symbols) census.sym.assign(65536, PerSymbol{});
         uint64_t total = itchbook::parse(reader, census);
+        const double elapsed_s = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - started).count();
 
         std::printf("%-5s %-28s %14s  %s\n", "type", "name", "count", "modelled");
         std::printf("---------------------------------------------------------------\n");
@@ -458,6 +359,17 @@ int main(int argc, char** argv) {
                     static_cast<unsigned long long>(ignored));
         std::printf("%-34s %14llu\n", "TOTAL messages", static_cast<unsigned long long>(total));
         std::printf("%-34s %14llu\n", "TOTAL bytes", static_cast<unsigned long long>(reader.bytes()));
+        // This pass decompresses, frames and length-checks the file and builds
+        // nothing. Its wall clock is therefore the floor for any replay of the
+        // same file: no end-to-end number can be below it, and the gap between
+        // the two is what the book itself costs.
+        std::printf("%-34s %14.2f\n", "seconds", elapsed_s);
+        if (elapsed_s > 0.0) {
+            std::printf("%-34s %14.1f\n", "MB/s (uncompressed)",
+                        static_cast<double>(reader.bytes()) / elapsed_s / 1e6);
+            std::printf("%-34s %14.2f\n", "M msg/s",
+                        static_cast<double>(total) / elapsed_s / 1e6);
+        }
 
         if (peak_orders) {
             std::printf("\nlive orders (every symbol, one shared reference space)\n");
@@ -492,7 +404,8 @@ int main(int argc, char** argv) {
         }
 
         if (census.track_symbols) {
-            if (!write_per_symbol(per_symbol_out, path, total, reader.bytes(), census)) {
+            if (!write_per_symbol(per_symbol_out, path, total, reader.bytes(), elapsed_s,
+                                  census)) {
                 std::fprintf(stderr, "error: cannot write %s\n", per_symbol_out.c_str());
                 return 1;
             }
