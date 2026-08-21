@@ -346,6 +346,36 @@ fail. It found two real bugs, including a stream that *stopped* rather than
 ended: 80,235 messages missing, every counter honestly zero, reported clean.
 Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
 
+### Coming back after the process dies
+
+A gap and a crash lose different things. After a gap the bytes were never
+received and nothing on disk brings them back. After a crash the bytes were
+processed and what was lost is memory — and memory can be written down. The
+property is exact: snapshot at message N, restart, replay from N, and the
+result must equal a process that ran straight through. Identical, not close:
+same orders, same queue positions, same tape.
+
+It takes two snapshots, because a restart loses two things.
+[`snapshot.hpp`](include/itchbook/recover/snapshot.hpp) restores the **market**
+— every order at every price, written in fill order because dumping the ref map
+in hash order restores the right shares at every level with scrambled priority,
+which passes every level-based check and makes every queue model silently
+wrong. [`strategy_snapshot.hpp`](include/itchbook/recover/strategy_snapshot.hpp)
+restores **position and our own open orders**, each with the `ahead` count it
+had reached; an order restored at the front of a queue it never reached fills on
+the next print and books money that was never made.
+
+Restoring one without the other is the interesting failure, and it is not a
+crash. The book is right, the replay continues, every invariant holds, and the
+run reports a P&L for a strategy that spent the afternoon flat. Nothing in the
+output says a restart happened.
+
+Two things are deliberately *not* restored, and the header says why: markout
+samples whose horizon spans the restart, because the mid at that instant was
+never observed by anyone and inventing it would be worse than counting it
+unresolved; and the kill switch, because a latched limit is for a human to
+re-arm on purpose.
+
 ## Architecture
 
 The parser knows nothing about books; the book knows nothing about strategies.
@@ -437,7 +467,7 @@ include/itchbook/   public headers (this is a library, not an app)
   engine/           order types, states, and price-time matching
   sim/              queue models, ledger, markouts, fees, latency, backtest
   mold/             MoldUDP64 packet framing and the gap/duplicate/reorder sequencer
-  recover/          gap policy, book snapshot, halt tracking
+  recover/          gap policy, book + strategy snapshots, halt tracking
   risk/             the kill switch
   bench/            rdtsc timing and latency percentiles
 tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
