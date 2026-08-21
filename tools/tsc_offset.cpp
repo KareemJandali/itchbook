@@ -87,6 +87,28 @@ bool pin_to(int cpu) {
 #endif
 }
 
+// The smallest interval this build's clock can actually distinguish.
+//
+// Every bound below is a difference of two timestamps, and a difference is
+// meaningless below the granularity of the thing producing it. Sampling the
+// clock back to back and keeping the smallest NON-ZERO gap measures that
+// granularity directly, without needing to know what the clock is underneath --
+// which matters, because it is rdtsc on one platform and clock_gettime on
+// another and those differ by orders of magnitude.
+uint64_t clock_resolution(uint64_t samples = 200000) {
+    uint64_t best = UINT64_MAX;
+    uint64_t prev = itchbook::bench::cycles_end();
+    for (uint64_t i = 0; i < samples; ++i) {
+        const uint64_t now = itchbook::bench::cycles_end();
+        if (now > prev) {
+            const uint64_t d = now - prev;
+            if (d < best) best = d;
+        }
+        prev = now;
+    }
+    return best == UINT64_MAX ? 0 : best;
+}
+
 struct Result {
     int64_t offset_cycles = 0;      // B's clock minus A's, from the tightest sample
     uint64_t bound_cycles = 0;      // half the fastest round trip
@@ -184,6 +206,7 @@ int main(int argc, char** argv) {
     const bool have_tsc = ITCHBOOK_HAVE_RDTSC != 0;
     const bool invariant = itchbook::bench::tsc_is_invariant();
     const double cyc_per_ns = itchbook::bench::calibrate_cycles_per_ns();
+    const uint64_t tick = clock_resolution();
 
     bool pinned_a = false;
     bool pinned_b = false;
@@ -234,10 +257,42 @@ int main(int argc, char** argv) {
     const double bound_ns = ns(static_cast<double>(fwd.bound_cycles));
     const bool resolvable = worst_ns > bound_ns;
 
-    std::printf("\n%-34s %14.1f ns\n", "largest |offset| estimate", worst_ns);
+    // BEFORE ANY OF THAT: can the clock see the handoff at all?
+    //
+    // A round trip measured as zero is not a fast round trip, it is a clock
+    // that cannot tell the two ends apart, and every figure derived from it is
+    // arithmetic on nothing. The first version of this tool did not ask, ran on
+    // a machine whose fallback clock is far coarser than a cache-line transfer,
+    // measured a median round trip of 0 -- and reported "the offset is bounded
+    // under 0 ns", which is the most reassuring sentence it could possibly have
+    // produced and was worth exactly nothing.
+    //
+    // Three ticks is the threshold: below that the round trip is being rounded
+    // rather than measured, and a bound built on it would be a claim about the
+    // clock's granularity wearing the units of a latency.
+    const bool clock_can_see_it =
+        tick > 0 && fwd.min_round_trip >= 3 * tick && fwd.median_round_trip > 0;
+
+    std::printf("\n%-34s %14" PRIu64 " %14.1f\n", "clock granularity (one tick)",
+                tick, ns(static_cast<double>(tick)));
+    std::printf("%-34s %14.1f ns\n", "largest |offset| estimate", worst_ns);
     std::printf("%-34s %14.1f ns\n", "resolution of this method", bound_ns);
     std::printf("\n");
-    if (!resolvable) {
+    if (!clock_can_see_it) {
+        std::printf("VERDICT: UNMEASURED. This clock cannot see the handoff.\n"
+                    "  One tick is %.1f ns and the fastest round trip came out at %.1f ns,\n"
+                    "  so the interval is being rounded rather than measured and nothing\n"
+                    "  below can be a bound on anything. Do not read the offset estimate:\n"
+                    "  it is arithmetic on quantisation noise.\n",
+                    ns(static_cast<double>(tick)),
+                    ns(static_cast<double>(fwd.min_round_trip)));
+        if (!have_tsc) {
+            std::printf("  This build fell back to clock_gettime because the platform has no\n"
+                        "  rdtsc. That clock is system-wide, so there is no per-core offset to\n"
+                        "  find here -- but it also means this machine cannot answer the\n"
+                        "  question for a machine that does have one.\n");
+        }
+    } else if (!resolvable) {
         std::printf("VERDICT: not distinguishable from zero.\n"
                     "  The estimate is smaller than the method's own resolution, so what is\n"
                     "  bounded is the offset, not measured: it is under %.0f ns. Any latency\n"
@@ -284,19 +339,27 @@ int main(int argc, char** argv) {
             "  \"uncertainty_cycles\": %" PRIu64 ",\n"
             "  \"largest_abs_offset_ns\": %.3f,\n"
             "  \"resolution_ns\": %.3f,\n"
+            "  \"clock_tick_cycles\": %" PRIu64 ",\n"
+            "  \"clock_can_see_the_handoff\": %s,\n"
             "  \"resolvable\": %s,\n"
             "  \"signs_oppose\": %s\n}\n",
             have_tsc ? "rdtsc" : "clock_gettime_monotonic",
             invariant ? "true" : "false", (pinned_a && pinned_b) ? "true" : "false",
             cyc_per_ns, samples, fwd.min_round_trip, fwd.median_round_trip,
             fwd.offset_cycles, rev.offset_cycles, fwd.bound_cycles, worst_ns,
-            bound_ns, resolvable ? "true" : "false", signs_oppose ? "true" : "false");
+            bound_ns, tick, clock_can_see_it ? "true" : "false",
+            resolvable ? "true" : "false", signs_oppose ? "true" : "false");
         if (std::fclose(f) != 0) return 1;
     }
 
     // The gate is on what is KNOWN, which is the bound, not on the point
     // estimate. A run whose estimate is tiny because the method could not
     // resolve anything has not earned a pass.
+    // An unmeasured run has not earned a pass, whatever number it printed.
+    if (max_offset_ns >= 0.0 && !clock_can_see_it) {
+        std::printf("\nFAIL: nothing here was measured, so nothing here can clear a threshold.\n");
+        return 1;
+    }
     const double known_ns = resolvable ? worst_ns : bound_ns;
     if (max_offset_ns >= 0.0 && known_ns > max_offset_ns) {
         std::printf("\nFAIL: the offset is only bounded at %.1f ns, and this run was told to\n"
