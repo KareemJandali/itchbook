@@ -113,6 +113,12 @@ jobs:
       - name: The census block matches the census
         run: python3 scripts/census-report.py --check
 
+      # The phase 9 write-up is generated from the run's own artifacts. Its
+      # numbers cannot drift from the run that produced them, because CI fails
+      # if the committed prose disagrees with the committed data.
+      - name: The phase 9 results match their artifacts
+        run: python3 scripts/phase9-report.py --check
+
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh
 
