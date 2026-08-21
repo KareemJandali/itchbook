@@ -9,7 +9,9 @@
 // Not "close to". Identical — same orders, same queue positions, same tape.
 // Anything less means a restarted process quietly disagrees with the one it
 // replaced, and the disagreement is invisible until it costs money.
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -510,6 +512,20 @@ void test_a_truncated_strategy_snapshot_is_refused() {
     for (size_t i = 0; i < 8; ++i) bad[fill_count_off + i] = 0xff;
     StrategySnapshot huge;
     CHECK(!deserialize_strategy(bad.data(), bad.size(), &huge));
+
+    // The nastier case, and the one a bytes-only bound lets through: a count
+    // equal to the number of BYTES left. A LedgerFill is 35 bytes on the wire
+    // and 56 in memory, so `n > len - off` passes and the reserve still asks
+    // for 1.6x the file — and 1.6x of a large file is an out-of-memory abort
+    // out of an inline header nobody catches. The bound has to divide by the
+    // wire record size, which is what snapshot.hpp already did.
+    std::vector<uint8_t> padded(64 * 1024, 0);
+    std::memcpy(padded.data(), bytes.data(), std::min(bytes.size(), padded.size()));
+    const uint64_t claim = padded.size() - fill_count_off - 8;
+    std::memcpy(padded.data() + fill_count_off, &claim, sizeof(claim));
+    StrategySnapshot plausible;
+    CHECK(!deserialize_strategy(padded.data(), padded.size(), &plausible));
+    CHECK_EQ(plausible.ledger.fills.capacity(), 0u);
 }
 
 int main() {

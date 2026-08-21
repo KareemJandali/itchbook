@@ -259,7 +259,7 @@ def svg_lines(xs, series, title, subtitle, x_label, y_label, include_zero=False)
 
 
 def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per message",
-                  y_label="messages"):
+                  y_label="messages", compare=None, labels=("before", "after")):
     """A distribution over log-spaced buckets: vertical bars, one colour.
 
     `buckets` is a sequence of (lo, hi, count); `markers` a sequence of
@@ -282,21 +282,37 @@ def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per mess
     One measure, so one colour — the bars are not four series. Identity comes
     from the title, and the percentile markers are labelled directly rather
     than through a legend.
+
+    With `compare` (a second bucket list), the form changes and so does the
+    colour rule. Two distributions are two series, colour becomes identity,
+    and both get a legend AND a direct end-label so identity is never colour
+    alone. They are drawn as stepped OUTLINES rather than filled bars: two
+    sets of filled bars on a shared log axis occlude each other exactly where
+    they differ most, which is the part the reader came for. `compare` is the
+    baseline, drawn first and underneath.
     """
     import math
 
-    buckets = [(max(int(lo), 1), int(hi), int(c)) for lo, hi, c in buckets if int(c) > 0]
+    def clean(bs):
+        return [(max(int(lo), 1), int(hi), int(c)) for lo, hi, c in bs if int(c) > 0]
+
+    buckets = clean(buckets)
     if not buckets:
         raise ValueError("no non-empty buckets to draw")
+    base = clean(compare) if compare else []
+    # Both series share one pair of axes. Scaling each to its own range would
+    # draw two distributions that look alike and are not comparable, which is
+    # the whole point of putting them together.
+    span_src = buckets + base
 
     W, H = 720, 440
 
-    x_lo = math.log10(min(b[0] for b in buckets))
-    x_hi = math.log10(max(b[1] for b in buckets))
+    x_lo = math.log10(min(b[0] for b in span_src))
+    x_hi = math.log10(max(b[1] for b in span_src))
     x_lo, x_hi = math.floor(x_lo), math.ceil(x_hi)
     x_span = (x_hi - x_lo) or 1
 
-    y_hi = math.ceil(math.log10(max(b[2] for b in buckets)))
+    y_hi = math.ceil(math.log10(max(b[2] for b in span_src)))
     y_span = y_hi or 1          # y starts at 1 sample = log 0
 
     # The left margin is whatever the widest y-axis label needs. A fixed 62
@@ -330,10 +346,17 @@ def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per mess
         p.append(f'<text class="muted" x="{left - 8}" y="{y + 4:.1f}" text-anchor="end" '
                  f'font-family="ui-monospace,monospace" font-size="10.5">'
                  f'{10 ** d:,}</text>')
+    # A decade label is ~7px per glyph, so past six decades the big ones on the
+    # right run into each other ("10,000,000" and "100,000,000" overprinted the
+    # first time this drew a before/after pair). Label every other decade once
+    # the axis is wider than that, keeping the first and last.
+    label_every = 1 if (x_hi - x_lo) <= 6 else 2
     for d in range(x_lo, x_hi + 1):
         x = X(10 ** d)
         p.append(f'<line class="grid" x1="{x:.1f}" y1="{top}" x2="{x:.1f}" '
                  f'y2="{top + plot_h}"/>')
+        if d != x_lo and d != x_hi and (d - x_lo) % label_every:
+            continue
         # The end labels anchor inward. A centred "10,000,000" at the last
         # decade hangs ~20px past the viewBox and is simply cut off, and how
         # far it hangs depends on the data's magnitude — so anchoring, not a
@@ -343,18 +366,53 @@ def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per mess
                  f'text-anchor="{anchor}" font-family="ui-monospace,monospace" '
                  f'font-size="10.5">{10 ** d:,}</text>')
 
-    # The bars. Each spans its own bucket bounds, less a 2px surface gap, so
-    # adjacent bars read as separate marks rather than one filled region.
     baseline = top + plot_h
-    for lo, hi, count in buckets:
-        x0, x1 = X(lo), X(hi)
-        w = max(x1 - x0 - 2, 1.2)
-        y = Y(count)
-        h = baseline - y
-        if h < 1.2:
-            h, y = 1.2, baseline - 1.2
-        p.append(f'<rect class="s1" x="{x0 + 1:.1f}" y="{y:.1f}" width="{w:.1f}" '
-                 f'height="{h:.1f}" rx="2"/>')
+
+    def step_points(bs):
+        """A stepped outline through the buckets: up the left edge, across the
+        top, and only then down — so the shape traces the distribution rather
+        than joining bucket midpoints, which would imply counts between them
+        that were never measured."""
+        pts = []
+        for lo, hi, count in bs:
+            y = Y(count)
+            pts.append((X(lo), baseline if not pts else pts[-1][1]))
+            pts.append((X(lo), y))
+            pts.append((X(hi), y))
+        if pts:
+            pts.append((pts[-1][0], baseline))
+        return pts
+
+    if base:
+        # Two series: outlines, colour as identity, both labelled.
+        for i, (bs, cls) in enumerate(((base, 'k2'), (buckets, 'k1'))):
+            pts = step_points(bs)
+            d = ' '.join(f'{x:.1f},{y:.1f}' for x, y in pts)
+            p.append(f'<polyline class="{cls}" stroke-width="2" points="{d}"/>')
+            # Direct label at the series' tallest point, so identity survives
+            # a greyscale print or a red-green reader. Two similar
+            # distributions peak in the SAME bucket — a before/after pair
+            # usually does, that is the point — so the two labels are stacked
+            # rather than both placed at the peak, where they overprinted each
+            # other into an unreadable smear on the first render.
+            peak = max(bs, key=lambda b: b[2])
+            lx = X(peak[0])
+            ly = Y(peak[2]) - 10 - (1 - i) * 15
+            p.append(f'<text class="ink" x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" '
+                     f'font-family="system-ui,sans-serif" font-size="11" '
+                     f'font-weight="600">{esc(labels[i])}</text>')
+    else:
+        # The bars. Each spans its own bucket bounds, less a 2px surface gap, so
+        # adjacent bars read as separate marks rather than one filled region.
+        for lo, hi, count in buckets:
+            x0, x1 = X(lo), X(hi)
+            w = max(x1 - x0 - 2, 1.2)
+            y = Y(count)
+            h = baseline - y
+            if h < 1.2:
+                h, y = 1.2, baseline - 1.2
+            p.append(f'<rect class="s1" x="{x0 + 1:.1f}" y="{y:.1f}" width="{w:.1f}" '
+                     f'height="{h:.1f}" rx="2"/>')
 
     p.append(f'<line class="axis" x1="{left}" y1="{baseline}" x2="{W - right}" '
              f'y2="{baseline}"/>')
@@ -373,6 +431,16 @@ def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per mess
         p.append(f'<text class="ink" x="{x:.1f}" y="{ly}" text-anchor="middle" '
                  f'font-family="ui-monospace,monospace" font-size="10.5">'
                  f'{esc(label)} {xv:,}</text>')
+
+    # A legend whenever there are two series, in addition to the direct labels.
+    if base:
+        lx = left + 4
+        for i, cls in enumerate(('s2', 's1')):
+            p.append(f'<rect class="{cls}" x="{lx}" y="{H - 22}" width="10" height="10" rx="2"/>')
+            p.append(f'<text class="muted" x="{lx + 15}" y="{H - 13}" '
+                     f'font-family="system-ui,sans-serif" font-size="11">'
+                     f'{esc(labels[i])}</text>')
+            lx += 22 + 7 * len(labels[i])
 
     p.append(f'<text class="muted" x="{left + plot_w / 2:.0f}" y="{H - 26}" '
              f'text-anchor="middle" font-family="system-ui,sans-serif" '

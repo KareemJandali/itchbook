@@ -391,11 +391,15 @@ private:
         m.hidden = 0;
         m.cancelled += gone;
         cancelled_total_ += gone;
-        // A stop that never triggered is still parked; drop it.
+        // A stop that never triggered is still parked; drop it. Erased in
+        // place rather than swapped with the back: pending_stops_ is in
+        // arrival order and fire_stops() depends on that, so a swap-pop here
+        // would reorder the survivors and hand a later stop the priority of
+        // the cancelled one. The vector holds parked stops only, so it is
+        // short and the shift is cheaper than the bug.
         for (size_t i = 0; i < pending_stops_.size(); ++i) {
             if (pending_stops_[i] == m.req.id) {
-                pending_stops_[i] = pending_stops_.back();
-                pending_stops_.pop_back();
+                pending_stops_.erase(pending_stops_.begin() + static_cast<long>(i));
                 break;
             }
         }
@@ -404,6 +408,19 @@ private:
 
     // A trade may take the price through a resting stop, which then becomes a
     // live order and may itself trade through another. Loop until quiet.
+    //
+    // ORDER MATTERS HERE, and it is the whole reason this loop is not a simple
+    // scan-and-swap-pop. One trade can elect several stops at once. They all
+    // join the book at that instant, so among themselves they must queue in
+    // ARRIVAL order — the order they were submitted and parked — exactly as two
+    // limit orders sent at the same price would.
+    //
+    // pending_stops_ is in arrival order because submit() push_backs. Removing
+    // an element by swapping the back into its slot destroys that: park stops
+    // 1, 2, 3 and elect all three, and the list goes [1,2,3] -> fire 1 -> [3,2]
+    // -> fire 3 -> fire 2, resting them 1, 3, 2. Order 2 arrived before order 3
+    // and was elected at the same instant, yet 3 takes priority and fills
+    // first. Every removal below therefore erases in place.
     bool fire_stops() {
         bool any = false;
         bool again = true;
@@ -412,8 +429,7 @@ private:
             for (size_t i = 0; i < pending_stops_.size();) {
                 auto it = orders_.find(pending_stops_[i]);
                 if (it == orders_.end() || is_terminal(it->second.state)) {
-                    pending_stops_[i] = pending_stops_.back();
-                    pending_stops_.pop_back();
+                    pending_stops_.erase(pending_stops_.begin() + static_cast<long>(i));
                     continue;
                 }
                 Meta& m = it->second;
@@ -421,8 +437,7 @@ private:
                     ++i;
                     continue;
                 }
-                pending_stops_[i] = pending_stops_.back();
-                pending_stops_.pop_back();
+                pending_stops_.erase(pending_stops_.begin() + static_cast<long>(i));
 
                 Result sub;
                 sub.first_fill = fills_.size();

@@ -92,11 +92,32 @@ O(log n) and the bulk of orders still land in a few large contiguous blocks.
 by 97x. On the PMU machine the same change measures **1.73x** (142.31 -> 82.04
 cycles/msg), and throughput goes from 25.3M to 43.9M messages/second.
 
-## Two predicted wins that were not
+## The plan's five candidates, one by one
 
-The build plan lists likely optimisations. Two were already in place from phase
-3 (open addressing instead of `unordered_map`; templated dispatch with no
-virtual call). Two more were tried and measured flat:
+The build plan lists five likely wins. This is all of them, including the one
+that was never tried — an accounting that quietly covers four of five reads as
+a complete sweep, which it is not.
+
+| # | candidate | outcome |
+|---|---|---|
+| 1 | open addressing instead of `unordered_map` | already in place from phase 3 |
+| 2 | order struct fits a cache line | already in place: `Order` is 40 bytes, held by a `static_assert` |
+| 3 | branch reordering, `A`/`D` first | **tried, measured −1.5%.** Reverted — see below |
+| 4 | remove the `std::function`/virtual indirection | already in place from phase 3 (templated dispatch) |
+| 5 | prefetch the next order in the free list | **never tried** |
+
+Candidate 5 is untested, not rejected. The reason it was not pursued is the same
+finding the two flat results below establish — on this workload the cost is
+memory traffic on the *first, cold* access to an order, and the free-list head is
+already hot — but that is a prediction, and this file exists precisely because
+two other predictions of the same kind measured flat. It should be measured
+before it is believed.
+
+The win that did land was not on the plan's list at all: the pool's slab size.
+
+### Two predicted wins that were not
+
+The two candidates that were tried and measured flat:
 
 **Hoisting `A` and `D` ahead of the dispatch switch** — they are 92% of the
 feed, so testing them first should shorten the common path. Measured

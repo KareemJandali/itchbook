@@ -125,6 +125,23 @@ inline std::vector<uint8_t> serialize(const StrategySnapshot& s) {
     return out;
 }
 
+// Bytes each record occupies ON THE WIRE. These bound the length prefixes
+// below, and they must be the wire size rather than sizeof(the struct): a
+// LedgerFill is 56 bytes in memory and 35 on the wire, so bounding a count by
+// the remaining BYTES rather than by remaining-bytes-per-record still lets a
+// corrupt prefix demand a reserve 1.6x the file, and an Entry 1.2x. That is
+// the out-of-memory abort this guard exists to prevent, and snapshot.hpp
+// already gets it right with `count > (len - off) / per_order`.
+inline constexpr size_t kWireLedgerFill =
+    sizeof(uint64_t) + sizeof(uint8_t) + sizeof(sim::Price4) + sizeof(uint32_t) +
+    sizeof(int64_t) + sizeof(uint8_t) + sizeof(sim::Money) + sizeof(uint8_t);
+inline constexpr size_t kWireEntry =
+    sizeof(uint64_t) + sizeof(uint8_t) + sizeof(sim::Price4) + sizeof(uint32_t) * 3 +
+    sizeof(uint64_t) * 3 + sizeof(uint32_t) + sizeof(uint8_t);
+inline constexpr size_t kWireAheadPair = sizeof(uint64_t) + sizeof(uint32_t);
+// An ahead-set entry is at minimum its id and a zero count.
+inline constexpr size_t kWireAheadSetMin = sizeof(uint64_t) + sizeof(uint64_t);
+
 inline bool deserialize_strategy(const uint8_t* buf, size_t len, StrategySnapshot* s) {
     size_t off = 0;
     uint32_t magic = 0, version = 0;
@@ -146,10 +163,9 @@ inline bool deserialize_strategy(const uint8_t* buf, size_t len, StrategySnapsho
     uint64_t n = 0;
     if (!get(buf, len, &off, &n)) return false;
     // A length prefix from a corrupt file must not become a multi-gigabyte
-    // reserve. Every element costs bytes, so the remaining buffer bounds the
-    // count; reserving on an unchecked n is how a truncated file turns into an
-    // out-of-memory abort instead of a clean refusal.
-    if (n > (len - off)) return false;
+    // reserve. Bound the count by how many records the remaining buffer could
+    // actually hold — see kWireLedgerFill above for why dividing matters.
+    if (n > (len - off) / kWireLedgerFill) return false;
     L.fills.clear();
     L.fills.reserve(static_cast<size_t>(n));
     for (uint64_t i = 0; i < n; ++i) {
@@ -170,7 +186,7 @@ inline bool deserialize_strategy(const uint8_t* buf, size_t len, StrategySnapsho
 
     sim::QueueModel::State& Q = s->queue;
     if (!get(buf, len, &off, &n)) return false;
-    if (n > (len - off)) return false;
+    if (n > (len - off) / kWireEntry) return false;
     Q.entries.clear();
     Q.entries.reserve(static_cast<size_t>(n));
     for (uint64_t i = 0; i < n; ++i) {
@@ -192,14 +208,14 @@ inline bool deserialize_strategy(const uint8_t* buf, size_t len, StrategySnapsho
     }
 
     if (!get(buf, len, &off, &n)) return false;
-    if (n > (len - off)) return false;
+    if (n > (len - off) / kWireAheadSetMin) return false;
     Q.ahead_sets.clear();
     Q.ahead_sets.reserve(static_cast<size_t>(n));
     for (uint64_t i = 0; i < n; ++i) {
         uint64_t id = 0, m = 0;
         if (!get(buf, len, &off, &id)) return false;
         if (!get(buf, len, &off, &m)) return false;
-        if (m > (len - off)) return false;
+        if (m > (len - off) / kWireAheadPair) return false;
         std::vector<std::pair<uint64_t, uint32_t>> flat;
         flat.reserve(static_cast<size_t>(m));
         for (uint64_t j = 0; j < m; ++j) {

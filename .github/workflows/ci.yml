@@ -197,15 +197,32 @@ jobs:
       # at all, so the whole path — bench -> bucket CSV -> SVG — could rot
       # without anything noticing until someone tried to regenerate the figure.
       # This asserts nothing about the timings, which mean nothing on a shared
-      # runner; it asserts the pipeline still runs and produces a chart.
+      # runner; it asserts the pipeline still runs and produces a chart, in
+      # both the single-run and the before/after form the plan asks for.
       - name: Latency histogram renders end to end
         run: |
           python3 python/make_bench_feed.py data/raw/hist.gz --messages 50000
-          ./build/book_bench data/raw/hist.gz --histogram /tmp/latency.csv
-          python3 python/analysis/latency_histogram.py /tmp/latency.csv \
+          ./build/book_bench data/raw/hist.gz --histogram /tmp/after.csv
+          ./build/book_bench data/raw/hist.gz --histogram /tmp/before.csv
+          python3 python/analysis/latency_histogram.py /tmp/after.csv \
             --svg /tmp/latency.svg
-          test -s /tmp/latency.svg
-          grep -q '</svg>' /tmp/latency.svg
+          python3 python/analysis/latency_histogram.py /tmp/after.csv \
+            --compare /tmp/before.csv --svg /tmp/latency-compare.svg
+          for f in /tmp/latency.svg /tmp/latency-compare.svg; do
+            test -s "$f"
+            grep -q '</svg>' "$f"
+            grep -q '<svg' "$f"
+          done
+
+      # The plan's testing table lists a Performance row whose stated purpose is
+      # "Regressions", and for four phases it was measurement with nothing
+      # comparing against it. This gates on the RATIO between two binaries built
+      # here from the same source, differing only in the pool's chunk policy, so
+      # the runner's speed cancels out. Thresholds are loose on purpose: 1.2x and
+      # 10x against measured 1.6x and ~90x, because a gate set at the measured
+      # value fails on noise and then gets disabled.
+      - name: Performance regression gate (the pool change must still pay)
+        run: python3 bench/regression_check.py --messages 300000
 
       # The phase 7 done-condition. Twelve scenarios of packet damage, each
       # graded CORRECT / SAFE / CAUTIOUS / WRONG. Any WRONG — the book diverged

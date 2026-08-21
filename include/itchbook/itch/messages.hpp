@@ -91,6 +91,9 @@ enum class Type : char {
 //   'I'  NOII                  auction imbalance, indicative. The auction
 //                              itself arrives as a 'Q' cross trade, which IS
 //                              modelled.
+//   'O'  Direct Listing with   price discovery for a direct listing with a
+//        Capital Raise         capital raise. Indicative, like 'I': the
+//                              resulting auction prints as a 'Q'.
 //
 // Spec message lengths (payload bytes, including the type byte). Used to assert
 // the length prefix agrees with the type — a mismatch means desync. Unmodelled
@@ -123,6 +126,7 @@ constexpr int spec_length(char t) {
         case 'B': return 19;
         case 'I': return 50;
         case 'N': return 20;
+        case 'O': return 48;
         default:  return -1;  // genuinely unknown — do not guess a length
     }
 }

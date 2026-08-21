@@ -47,6 +47,14 @@ namespace {
 // stops covering something is worse than no fuzzer, because it is believed.
 uint64_t g_emitted[6] = {0, 0, 0, 0, 0, 0};
 
+// Operations actually performed on the matcher: submits plus cancels. This
+// used to be reported as the size in BYTES of the random input buffer, which
+// is not an operation count — a sequence consumes roughly seven bytes per
+// order, so the printed figure ran about 7x the truth and the README quoted
+// it. A benchmark-shaped number that nobody can reproduce from the thing it
+// counts is worse than no number.
+uint64_t g_ops = 0;
+
 const char* kTypeName[6] = {"Limit", "Market", "IOC", "FOK",
                             "StopMarket", "StopLimit"};
 
@@ -132,6 +140,7 @@ bool run_sequence(const uint8_t* data, size_t size) {
 
     while (!in.empty() && next_id < 250) {
         const uint8_t op = in.u8() % 10;
+        ++g_ops;
 
         if (op == 9) {
             // Cancel something at random.
@@ -294,13 +303,12 @@ int main(int argc, char** argv) {
 
     std::mt19937_64 rng(seed);
     std::vector<uint8_t> buf;
-    uint64_t total_ops = 0;
 
     for (uint64_t i = 0; i < iterations; ++i) {
         const size_t n = 16 + (rng() % 240);
         buf.resize(n);
         for (size_t j = 0; j < n; ++j) buf[j] = static_cast<uint8_t>(rng());
-        total_ops += n;
+        (void)n;
         if (!run_sequence(buf.data(), buf.size())) {
             std::fprintf(stderr, "\nfailing input (seed %llu, iteration %llu):\n",
                          static_cast<unsigned long long>(seed),
@@ -314,10 +322,10 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
     }
-    std::printf("OK: %llu random order sequences, ~%llu operations, "
-                "no invariant violated\n",
+    std::printf("OK: %llu random order sequences, %llu operations "
+                "(submits + cancels), no invariant violated\n",
                 static_cast<unsigned long long>(iterations),
-                static_cast<unsigned long long>(total_ops));
+                static_cast<unsigned long long>(g_ops));
 
     // Coverage is part of the result, not a footnote. A run that violated no
     // invariant because it never exercised a type has not shown anything about

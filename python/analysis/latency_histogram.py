@@ -5,9 +5,10 @@
     python3 python/analysis/latency_histogram.py out/latency.csv \
         --svg docs/figures/latency-histogram.svg
 
-The build plan asks for a latency histogram, and the reason it asks rather than
-settling for the percentile table is that a table of five numbers cannot show a
-shape. p50 and p99 are identical between a distribution with one tight mode and
+The build plan's phase 4 done-condition asks for a BEFORE/AFTER latency
+histogram — pass --compare to draw both. The reason it asks for a histogram
+rather than settling for the percentile table is that a table of five numbers
+cannot show a shape. p50 and p99 are identical between a distribution with one tight mode and
 a few stragglers and one with two separate modes fifty cycles apart — and the
 second is a mechanism you can go and find, usually a branch taken half the time
 or a level that allocates on some messages and not others.
@@ -60,6 +61,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", help="bucket CSV from book_bench --histogram")
+    ap.add_argument("--compare", metavar="BASELINE_CSV",
+                    help="a second bucket CSV to draw underneath as the baseline. "
+                         "The build plan's phase 4 done-condition is a BEFORE/AFTER "
+                         "histogram, and one distribution cannot show a change.")
+    ap.add_argument("--labels", default="before,after",
+                    help="comma-separated names for the two series (default before,after)")
     ap.add_argument("--svg", help="write the chart here")
     ap.add_argument("--title", default="Per-message book latency")
     ap.add_argument("--subtitle", default="")
@@ -68,11 +75,18 @@ def main():
     buckets = read_buckets(a.csv)
     total = sum(c for _, _, c in buckets)
     p50, p99, p999 = (percentile(buckets, p) for p in (50, 99, 99.9))
+    # The occupied range, stated as bucket BOUNDS rather than as a measurement.
+    # `hi` is the last bucket's EXCLUSIVE upper edge, so no sample ever reached
+    # it — buckets are 2^(1/4) wide, so calling it "the max" overstates the
+    # worst case by up to 18.9% and silently disagrees with the exact `max`
+    # book_bench prints for the same run. Say what it is instead.
     lo = buckets[0][0]
     hi = max(b[1] for b in buckets)
+    last_lo = buckets[-1][0]
 
     subtitle = a.subtitle or (
-        f"{total:,} messages, {lo:,}-{hi:,} cycles, {len(buckets)} occupied buckets")
+        f"{total:,} messages, {len(buckets)} occupied buckets, "
+        f"slowest in [{last_lo:,}, {hi:,}) cycles")
 
     print(f"{'bucket (cycles)':>22}  {'count':>12}  share")
     print("-" * 52)
@@ -83,12 +97,33 @@ def main():
     print("-" * 52)
     print(f"{'total':>22}  {total:>12,}")
     print(f"\np50 {p50:,}   p99 {p99:,}   p99.9 {p999:,}   (bucket resolution)")
+    print(f"occupied range: [{lo:,}, {hi:,}) cycles — bucket bounds, not samples. "
+          f"The slowest message is somewhere in [{last_lo:,}, {hi:,}); "
+          f"book_bench prints the exact max.")
+
+    base = read_buckets(a.compare) if a.compare else None
+    labels = tuple((a.labels.split(",") + ["before", "after"])[:2])
+
+    if base:
+        # With two series the percentile markers come off: three dashed rules
+        # over two overlapping outlines is more ink than signal, and the
+        # comparison the chart exists to show is the shift between the shapes.
+        b_total = sum(c for _, _, c in base)
+        b50, b99, b999 = (percentile(base, p) for p in (50, 99, 99.9))
+        print(f"\n{labels[0]}: {b_total:,} messages   "
+              f"p50 {b50:,}   p99 {b99:,}   p99.9 {b999:,}")
+        print(f"{labels[1]}: {total:,} messages   "
+              f"p50 {p50:,}   p99 {p99:,}   p99.9 {p999:,}")
+        subtitle = a.subtitle or (
+            f"{labels[0]} p50 {b50:,} / p99 {b99:,}  ->  "
+            f"{labels[1]} p50 {p50:,} / p99 {p99:,}   (bucket resolution)")
 
     if a.svg:
-        markers = [("p50", p50), ("p99", p99), ("p99.9", p999)]
+        markers = [] if base else [("p50", p50), ("p99", p99), ("p99.9", p999)]
         Path(a.svg).parent.mkdir(parents=True, exist_ok=True)
         Path(a.svg).write_text(
-            svg_histogram(buckets, a.title, subtitle, markers=markers))
+            svg_histogram(buckets, a.title, subtitle, markers=markers,
+                          compare=base, labels=labels))
         print(f"wrote {a.svg}")
     return 0
 
