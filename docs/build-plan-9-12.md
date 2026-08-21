@@ -286,17 +286,39 @@ ref map. A ±2% band on a $100 stock at penny ticks is 200 levels per side; the
 same percentage on a $1,000 stock is 2,000. Percentage widths mean memory you
 cannot state in advance. So:
 
-1. **Width is a tick count, not a percentage.** `--band-levels N`, default set by
-   the sweep, start at 512. Memory becomes `active_symbols × 2 × N × 32` and is
-   knowable before the run.
+1. **Width is a tick count, not a percentage.** `--band-levels N`, default 512.
+   Memory is `active_symbols × 2 × N × 32` — for the 8,892 symbols that quoted
+   on 2019-12-30 that is **291 MB at N=512**, knowable before the run.
+
+   Price-proportional width was tried against the census first and **refuted**:
+   at 3% of price it costs a quarter of the memory and covers a third fewer of
+   the day's adds, because the symbols that need many ticks are not the
+   expensive ones. A $2.52 name with a wide day needs more slots than a $2,050
+   name with a quiet one.
 2. **Lazy init stays**, but centres on the first **two-sided quote**, not the
-   first order. Until a band exists everything falls through to the overflow
-   `std::map` — correct, just slow, and now measured.
-3. **One re-centre per symbol per session**, triggered when off-band adds exceed
-   10% of that symbol's adds over its first 1,000. Re-centring rebuilds the dense
-   array and re-indexes every resting order, so it is neither free nor silent:
-   count re-centres and report how many symbols needed one.
-4. **Count overflow hits per symbol; report the distribution.**
+   first order. The first order of an ITCH day arrives around 04:00 and, on the
+   real feed, is as likely to be a stub quote as a price anyone trades at.
+   Until a band exists everything falls through to the overflow `std::map` —
+   correct, just slow, and now counted.
+3. **One re-centre per symbol per session**, decided once at 1,000 adds and only
+   if more than 10% of them landed off-band. Re-centring rebuilds both dense
+   arrays and re-indexes every resting order — price-time priority survives
+   because the walk runs head-to-tail and re-push appends — so it is neither
+   free nor silent: count re-centres and report how many symbols needed one.
+4. **The band is a locality knob and must change no reported number.** Where a
+   level lives — a dense slot or a node in the cold map — is merged away in
+   price order on the way out, so a run at N=8 and a run at N=4096 must produce
+   byte-identical reconstructions. That is a property, it is asserted in CI
+   across a sweep of widths, and it is what makes the width a budget decision
+   rather than a correctness one.
+
+   It also came within one commit of being false. Centring on `(bid + ask) / 2`
+   across a one-tick spread puts the band base half a tick off the grid, and
+   `index_of()` sends anything with a remainder to overflow — so **every** price
+   became off-grid and the whole book fell through to the map. Correct, and
+   silently not fast. It only bit on odd spreads, so the first feed it ran on
+   looked healthy.
+5. **Count overflow hits per symbol; report the distribution.**
 
    The census ran, and it killed the version of this item that said the
    per-symbol price ranges would name the overflow symbols in advance. They

@@ -49,6 +49,7 @@ struct Options {
     bool all_symbols = false;
     const char* per_symbol = nullptr;   // one row per security
     size_t refs_capacity = size_t{1} << 22;
+    size_t band_levels = 512;   // per side, per symbol; see BookSet's comment
 };
 
 // 1,234,567 — matches Python's f"{n:,}" so the two summaries diff cleanly.
@@ -193,7 +194,7 @@ struct AllSymbols {
     bool stop = false;
 
     explicit AllSymbols(const Options& o)
-        : opt(o), set(o.refs_capacity, o.tick) {}
+        : opt(o), set(o.refs_capacity, o.tick, 20, o.band_levels) {}
 
     void on_message(char type, const uint8_t* p, uint16_t) {
         if (stop) return;
@@ -227,7 +228,7 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
     std::fputs("locate,symbol,directoried,resting_orders,resting_shares,volume,notional,"
                "trades,hidden_volume,cross_volume,open,high,low,close,best_bid,best_ask,"
                "unknown_refs,locate_mismatch,overflow_levels,trading_state,system_event,"
-               "operational_halts,broken_trades,tradable\n", f);
+               "operational_halts,broken_trades,tradable,adds,off_band_adds,recentres\n", f);
     a.set.for_each_book([&](uint16_t locate, const itchbook::book::Book& b,
                             const itchbook::book::SymbolInfo& info) {
         int32_t bid = 0;
@@ -242,7 +243,7 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
         std::fprintf(f,
                      "%u,%s,%s,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
                      ",%" PRIu64 ",%s,%s,%s,%s,%s,%s,%" PRIu64 ",%" PRIu64 ",%zu,%c,%c"
-                     ",%" PRIu64 ",%" PRIu64 ",%s\n",
+                     ",%" PRIu64 ",%" PRIu64 ",%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
                      locate, info.symbol, info.directoried ? "yes" : "no",
                      b.resting_orders(), b.resting_shares(), b.volume(), b.notional(),
                      b.trades(), b.hidden_volume(), b.cross_volume(),
@@ -254,7 +255,8 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
                      b.trading_state() == 0 ? '-' : b.trading_state(),
                      b.system_event() == 0 ? '-' : b.system_event(),
                      info.operational_halts, info.broken_trades,
-                     a.set.tradable(locate) ? "yes" : "no");
+                     a.set.tradable(locate) ? "yes" : "no",
+                     b.adds(), b.off_band_adds(), b.recentres());
     });
     const bool bad = std::ferror(f) != 0;
     return std::fclose(f) == 0 && !bad;
@@ -283,6 +285,27 @@ void print_all_summary(const AllSymbols& a) {
     std::printf("%-28s %16s\n", "ref map slots", comma(a.set.storage().refs.capacity()).c_str());
     std::printf("%-28s %16s\n", "pool capacity (orders)", comma(a.set.storage().pool.capacity()).c_str());
     std::printf("%-28s %16s\n", "symbols using overflow", comma(overflow_symbols).c_str());
+    // The band, priced and graded. Memory is knowable before the run; the
+    // off-band fraction is the only thing that says whether the width was
+    // right, and it can only be known after it.
+    uint64_t adds = 0, off_band = 0, recentres = 0;
+    a.set.for_each_book([&](uint16_t, const itchbook::book::Book& b,
+                            const itchbook::book::SymbolInfo&) {
+        adds += b.adds();
+        off_band += b.off_band_adds();
+        recentres += b.recentres();
+    });
+    const size_t levels = a.opt.band_levels;
+    std::printf("%-28s %16s\n", "band slots per side", comma(levels).c_str());
+    std::printf("%-28s %13.1f MB\n", "band memory (books x 2 x slots)",
+                static_cast<double>(a.set.books()) * 2.0 * static_cast<double>(levels) *
+                    static_cast<double>(sizeof(itchbook::book::Level)) / 1e6);
+    std::printf("%-28s %16s\n", "adds", comma(adds).c_str());
+    std::printf("%-28s %15s%%\n", "adds landing off-band",
+                adds == 0 ? "0.00"
+                          : (std::to_string(static_cast<double>(off_band) * 100.0 /
+                                            static_cast<double>(adds)).substr(0, 5)).c_str());
+    std::printf("%-28s %16s\n", "symbols re-centred once", comma(recentres).c_str());
     // The three that must be zero on a feed that is what it claims to be.
     std::printf("%-28s %16s\n", "unknown references", comma(a.set.unknown_ref()).c_str());
     std::printf("%-28s %16s\n", "locate mismatches", comma(a.set.locate_mismatch()).c_str());
@@ -453,6 +476,8 @@ bool parse_args(int argc, char** argv, Options* opt) {
         } else if (a == "--per-symbol") {
             opt->per_symbol = next("--per-symbol");
             opt->all_symbols = true;
+        } else if (a == "--band-levels") {
+            opt->band_levels = static_cast<size_t>(std::strtoull(next("--band-levels"), nullptr, 10));
         } else if (a == "--refs-capacity") {
             opt->refs_capacity = static_cast<size_t>(std::strtoull(next("--refs-capacity"), nullptr, 10));
         } else if (a == "--symbol") {
@@ -501,7 +526,8 @@ int main(int argc, char** argv) {
                      "           [--interval-ms N] [--levels N] [--limit N]\n"
                      "           [--tick N] [--end-ns N] [--json out.json] [--quiet]\n"
                      "       %s <feed.gz> --all-symbols [--per-symbol out.csv]\n"
-                     "           [--refs-capacity N] [--limit N] [--tick N] [--quiet]\n",
+                     "           [--band-levels N] [--refs-capacity N] [--limit N]\n"
+                     "           [--tick N] [--quiet]\n",
                      argv[0], argv[0]);
         return 2;
     }

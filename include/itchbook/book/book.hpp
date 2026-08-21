@@ -196,10 +196,49 @@ public:
         size_t levels = static_cast<size_t>(2 * half_ticks + 1);
         if (levels > max_levels) {
             levels = max_levels;
-            half_ticks = static_cast<int64_t>(levels / 2);
         }
-        base_ = static_cast<int32_t>(center - half_ticks * tick_);
+        set_band_slots(center, levels);
+    }
+
+    // The same band, sized in SLOTS rather than as a fraction of the price.
+    //
+    // A percentage was the natural thing to write when a book meant one symbol.
+    // Across 8,700 of them it stops being one: total band memory is
+    // symbols x 2 x slots x sizeof(Level), and a percentage leaves the term
+    // that decides whether the thing fits in the machine free to vary with the
+    // price of whatever happened to list. A slot count is a budget you can
+    // state before the run and check afterwards.
+    //
+    // Unlike set_band() this does NOT refuse to act on a side that already has
+    // a band, because moving one is the whole point of a re-centre. The caller
+    // owns the orders: this forgets where they were.
+    void set_band_slots(int32_t center, size_t levels) {
+        if (center <= 0 || tick_ <= 0 || levels == 0) return;
+        const int64_t half_ticks = static_cast<int64_t>(levels / 2);
+        int64_t base = static_cast<int64_t>(center) - half_ticks * tick_;
+        if (base < 0) base = 0;
+        // Snap to the tick grid, and not as tidiness. index_of() addresses a
+        // slot as (price - base_) / tick_ and sends anything with a remainder
+        // to overflow, so a base half a tick out of line makes EVERY price
+        // off-grid and the entire book falls through to the std::map. It costs
+        // no correctness -- overflow is still found by price -- which is what
+        // makes it dangerous: the book stays right and quietly stops being
+        // fast. A centre of (bid+ask)/2 across a one-tick spread is exactly
+        // that case, so it arrived the moment the band started being centred
+        // on a quote instead of on an order.
+        base -= base % tick_;
+        base_ = static_cast<int32_t>(base);
         dense_.assign(levels, Level{});
+        dense_nonempty_ = 0;
+        reset_cursor();
+    }
+
+    // Forget every level. The orders are not freed and not owned here; the
+    // caller is holding them and is about to push them somewhere else.
+    void clear_levels() {
+        dense_.clear();
+        overflow_.clear();
+        dense_nonempty_ = 0;
         reset_cursor();
     }
 
@@ -488,8 +527,14 @@ public:
 
     void add(uint64_t ref, char side, int32_t price, uint32_t shares) {
         if (!bids_.banded()) {
-            bids_.set_band(price, band_pct_, kMaxDenseLevels);
-            asks_.set_band(price, band_pct_, kMaxDenseLevels);
+            if (band_levels_ == 0) {
+                // The phase-3 policy, unchanged for every caller that has not
+                // asked for a slot budget: centre on the first price seen.
+                bids_.set_band(price, band_pct_, kMaxDenseLevels);
+                asks_.set_band(price, band_pct_, kMaxDenseLevels);
+            } else {
+                open_band_when_two_sided(side, price);
+            }
         }
         Order* o = store_->pool.allocate();
         o->ref = ref;
@@ -500,7 +545,10 @@ public:
         side_for(side).push(o);
         store_->refs.insert(ref, o);
         ++resting_orders_;
+        ++adds_;
+        if (o->level_idx == kOverflowLevel) ++off_band_adds_;
         resting_shares_ += shares;
+        maybe_recentre();
     }
 
     // 'E' — trades at the resting order's own price.
@@ -737,6 +785,24 @@ public:
     // Zero, on any feed that is what it claims to be. See resolve().
     uint64_t locate_mismatch() const { return locate_mismatch_; }
     size_t overflow_levels() const { return bids_.overflow_count() + asks_.overflow_count(); }
+
+    // ---- the band, as it actually behaved -----------------------------------
+    //
+    // Off-band is not failure. Every symbol on a real day holds STUB QUOTES --
+    // orders parked at $0.0001 or $199,999.99 to satisfy a two-sided quoting
+    // obligation -- and no band anyone can afford covers those; 77.6% of the
+    // symbols that quoted on 2019-12-30 posted one at or above $100,000. So the
+    // question a band policy has to answer is not "did anything land outside"
+    // but "what fraction did, and how close to the touch was it".
+    // Ask for a slot-budgeted band instead of the phase-3 percentage one. Must
+    // be set before the first add: a band that moves after orders are in it is
+    // a re-centre, which has its own policy and its own counter.
+    void set_band_levels(size_t levels) { band_levels_ = levels; }
+
+    uint64_t adds() const { return adds_; }
+    uint64_t off_band_adds() const { return off_band_adds_; }
+    uint64_t recentres() const { return recentres_; }
+    size_t band_levels() const { return band_levels_; }
     const Pool& pool() const { return store_->pool; }
     const RefMap& refs() const { return store_->refs; }
     const Storage& storage() const { return *store_; }
@@ -751,6 +817,63 @@ private:
     // A dense band this wide already covers a $40,000 stock at penny ticks; the
     // cap only stops a nonsense first price from asking for a huge allocation.
     static constexpr size_t kMaxDenseLevels = 1u << 22;
+
+    // How long the band gets to prove itself, and how badly it has to do before
+    // it is moved. Both are policy rather than physics, and both are named here
+    // rather than buried at a call site so that a sweep can move them.
+    static constexpr uint64_t kRecentreWindow = 1000;   // adds
+    static constexpr uint64_t kRecentrePercent = 10;    // off-band, percent
+
+    // Open the band on the first TWO-SIDED quote rather than the first order.
+    //
+    // The first order of an ITCH day arrives around 04:00, and on a real feed it
+    // is as likely to be a stub quote as a price anyone trades at -- a band
+    // centred on $199,999.99 covers nothing. Waiting for both sides costs a
+    // handful of orders sitting in the overflow map and buys a centre that is at
+    // least between two real quotes.
+    void open_band_when_two_sided(char side, int32_t price) {
+        if (side == 'B') {
+            if (pending_bid_ < 0 || price > pending_bid_) pending_bid_ = price;
+        } else {
+            if (pending_ask_ < 0 || price < pending_ask_) pending_ask_ = price;
+        }
+        if (pending_bid_ < 0 || pending_ask_ < 0) return;
+        move_band_to(static_cast<int32_t>(
+            (static_cast<int64_t>(pending_bid_) + pending_ask_) / 2));
+    }
+
+    // One move per session, decided once, at a fixed point, on evidence.
+    // Re-centring rebuilds both dense arrays and re-indexes every resting
+    // order, so it is neither free nor silent: it is counted and reported.
+    void maybe_recentre() {
+        if (band_levels_ == 0 || recentre_checked_ || !bids_.banded()) return;
+        if (adds_ < kRecentreWindow) return;
+        recentre_checked_ = true;
+        if (off_band_adds_ * 100 < adds_ * kRecentrePercent) return;
+        int32_t bid = 0;
+        int32_t ask = 0;
+        if (!bids_.best(&bid) || !asks_.best(&ask)) return;
+        move_band_to(static_cast<int32_t>((static_cast<int64_t>(bid) + ask) / 2));
+        ++recentres_;
+    }
+
+    // Put the band somewhere else and every resting order back into it.
+    //
+    // Collect first: set_band_slots() throws the levels away, and the orders
+    // are reached THROUGH those levels. Order matters too -- within a level the
+    // walk runs head to tail and push() appends, so price-time priority
+    // survives the move. Rebuilding from anything that reorders would not.
+    void move_band_to(int32_t centre) {
+        std::vector<Order*> all;
+        all.reserve(resting_orders_);
+        bids_.for_each_order_mut([&](Order* o) { all.push_back(o); });
+        asks_.for_each_order_mut([&](Order* o) { all.push_back(o); });
+        bids_.clear_levels();
+        asks_.clear_levels();
+        bids_.set_band_slots(centre, band_levels_);
+        asks_.set_band_slots(centre, band_levels_);
+        for (Order* o : all) side_for(static_cast<char>(o->side)).push(o);
+    }
 
     Side& side_for(char side) { return side == 'B' ? bids_ : asks_; }
 
@@ -832,10 +955,17 @@ private:
     uint16_t locate_ = 0;
     int32_t tick_;
     int32_t band_pct_;
+    size_t band_levels_ = 0;        // 0 = the phase-3 percentage policy
+    int32_t pending_bid_ = -1;
+    int32_t pending_ask_ = -1;
+    bool recentre_checked_ = false;
     Side bids_;
     Side asks_;
 
     size_t resting_orders_ = 0;
+    uint64_t adds_ = 0;
+    uint64_t off_band_adds_ = 0;
+    uint64_t recentres_ = 0;
     uint64_t resting_shares_ = 0;
     uint64_t volume_ = 0;
     uint64_t notional_ = 0;

@@ -86,10 +86,16 @@ public:
     // reports the real high-water mark for a day, and 9.9 pre-sizes from it so
     // that a rehash — hundreds of milliseconds, straight into the worst-sample
     // column — never happens mid-replay.
+    // `band_levels` is the per-side dense band, in slots. Total band memory is
+    // active_symbols x 2 x band_levels x sizeof(Level), which is 32 bytes -- so
+    // 512 slots across the 8,892 symbols that quoted on 2019-12-30 is 291 MB,
+    // and that number is knowable before the run rather than after it. Zero
+    // keeps the phase-3 percentage policy, which is what every single-symbol
+    // caller still gets.
     explicit BookSet(size_t refs_capacity = 1u << 22, int32_t tick = 100,
-                     int32_t band_pct = 20)
+                     int32_t band_pct = 20, size_t band_levels = 0)
         : store_(refs_capacity), tick_(tick), band_pct_(band_pct),
-          books_(kLocates), dir_(kLocates) {}
+          band_levels_(band_levels), books_(kLocates), dir_(kLocates) {}
 
     // The book for a locate, created if this is the first message for it. A
     // newly created book inherits the session state, so a symbol that first
@@ -98,6 +104,7 @@ public:
         std::unique_ptr<Book>& slot = books_[locate];
         if (slot == nullptr) {
             slot = std::make_unique<Book>(store_, locate, tick_, band_pct_);
+            slot->set_band_levels(band_levels_);
             slot->set_system_event(session_.system_event);
             ++constructed_;
         }
@@ -265,6 +272,7 @@ private:
     SessionState session_;
     int32_t tick_;
     int32_t band_pct_;
+    size_t band_levels_;
     std::vector<std::unique_ptr<Book>> books_;
     std::vector<SymbolInfo> dir_;
     size_t constructed_ = 0;

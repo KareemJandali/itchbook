@@ -123,7 +123,7 @@ jobs:
           ./build/book_replay data/raw/multi.gz --all-symbols \
             --per-symbol /tmp/per_symbol.csv | tee /tmp/all.txt
           python3 python/analysis/all_symbols_check.py data/raw/multi.gz \
-            --binary build/book_replay
+            --binary build/book_replay --band-sweep 8 64 4096
           python3 - <<'PY'
           import re, sys
           text = open('/tmp/all.txt').read()
