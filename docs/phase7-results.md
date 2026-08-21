@@ -341,25 +341,36 @@ cancels out. The pre-fix code measures 3.83x for 2x the input against a limit of
 
 MSFT, 30 December 2019, 1,221,484 messages, the outage at a real 14:00 ET and
 books compared at 90% of the session against a checkpoint holding **318
-levels**. Ten scenarios below; `halt` and `halt-and-drop` were added afterwards
-and bring the matrix to twelve — see section 1 for their rows:
+levels**. All twelve scenarios, including the two that inject a halt:
 
-| scenario | verdict | lost | gaps | state |
-|---|---|---:|---:|---|
-| clean | CORRECT | 0 | 0 | trusted |
-| drop-1-in-1000 | SAFE | 1,127 | 25 | recovering |
-| drop-1-in-100 | SAFE | 12,199 | 269 | **halted** |
-| duplicate-1-in-100 | CORRECT | 0 | 0 | trusted |
-| reorder-1-in-100 | CORRECT | 0 | 0 | trusted |
-| truncate-1-in-500 | SAFE | 1,341 | 58 | recovering |
-| disconnect-short | SAFE | 1,806 | 1 | recovering |
-| disconnect-long | SAFE | 18,145 | 1 | recovering |
-| everything | SAFE | 4,251 | 63 | recovering |
-| disconnect-to-end | SAFE | 0 | 0 | halted |
+| scenario | verdict | lost | gaps | dup | reord | trunc | state |
+|---|---|---:|---:|---:|---:|---:|---|
+| clean | CORRECT | 0 | 0 | 0 | 0 | 0 | trusted |
+| drop-1-in-1000 | SAFE | 1,127 | 25 | 0 | 1,505 | 0 | recovering |
+| drop-1-in-100 | SAFE | 12,199 | 269 | 0 | 12,315 | 0 | **halted** |
+| duplicate-1-in-100 | CORRECT | 0 | 0 | 12,199 | 0 | 0 | trusted |
+| reorder-1-in-100 | CORRECT | 0 | 0 | 0 | 270 | 0 | trusted |
+| truncate-1-in-500 | SAFE | 1,341 | 58 | 0 | 0 | 58 | recovering |
+| disconnect-short | SAFE | 1,806 | 1 | 0 | 64 | 0 | recovering |
+| disconnect-long | SAFE | 18,145 | 1 | 0 | 64 | 0 | recovering |
+| everything | SAFE | 4,251 | 63 | 2,160 | 3,013 | 15 | recovering |
+| disconnect-to-end | SAFE | 0 | 0 | 0 | 0 | 0 | halted |
+| halt | CORRECT | 0 | 0 | 0 | 0 | 0 | trusted |
+| halt-and-drop | SAFE | 2,620 | 58 | 0 | 3,375 | 0 | recovering |
 
-**3 CORRECT, 7 SAFE, 0 WRONG.** Duplication and reordering are handled exactly
+**4 CORRECT, 8 SAFE, 0 WRONG.** Duplication and reordering are handled exactly
 on a real feed — 12,199 duplicated messages applied once, 270 reordered packets
 resolved without a single false gap.
+
+An earlier recording of this section had ten rows, because `halt` and
+`halt-and-drop` were added to the harness after it was written. They are in the
+matrix on the real day too: the halt is *injected* into the stream — MSFT did
+not halt on 30 December 2019 — but it is injected into the real feed, with a
+real book behind it and every subsequent sequence number shifted, which is a
+sterner test than the same injection into a generated one. `halt` staying
+CORRECT means the state transition costs the book nothing; `halt-and-drop`
+losing 2,620 messages across 58 gaps and reporting `recovering` means a gap
+straddling a state change is still detected as a gap.
 
 `drop-1-in-100` halting after 269 gaps is the `max_gaps_before_halt` policy
 doing its job: a feed losing that many packets is not one you are recovering

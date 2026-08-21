@@ -30,12 +30,10 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > the reference-resolving model exact on every one.
 > See [`docs/phase6-results.md`](docs/phase6-results.md).
 >
-> **Never silently wrong.** Ten scenarios of packet damage over that day —
-> drops, duplicates, reordering, truncation, a 14:00 outage — and in none of
-> them does the system report a trusted book that differs from the truth. Two
-> further scenarios inject a halt and its resume; MSFT did not halt that day,
-> so those run on a generated feed, bringing the matrix to twelve. The grader
-> is proven able to fail.
+> **Never silently wrong.** Twelve scenarios of packet damage over that day —
+> drops, duplicates, reordering, truncation, a 14:00 outage, and a trading halt
+> injected into the real stream — and in none of them does the system report a
+> trusted book that differs from the truth. The grader is proven able to fail.
 > See [`docs/phase7-results.md`](docs/phase7-results.md).
 
 Reconstructing an order book from a raw exchange feed is not hard because the
@@ -347,26 +345,29 @@ python3 python/analysis/adversarial.py data/sliced/MSFT.gz --build build
 ```
 
 ```
-scenario             verdict     lost   gaps        state
-clean                CORRECT        0      0      trusted
-drop-1-in-1000          SAFE    1,127     25   recovering
-drop-1-in-100           SAFE   12,199    269       halted
-duplicate-1-in-100   CORRECT        0      0      trusted
-reorder-1-in-100     CORRECT        0      0      trusted
-truncate-1-in-500       SAFE    1,341     58   recovering
-disconnect-short        SAFE    1,806      1   recovering
-disconnect-long         SAFE   18,145      1   recovering
-everything              SAFE    4,251     63   recovering
-disconnect-to-end       SAFE        0      0       halted
+scenario             verdict     lost   gaps    dup  reord  trunc        state
+clean                CORRECT        0      0      0      0      0      trusted
+drop-1-in-1000          SAFE    1,127     25      0   1505      0   recovering
+drop-1-in-100           SAFE   12,199    269      0  12315      0       halted
+duplicate-1-in-100   CORRECT        0      0  12199      0      0      trusted
+reorder-1-in-100     CORRECT        0      0      0    270      0      trusted
+truncate-1-in-500       SAFE    1,341     58      0      0     58   recovering
+disconnect-short        SAFE    1,806      1      0     64      0   recovering
+disconnect-long         SAFE   18,145      1      0     64      0   recovering
+everything              SAFE    4,251     63   2160   3013     15   recovering
+disconnect-to-end       SAFE        0      0      0      0      0       halted
+halt                 CORRECT        0      0      0      0      0      trusted
+halt-and-drop           SAFE    2,620     58      0   3375      0   recovering
 
-CORRECT=3  SAFE=7                    (0 WRONG)
+CORRECT=4  SAFE=8                    (0 WRONG)
 ```
 
-Those are the ten scenarios as recorded on MSFT. `halt` and `halt-and-drop`
-were added to the harness afterwards, so a run today prints twelve rows; both
-inject a halt and its resume, and MSFT did not halt on 30 December 2019, which
-is why the recorded numbers for them are on a generated feed
-([`docs/phase7-results.md`](docs/phase7-results.md) §1).
+The last two are the plan's fifth injection. MSFT did not halt on 30 December
+2019, so the halt and its resume are *inserted* into the stream — which shifts
+every sequence number after them, and puts a real book and two hours of real
+session behind the state change. `halt` staying CORRECT means the transition
+costs the book nothing; `halt-and-drop` losing 2,620 messages and reporting
+`recovering` means a gap straddling that transition is still seen as a gap.
 
 **CORRECT** means the book matched an undamaged replay and the system said so.
 **SAFE** means it did not match and the system said *that*. **WRONG** — a book

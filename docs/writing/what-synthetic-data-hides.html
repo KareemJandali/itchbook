@@ -110,7 +110,7 @@ a:focus-visible{outline:2px solid var(--signal); outline-offset:3px; border-radi
 <hr>
 <h2><span class="n">3</span><span class="t">A receiver that reported a clean session having lost 40% of the day</span></h2>
 <p>The recovery work injects packet damage into a MoldUDP64 stream — drops, duplicates, reordering, truncation, a mid-day outage — and grades each run: did the book match an undamaged replay, and did the system <em>say</em> it was trustworthy? The only unacceptable outcome is a book that differs while claiming to be trusted.</p>
-<p>Ten scenarios, no failures. Then, instead of asking "does it survive this list", I asked "how much can it survive", and swept the outage length until something broke. At 2,000 packets it did:</p>
+<p>Ten scenarios at the time, no failures. Then, instead of asking "does it survive this list", I asked "how much can it survive", and swept the outage length until something broke. At 2,000 packets it did:</p>
 <pre><code>0 messages lost, 0 gaps, state: trusted</code></pre>
 <p>with <strong>80,235 messages missing — 40% of the session.</strong></p>
 <p><strong>The mechanism.</strong> A gap in the middle of a stream announces itself: the next packet carries a sequence number that has jumped. A stream that <em>dies</em> never sends that next packet. There is no discontinuity to notice, and every counter stays honestly at zero. Nothing was detected because from sequence numbers alone nothing was detectable.</p>
