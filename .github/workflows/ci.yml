@@ -167,9 +167,11 @@ jobs:
       - name: Scaling guard (the backtester must stay linear in feed length)
         run: python3 python/analysis/scaling_check.py --build build
 
-      # The phase 7 done-condition. Nine scenarios of packet damage over a real
-      # feed, each graded CORRECT / SAFE / CAUTIOUS / WRONG. Any WRONG — the
-      # book diverged while the system called itself trusted — fails the build.
+      # The phase 7 done-condition. Twelve scenarios of packet damage, each
+      # graded CORRECT / SAFE / CAUTIOUS / WRONG. Any WRONG — the book diverged
+      # while the system called itself trusted — fails the build. The feed here
+      # is generated, not real: CI cannot carry licensed market data. The real
+      # MSFT run is recorded in docs/phase7-results.md section 9.
       - name: Adversarial replay (drops, dups, reorders, truncation, an outage)
         run: python3 python/analysis/adversarial.py data/raw/rec.gz --build build
 

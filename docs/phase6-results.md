@@ -115,7 +115,8 @@ bound was right.
 
 50 MSFT orders that were pulled part-filled — the discriminating cases —
 shadowed one message ahead of their own add and graded against what they
-actually filled.
+actually filled. This is `./scripts/real-data-run.sh <day>.gz MSFT`, whose
+sample count defaults to 50.
 
 | model | mean error | mean abs error | over | under | exact |
 |---|---:|---:|---:|---:|---:|
@@ -123,6 +124,15 @@ actually filled.
 | optimistic | +9.0 | 9.0 | 11 | 0 | 39 |
 | mbo | 0.0 | 0.0 | 0 | 0 | **50** |
 | pessimistic | −25.4 | 25.4 | 0 | 21 | 29 |
+
+> **A larger run exists and is the figure the README quotes.** Re-run at
+> `--samples 200` — `./scripts/real-data-run.sh <day>.gz MSFT 200` — the result
+> holds at the larger size: 200/200 inside `[pessimistic, optimistic]`, `mbo`
+> exact on all 200, naive over-filling 89 and never under-filling, pessimistic
+> under-filling 96 and never over-filling. The per-model table above was not
+> regenerated at 200 and still shows the 50-sample run; its mean errors and its
+> `optimistic` column are therefore 50-sample figures. Regenerate with the
+> command in this note to replace it.
 
 **`mbo` reproduced all 50 exactly, and 50/50 fell inside
 [pessimistic, optimistic].** Naive over-fills and never under-fills;
@@ -422,7 +432,8 @@ Established on **real data** (section 1):
 * The band is a bound and `mbo` is exact. 50/50 real MSFT orders fell inside
   [pessimistic, optimistic]; `mbo` reproduced all 50 exactly; naive over-filled
   24 times and under-filled never; pessimistic under-filled 21 and over-filled
-  never.
+  never. At `--samples 200` the same holds: 200/200 bracketed, 200 exact, naive
+  over 89 and never under, pessimistic under 96 and never over.
 * A passive maker at the touch is adversely selected. Drift is negative at
   100 ms, 1 s and 10 s in every model and worsens with the horizon.
 * The strategy loses money, which is the phase's done-condition.

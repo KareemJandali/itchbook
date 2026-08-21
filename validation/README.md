@@ -5,23 +5,39 @@ so a later change can be checked against it.
 
 | Symbol | Date | Messages | Volume | Open | High | Low | Close | Graded? |
 |---|---|---|---|---|---|---|---|---|
-| MSFT | 2019-12-30 | 1,166,022 | 6,154,278 | 159.2000 | 159.3000 | 156.7300 | 157.5700 | **PASS** |
+| MSFT | 2019-12-30 | 1,220,796 | 6,154,278 | 159.2000 | 159.3000 | 156.7300 | 157.5700 | **PASS** |
 
 Graded against Databento `XNAS.ITCH` `ohlcv-1d`. All five fields match exactly.
+The message count is the record's own `messages_read` — the `--utc-day` window,
+not the whole file. The JSON's `symbol` is `null` because the reconstruction
+that produced it was run on a pre-sliced file without `--symbol`; the filename
+carries it, and the command below now passes the flag so a re-run records it.
 
 Source: `12302019.NASDAQ_ITCH50.gz` from `emi.nasdaq.com/ITCH/Nasdaq ITCH/`,
 sliced with `python/slice_symbol.py`.
 
 The C++ book and the Python oracle agree on all of it — 61,228 identical
 snapshot rows at a one-second interval, identical summaries, zero unknown order
-references across 1.22M messages. That is phase 3's done-condition.
+references. That is phase 3's done-condition.
+
+Two windows are in play and their figures differ, which is expected rather than
+a discrepancy:
+
+| | messages | snapshot rows at 1 s |
+|---|---:|---:|
+| whole file — the differential above | 1,221,484 | 61,228 |
+| `--utc-day 2019-12-30` — the graded record | 1,220,796 | 57,291 |
+
+The 688-message difference is the after-hours tail described below. The
+differential runs unbounded on both sides because it asks whether two
+implementations agree, not whether either matches a vendor's bucket.
 
 ## The session window
 
 Reproduce with:
 
 ```bash
-python3 python/reference/replay.py data/sliced/MSFT.gz \
+python3 python/reference/replay.py data/sliced/MSFT.gz --symbol MSFT \
     --utc-day 2019-12-30 --json validation/MSFT_2019-12-30.json
 export DATABENTO_API_KEY=db-...
 python3 python/analysis/validate.py validation/MSFT_2019-12-30.json \
