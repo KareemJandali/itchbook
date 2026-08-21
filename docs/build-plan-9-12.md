@@ -955,6 +955,48 @@ consumes — the same ring, a different slot type. Update phase 9's end-to-end
 number and say which phase moved it. The 9.0 census time is the yardstick: if
 overlap does not beat it, the reader thread is not doing what you think.
 
+### 10.8 — predictions, written before the measurement
+
+Standing rule 2. Recorded here before `--reader-thread` was run once, so the
+verdict below can be kept or falsified in print rather than rationalised.
+
+**The ceiling is arithmetic, not ambition.** Decompression costs D, the book
+costs B, and today they are strictly sequential: `parse()` calls `gzread`, then
+the handler, then `gzread` again, on one thread. Sequential total is D + B.
+Overlapped cannot beat max(D, B). So the available speedup is
+(D + B) / max(D, B) — at most **2×**, and only when the halves are exactly
+balanced.
+
+**P1 — the headline.** On the real file phase 9 measured the framing-only census
+at 16.62 s and the all-symbols run at 44.57 s, so D ≈ 16.6 s and B ≈ 28.0 s.
+Predicted overlapped total **28–33 s**, a speedup of **1.35–1.6×**. The book is
+the larger half, so the ceiling is 1.59× and the reader thread should very
+nearly reach it: this producer is a single `gzread` loop with nothing to
+contend on.
+
+**P2 — on the synthetic feed in this two-core container**, where the same
+arithmetic holds with different constants, predicted speedup **1.2–1.7×**.
+Wider, because the sender-lateness work in 10.7 established that this
+container's scheduling noise is larger than anything being measured, and
+because two threads on two cores leaves nothing for the OS.
+
+**P3 — the falsification condition.** If the overlapped time is ≥ 0.95 × (D + B),
+the reader thread is not overlapping and the ring is decoration. That is the
+result that would mean the design is wrong, and it is checkable.
+
+**P4 — predicted FLAT: chunk size.** 64 KB against 256 KB against 1 MB should
+show no significant difference. The ring's cost is one release store per
+publish, and at 64 KB that is already one store per ~1,600 messages — a rounding
+error against inflating 64 KB. Quadrupling it divides a rounding error by four.
+This is the phase's predicted-flat candidate and it is expected to be flat; it
+is being run precisely because "obviously flat" is what the phase 9.9 ref-map
+sweep also said before it turned out to be worth 2.42×.
+
+**P5 — which side stalls.** The producer should stall (ring full) far more often
+than the consumer starves (ring empty), because B > D. If the consumer is the
+one starving, the feed is decompression-bound and P1's arithmetic was built on
+the wrong half.
+
 ### Done — Phase 10
 
 - [ ] Wire-to-book p50/p99/p99.9 **and the bucket distribution** at 1×
