@@ -99,11 +99,11 @@ python3 python/analysis/latency_histogram.py out/after.csv --compare out/before.
 The bodies of the two distributions nearly coincide — the steady state was never
 the problem — and the whole change is in the right-hand tail, which is exactly
 what "the cost was one 42MB slab being faulted in, not the hot path" predicts.
-On this machine the worst single message goes from **63,775,659 cycles to
-629,334** and throughput from 16.4M to 26.4M msg/s, while p99 moves by less than
-run-to-run noise (493 vs 523 — the wrong way, on this run). That is the shape of
-the claim: a tail event removed, not a hot path sped up. Both runs' full
-summaries are committed next to the figure as
+In the container these two runs came from, the worst single message goes from
+**63,775,659 cycles to 629,334** and throughput from 16.4M to 26.4M msg/s, while
+p99 moves by less than run-to-run noise (493 vs 523 — the wrong way, on this
+run). That is the shape of the claim: a tail event removed, not a hot path sped
+up. Both runs' full summaries are committed next to the figure as
 [`latency-before.json`](docs/figures/latency-before.json) and
 [`latency-after.json`](docs/figures/latency-after.json), so every number in this
 paragraph is checkable without rerunning anything.
@@ -118,19 +118,23 @@ python3 python/analysis/latency_histogram.py out/latency.csv \
     --svg docs/figures/latency-histogram.svg
 ```
 
-Five numbers cannot show a shape. The table above is identical between a
-distribution with one tight mode and a few stragglers and one with three
-separate modes — and the second is a mechanism you can go and find. This feed
-has three: the steady state just under 100 cycles, a second population three
-orders of magnitude out where a level allocates, and the descheduling tail past
-100k. Both axes are logarithmic and labelled as such; a linear one is a single
-bar against the origin and six screens of white space.
+Five numbers cannot show a shape, and the shape is where the argument is. This
+run puts **93.9% of a million messages between 32 and 256 cycles** — one broad
+mode, the steady state — and then decays smoothly. What the percentile columns
+cannot show is how the rest is distributed: p99.9 is 1,173 cycles and the worst
+message is 629,334, a factor of **537**, and the entire population at or above
+2,000 cycles is **321 messages out of a million**. A tail that is that wide and
+that sparse is a rare fault, not a slow path — which is the claim the pool
+change rests on, made visible rather than asserted. Both axes are logarithmic
+and labelled as such; a linear one is a single bar against the origin and six
+screens of white space.
 
-The markers are the same percentiles as the table, drawn at bucket resolution,
-so the picture and the numbers are visibly one measurement. **This figure was
-produced on a third machine** — the container this repository's checks run in —
-so its absolute cycles sit above both columns above. The shape is the part that
-transfers; regenerate it with the two commands above to get your own.
+The markers are the same three statistics as the table — p50, p99, p99.9 — but
+not the same numbers, and the difference is the point: **these runs come from a
+third machine**, the container this repository's checks run in, so its absolute
+cycles sit above both columns above. Read the table for this project's hardware
+and the figure for the shape, which is the part that transfers. Regenerate it
+with the commands above to get your own.
 
 ### The counter behind it
 
@@ -537,8 +541,14 @@ python/
     leave_one_out.py   shadows real orders and grades the fill models against them
     adversarial.py     packet damage, graded CORRECT / SAFE / CAUTIOUS / WRONG
     scaling_check.py   asserts the backtester stays linear in feed length
+    check_cross.py     grades the reconstructed auction prices against NASDAQ's
+    latency_histogram.py  renders the bucket CSV, one run or before/after
     fill_comparison.py, markout.py, latency_sweep.py, svgchart.py
-scripts/            real-data-run.sh, full-day-differential.sh
+bench/              baseline/after JSON, compare.py (A/B with pinning), and
+                    regression_check.py — the CI gate that the pool change
+                    still pays, by ratio so the runner's speed cancels out
+scripts/            real-data-run.sh, full-day-differential.sh,
+                    update-real-numbers.py, render-writeup.py
 tests/              unit, property fuzzers, and the cross-implementation differentials
 data/  out/         gitignored — raw feeds, per-symbol slices, generated results
 ```
@@ -656,6 +666,26 @@ already paid for.
 Passing means volume and OHLC match **exactly**. A book that is a few thousand
 shares off is a book with a bug in it.
 
+### The check that needs no subscription
+
+The grading above requires a Databento key, which means the headline
+verification is not something a reader can reproduce for free. One NASDAQ figure
+survives that objection: the **official opening and closing prices**. Both are
+auctions, both arrive in the feed as `Q` cross trades, and for a NASDAQ-listed
+stock the official closing price *is* the closing cross — so any published quote
+history settles it.
+
+```bash
+python3 python/analysis/check_cross.py validation/MSFT_2019-12-30.json \
+    --official-open <open> --official-close <close>
+```
+
+This is a real test rather than a formality. Cross handling is the part of an
+ITCH book most likely to be quietly wrong: it is rare, it is a separate message
+type, and it never appears in a day's ordinary flow, so nothing else exercises
+it. [`validation/`](validation/) has the two-minute recipe, including which of
+the two prices is the strong signal and why.
+
 ### Two things worth knowing before you start
 
 **Databento is the oracle, not the input.** It serves normalised DBN, not raw
@@ -687,12 +717,19 @@ Debug roughly in this order:
 
 ## Write-up
 
-[**What synthetic data hides**](docs/writing/what-synthetic-data-hides.md) — the
-seven times a number in this project was true on a generated feed and false on
-MSFT, what each mechanism turned out to be, and what I would do differently. The
-3.67× headline that was a fact about my generator; three presentation bugs that
-all lied in the same direction; a receiver reporting a clean session having lost
-40% of the day; a recovery criterion that could never fire on a real book.
+[**What synthetic data hides**](docs/writing/what-synthetic-data-hides.md) —
+eight times a number in this project was true on a generated feed and false in
+reality, what each mechanism turned out to be, and what I would do differently.
+The 3.67× headline that was a fact about my generator; three presentation bugs
+that all lied in the same direction; a receiver reporting a clean session having
+lost 40% of the day; a recovery criterion that could never fire on a real book;
+and a property fuzzer that reported a million clean sequences over an engine it
+was exercising two thirds of.
+
+A rendered copy sits beside it as
+[`what-synthetic-data-hides.html`](docs/writing/what-synthetic-data-hides.html),
+regenerated from the Markdown by `scripts/render-writeup.py` so the two cannot
+drift.
 
 ## License
 
