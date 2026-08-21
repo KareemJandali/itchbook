@@ -495,6 +495,7 @@ public:
         o->ref = ref;
         o->shares = shares;
         o->price = price;
+        o->locate = locate_;
         o->side = static_cast<uint8_t>(side);
         side_for(side).push(o);
         store_->refs.insert(ref, o);
@@ -504,8 +505,8 @@ public:
 
     // 'E' — trades at the resting order's own price.
     void execute(uint64_t ref, uint32_t shares) {
-        size_t slot = store_->refs.find_index(ref);
-        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        size_t slot = resolve(ref);
+        if (slot == RefMap::npos) return;
         Order* o = store_->refs.at(slot);
         record_trade(o->price, shares);
         reduce(o, shares, slot);
@@ -514,31 +515,31 @@ public:
     // 'C' — trades at a stated price. A non-printable execution still removes
     // the shares from the book but must not count toward volume, VWAP or OHLC.
     void execute_with_price(uint64_t ref, uint32_t shares, int32_t price, bool printable) {
-        size_t slot = store_->refs.find_index(ref);
-        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        size_t slot = resolve(ref);
+        if (slot == RefMap::npos) return;
         if (printable) record_trade(price, shares);
         reduce(store_->refs.at(slot), shares, slot);
     }
 
     // 'X' — partial cancel. Not a trade: no volume.
     void cancel(uint64_t ref, uint32_t shares) {
-        size_t slot = store_->refs.find_index(ref);
-        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        size_t slot = resolve(ref);
+        if (slot == RefMap::npos) return;
         reduce(store_->refs.at(slot), shares, slot);
     }
 
     // 'D' — full removal.
     void remove(uint64_t ref) {
-        size_t slot = store_->refs.find_index(ref);
-        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        size_t slot = resolve(ref);
+        if (slot == RefMap::npos) return;
         destroy(store_->refs.at(slot), slot);
     }
 
     // 'U' — delete then add. Side is inherited from the original order; the
     // replacement joins the back of its new level, losing queue priority.
     void replace(uint64_t orig_ref, uint64_t new_ref, int32_t price, uint32_t shares) {
-        size_t slot = store_->refs.find_index(orig_ref);
-        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        size_t slot = resolve(orig_ref);
+        if (slot == RefMap::npos) return;
         Order* o = store_->refs.at(slot);
         char side = static_cast<char>(o->side);
         destroy(o, slot);
@@ -621,8 +622,8 @@ public:
     // its own fill accounting and must not also move this book's market trade
     // statistics, which describe the *feed's* trades and not ours.
     void take(uint64_t ref, uint32_t shares) {
-        size_t slot = store_->refs.find_index(ref);
-        if (slot == RefMap::npos) { ++unknown_ref_; return; }
+        size_t slot = resolve(ref);
+        if (slot == RefMap::npos) return;
         reduce(store_->refs.at(slot), shares, slot);
     }
 
@@ -636,7 +637,14 @@ public:
         return lvl == nullptr ? 0 : lvl->shares;
     }
 
-    const Order* find(uint64_t ref) const { return store_->refs.find(ref); }
+    // Agrees with resolve() by construction: if these two disagreed, apply_ex()
+    // would record a pre-mutation state for an order the mutation then refused
+    // to touch, and the simulator would be reasoning about another symbol's
+    // book. Const, so it counts nothing — the mutating path does the counting.
+    const Order* find(uint64_t ref) const {
+        const Order* o = store_->refs.find(ref);
+        return (o != nullptr && o->locate == locate_) ? o : nullptr;
+    }
 
     // Was pool_.live(). A shared pool counts every symbol's orders, so this has
     // to be the book's own tally or an all-symbols run would report the whole
@@ -724,6 +732,10 @@ public:
     }
 
     uint64_t unknown_ref() const { return unknown_ref_; }
+
+    // References that resolved to an order belonging to a different symbol.
+    // Zero, on any feed that is what it claims to be. See resolve().
+    uint64_t locate_mismatch() const { return locate_mismatch_; }
     size_t overflow_levels() const { return bids_.overflow_count() + asks_.overflow_count(); }
     const Pool& pool() const { return store_->pool; }
     const RefMap& refs() const { return store_->refs; }
@@ -776,6 +788,29 @@ private:
         store_->pool.deallocate(o);
     }
 
+    // Every reference-carrying message goes through here. Two ways a reference
+    // can fail to name an order this book may touch, and they are different
+    // facts that get different counters:
+    //
+    //   * No order has it. Ordinary and expected — it is a message about the
+    //     world before a gap, or before this process started. unknown_ref_.
+    //
+    //   * An order has it, and it belongs to another symbol. That is not
+    //     expected by anything: ITCH references are unique across the day's
+    //     whole feed, so with one shared map this cannot happen unless the map,
+    //     the feed, or this code is wrong. locate_mismatch_ must be zero on a
+    //     real day, and the mutation is refused rather than applied, because
+    //     applying it would corrupt two books instead of one.
+    size_t resolve(uint64_t ref) {
+        size_t slot = store_->refs.find_index(ref);
+        if (slot == RefMap::npos) { ++unknown_ref_; return RefMap::npos; }
+        if (store_->refs.at(slot)->locate != locate_) {
+            ++locate_mismatch_;
+            return RefMap::npos;
+        }
+        return slot;
+    }
+
     // Hand this book's orders back one at a time, because the containers belong
     // to everyone. The old implementation dropped the whole Pool and the whole
     // RefMap and rebuilt them — correct while a book was the only thing in
@@ -808,6 +843,7 @@ private:
     uint64_t hidden_volume_ = 0;
     uint64_t cross_volume_ = 0;
     uint64_t unknown_ref_ = 0;
+    uint64_t locate_mismatch_ = 0;
     std::map<char, int32_t> cross_prices_;
     int32_t open_ = -1;
     int32_t high_ = -1;
