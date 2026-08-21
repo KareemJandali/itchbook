@@ -71,7 +71,7 @@ endforeach()
 
 # ---- Tests ----
 enable_testing()
-foreach(t test_parser test_book test_book_set test_matcher test_fees test_queue test_ledger
+foreach(t test_parser test_book test_book_set test_live_orders test_matcher test_fees test_queue test_ledger
           test_sim test_kill_switch test_mold test_recover test_restart)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
