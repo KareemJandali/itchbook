@@ -1,0 +1,73 @@
+{
+  "sweep": "band",
+  "label": "band slots per side",
+  "rounds": 3,
+  "pinned": false,
+  "feed": "/Users/kareemjandali/Desktop/12302019.NASDAQ_ITCH50.gz",
+  "variants": [
+    {
+      "variant": "512",
+      "median_seconds": 85.0,
+      "spread_percent": 6.74117647058824,
+      "peak_rss_bytes": 483934208,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 4194304,
+      "band_levels": 512,
+      "off_band_adds": 18739843,
+      "samples": [
+        85.0,
+        82.99,
+        88.72
+      ]
+    },
+    {
+      "variant": "128",
+      "median_seconds": 95.23,
+      "spread_percent": 186.88438517273966,
+      "peak_rss_bytes": 280625152,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 4194304,
+      "band_levels": 128,
+      "off_band_adds": 47854453,
+      "samples": [
+        270.34,
+        92.37,
+        95.23
+      ]
+    },
+    {
+      "variant": "2048",
+      "median_seconds": 81.7,
+      "spread_percent": 487.8824969400245,
+      "peak_rss_bytes": 1073954816,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 4194304,
+      "band_levels": 2048,
+      "off_band_adds": 7865538,
+      "samples": [
+        478.63,
+        80.03,
+        81.7
+      ]
+    },
+    {
+      "variant": "8192",
+      "median_seconds": 81.83,
+      "spread_percent": 11.169497739215448,
+      "peak_rss_bytes": 2087190528,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 4194304,
+      "band_levels": 8192,
+      "off_band_adds": 3080834,
+      "samples": [
+        88.54,
+        79.4,
+        81.83
+      ]
+    }
+  ]
+}
