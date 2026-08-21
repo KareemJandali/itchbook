@@ -3,19 +3,24 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–7 complete. Every claim below is measured on a real
-> NASDAQ trading day — MSFT, 30 December 2019, 1,221,484 messages — not on a
-> generated feed.
+> **Status:** Phases 1–8 complete. The correctness, fill and recovery claims
+> below are measured on a real NASDAQ trading day — MSFT, 30 December 2019,
+> 1,221,484 messages over the whole file. **Performance is the exception**, and
+> says so where it appears: a benchmark has to replay the same messages every
+> time to mean anything, so those numbers come from a generated feed built to
+> that day's message mix.
 >
-> **Correct.** The C++ book and an independent Python oracle agree byte for
-> byte across **61,228 snapshot rows and 22 summary fields**, VWAP to ten
-> decimal places, zero unknown order references. The reconstruction matches
-> **Databento's published daily bar exactly** — volume, open, high, low, close,
-> to the share and the cent. See [Validation](#validation).
+> **Correct.** Replaying the whole file, the C++ book and an independent
+> Python oracle agree byte for byte across **61,228 snapshot rows and 22
+> summary fields**, VWAP to ten decimal places, zero unknown order references.
+> The reconstruction matches **Databento's published daily bar exactly** —
+> volume, open, high, low, close, to the share and the cent.
+> See [Validation](#validation).
 >
-> **Fast.** **1.73× fewer cycles per message** (43.9M msg/s), traced by
-> hardware counter to the pool's slab allocation rather than anything on the
-> hot path: the page-fault count matches the removed 41.9 MB slab to 99.5%. Two
+> **Fast** — *the one claim here measured on a generated feed, not the real
+> day.* **1.73× fewer cycles per message** (43.9M msg/s), traced by hardware
+> counter to the pool's slab allocation rather than anything on the hot path:
+> the page-fault count matches the removed 41.9 MB slab to 99.5%. Two
 > optimisations the plan predicted measured flat. See [`bench/`](bench/).
 >
 > **Honest about fills.** A symmetric maker at the touch **loses money in all
@@ -25,10 +30,12 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > the reference-resolving model exact on every one.
 > See [`docs/phase6-results.md`](docs/phase6-results.md).
 >
-> **Never silently wrong.** Twelve scenarios of packet damage over that day —
-> drops, duplicates, reordering, truncation, a 14:00 outage, an injected halt —
-> and in none of them does the system report a trusted book that differs from
-> the truth. The grader is proven able to fail.
+> **Never silently wrong.** Ten scenarios of packet damage over that day —
+> drops, duplicates, reordering, truncation, a 14:00 outage — and in none of
+> them does the system report a trusted book that differs from the truth. Two
+> further scenarios inject a halt and its resume; MSFT did not halt that day,
+> so those run on a generated feed, bringing the matrix to twelve. The grader
+> is proven able to fail.
 > See [`docs/phase7-results.md`](docs/phase7-results.md).
 
 Reconstructing an order book from a raw exchange feed is not hard because the
@@ -200,7 +207,9 @@ Result r = m.submit({.id = 2, .side = Side::Buy, .price = 100'5000, .quantity = 
 
 Limit, market, IOC, FOK, iceberg, stop and stop-limit; self-trade prevention in
 cancel-newest, cancel-oldest and cancel-both; and a state machine where an
-illegal transition asserts rather than quietly corrupting the share count.
+illegal transition asserts rather than quietly corrupting the share count —
+though note that is a plain `assert`, so `-DNDEBUG` removes it and the Release
+build recommended below for timing does not carry the check.
 
 Three rules carry most of the behaviour, and none of them is arbitrary:
 
@@ -259,27 +268,37 @@ python3 python/analysis/adversarial.py data/sliced/MSFT.gz --build build
 ```
 
 ```
-scenario             verdict     lost   gaps    dup  reord        state
-clean                CORRECT        0      0      0      0      trusted
-drop-1-in-100           SAFE    2,388     58      0   2263   recovering
-duplicate-1-in-100   CORRECT        0      0   2388      0      trusted
-reorder-1-in-100     CORRECT        0      0      0     56      trusted
-disconnect-long      CORRECT   16,231      1      0     64      trusted
-disconnect-to-end       SAFE        0      0      0      0       halted
+scenario             verdict     lost   gaps        state
+clean                CORRECT        0      0      trusted
+drop-1-in-1000          SAFE    1,127     25   recovering
+drop-1-in-100           SAFE   12,199    269       halted
+duplicate-1-in-100   CORRECT        0      0      trusted
+reorder-1-in-100     CORRECT        0      0      trusted
+truncate-1-in-500       SAFE    1,341     58   recovering
+disconnect-short        SAFE    1,806      1   recovering
+disconnect-long         SAFE   18,145      1   recovering
+everything              SAFE    4,251     63   recovering
+disconnect-to-end       SAFE        0      0       halted
 
-CAUTIOUS=1  CORRECT=5  SAFE=4        (0 WRONG)
+CORRECT=3  SAFE=7                    (0 WRONG)
 ```
+
+Those are the ten scenarios as recorded on MSFT. `halt` and `halt-and-drop`
+were added to the harness afterwards, so a run today prints twelve rows; both
+inject a halt and its resume, and MSFT did not halt on 30 December 2019, which
+is why the recorded numbers for them are on a generated feed
+([`docs/phase7-results.md`](docs/phase7-results.md) §2).
 
 **CORRECT** means the book matched an undamaged replay and the system said so.
 **SAFE** means it did not match and the system said *that*. **WRONG** — a book
 that differs while claiming to be trusted — is the one outcome the phase exists
 to make impossible, and CI fails on any occurrence.
 
-On MSFT, 30 December 2019: 3 CORRECT, 7 SAFE, 0 WRONG, with the outage at a
-real 14:00. Duplication and reordering are handled exactly — 12,199 duplicated
-messages applied once, 270 reordered packets resolved without one false gap —
-and a feed losing 269 packets halts rather than pretending to recover. There is no retransmission service to ask, so recovery
-is rebuild-forward, and its guarantee is narrow and precise: the rebuilt book
+The outage above lands at a real 14:00. Duplication and reordering are handled
+exactly — 12,199 duplicated messages applied once, 270 reordered packets
+resolved without one false gap — and a feed losing 269 packets halts rather
+than pretending to recover. There is no retransmission service to ask, so
+recovery is rebuild-forward, and its guarantee is narrow and precise: the rebuilt book
 contains **no wrong orders, only missing ones**. That holds unconditionally.
 Whether it re-converges before the close does not: on a synthetic feed it
 recovers from a 16,231-message hole to a byte-identical book, and on MSFT it
@@ -288,7 +307,7 @@ that keep being cancelled for the rest of the day. The verdicts stay SAFE
 throughout — the book differs and the system says so, which is the contract.
 
 The harness also has to be able to fail. Set the convergence bar to a single
-clean reference and three scenarios go WRONG; that run is in CI too, and must
+clean reference and four scenarios go WRONG; that run is in CI too, and must
 fail. It found two real bugs, including a stream that *stopped* rather than
 ended: 80,235 messages missing, every counter honestly zero, reported clean.
 Full write-up in [`docs/phase7-results.md`](docs/phase7-results.md).
@@ -316,11 +335,13 @@ every pointer the levels hold stays valid.
 ## Reproduce it
 
 Every command below was run from a fresh clone with nothing cached, in order,
-and works as written — Linux, GCC 12 and Clang 16, Python 3.11, and separately
-on macOS with Apple Clang. Requires a C++20 compiler, CMake ≥ 3.20, zlib and
-Python 3.9+. No third-party libraries: the tests, the fuzzers, the charts and
-the analysis are stdlib only, deliberately, so this clones and builds without a
-package manager standing in the way.
+and works as written on Linux with Clang 16 and Python 3.11 — which is also the
+only combination CI proves, since [`ci.yml`](.github/workflows/ci.yml) builds
+`ubuntu-latest` with `clang++` and nothing else. Other toolchains are expected
+to work and are not verified here. Requires a C++20 compiler, CMake ≥ 3.20,
+zlib and Python 3.9+. No third-party libraries: the tests, the fuzzers, the
+charts and the analysis are stdlib only, deliberately, so this clones and
+builds without a package manager standing in the way.
 
 ```bash
 # macOS:  brew install cmake zlib
@@ -483,21 +504,29 @@ turned up.
 #    --utc-day bounds the replay to the window the oracle's bar covers; without
 #    it the after-hours tail lands in the next bar and nothing lines up.
 ./build/itch_slice data/raw/<day>.gz MSFT data/sliced/MSFT.gz
-python3 python/reference/replay.py data/sliced/MSFT.gz \
-    --snapshots data/sliced/MSFT_book.csv --interval-ms 1000 \
-    --utc-day 2019-12-30 --json data/sliced/MSFT.json
+python3 python/reference/replay.py data/sliced/MSFT.gz --symbol MSFT \
+    --interval-ms 1000 --utc-day 2019-12-30 --json data/sliced/MSFT.json
 
 # 2. grade it against Databento's published bar for the same venue and day
 pip install databento
 export DATABENTO_API_KEY=db-...          # never commit this
 python3 python/analysis/validate.py data/sliced/MSFT.json \
-    --symbol MSFT --date 2019-01-30
+    --symbol MSFT --date 2019-12-30
 
-# 3. confirm the C++ book agrees over the whole day
+# 3. confirm the C++ book agrees, over the WHOLE file this time. book_replay
+#    has no --utc-day, and it does not need one: the differential asks whether
+#    two implementations agree, not whether either matches a vendor's bucket,
+#    so both sides simply run unbounded. Bounding one and not the other is the
+#    easy way to get a row-count mismatch that means nothing.
+python3 python/reference/replay.py data/sliced/MSFT.gz \
+    --snapshots data/sliced/MSFT_book.csv --interval-ms 1000 --quiet
 ./build/book_replay data/sliced/MSFT.gz \
     --snapshots data/sliced/MSFT_book_cpp.csv --interval-ms 1000
 python3 python/analysis/book_diff.py \
     data/sliced/MSFT_book.csv data/sliced/MSFT_book_cpp.csv
+
+# ...or just run both of those and the summary comparison in one go:
+./scripts/full-day-differential.sh data/sliced/MSFT.gz
 ```
 
 `validate.py --cost-only` prints what the query would bill before spending
