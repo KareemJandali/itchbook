@@ -16,11 +16,18 @@
 //                        across every symbol. This is what the shared RefMap
 //                        has to be sized from, and there is no honest way to
 //                        get it except to count.
-//   --per-symbol FILE    per-locate JSON: message counts, quoted price range,
-//                        crosses, and the two message types that can make a
-//                        vendor's daily bar legitimately disagree with ours.
+//   --per-symbol FILE    per-locate JSON: message counts, quoted and printed
+//                        price ranges, crosses, and the two message types that
+//                        can make a vendor's daily bar legitimately disagree
+//                        with ours.
+//   --timing FILE        just the wall clock and the sizes, as JSON. Works with
+//                        any combination of the above, including none of them,
+//                        which is the only way to record the floor: the cost of
+//                        decompressing, framing and length-checking the file
+//                        while building nothing at all.
 //
 // Usage:  itch_census <file.gz> [--peak-orders] [--per-symbol out.json]
+//                     [--timing out.json]
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -48,11 +55,37 @@ struct PerSymbol {
     uint64_t op_halts = 0;       // 'h' — operational halt, NOT modelled
     uint64_t broken = 0;         // 'B' — broken trade, NOT modelled
     uint64_t executed_shares = 0;
-    // Quoted prices only: A / F / U. Trade prints are excluded on purpose —
-    // the band has to cover where orders REST, and a cross prints outside the
-    // range the book ever quoted.
+    // Quoted prices: A / F / U.
+    //
+    // These turned out to be almost useless for sizing anything, and finding
+    // out why was worth the pass. On the real day, 77.6% of symbols that quoted
+    // at all posted an order at or above $100,000 and 80.2% posted one at or
+    // below $0.01 — clustered on $199,999.99, $199,999.00 and $100,000.00.
+    // Those are STUB QUOTES: a market maker with a two-sided quoting
+    // obligation parks an order where it will never fill. So the min and max of
+    // what a symbol quoted spans essentially the whole price axis for three
+    // symbols in four, and says nothing about where its book actually lives.
+    //
+    // They are kept because that fact is the finding, and because the count of
+    // symbols hitting the extremes is how you show it.
     int32_t first_price = -1, last_price = -1, min_price = -1, max_price = -1;
+
+    // Printed prices: C / P / Q. Stub quotes do not trade, so this is the
+    // range the symbol's book actually occupied — which is what the dense band
+    // has to cover, and the only per-symbol scale in this file that a band
+    // policy can be built on.
+    int32_t first_trade = -1, last_trade = -1, min_trade = -1, max_trade = -1;
+    uint64_t prints = 0;
 };
+
+void note_trade(PerSymbol& s, int32_t px) {
+    if (px <= 0) return;
+    ++s.prints;
+    if (s.first_trade < 0) s.first_trade = px;
+    s.last_trade = px;
+    if (s.min_trade < 0 || px < s.min_trade) s.min_trade = px;
+    if (s.max_trade < 0 || px > s.max_trade) s.max_trade = px;
+}
 
 void note_price(PerSymbol& s, int32_t px) {
     if (px <= 0) return;
@@ -125,7 +158,18 @@ struct Census {
                     if (live.reduce(m::order_executed_price::ref(p), sh)) ++full_executions;
                     else ++partial_executions;
                 }
-                if (s != nullptr) { ++s->executions; s->executed_shares += sh; }
+                if (s != nullptr) {
+                    ++s->executions;
+                    s->executed_shares += sh;
+                    // 'C' states its own print price, which is not the resting
+                    // order's price. 'E' does not carry one at all — it trades
+                    // at a price only the book knows — so a census cannot see
+                    // it, and that limitation belongs in the record rather than
+                    // in a footnote nobody reads.
+                    if (m::order_executed_price::printable(p)) {
+                        note_trade(*s, m::order_executed_price::price(p));
+                    }
+                }
                 break;
             }
             case 'X': {
@@ -151,11 +195,12 @@ struct Census {
                 if (s != nullptr) { ++s->replaces; note_price(*s, m::order_replace::price(p)); }
                 break;
             case 'P':
-                if (s != nullptr) ++s->trades;
+                if (s != nullptr) { ++s->trades; note_trade(*s, m::trade::price(p)); }
                 break;
             case 'Q':
                 if (s != nullptr) {
                     ++s->crosses;
+                    note_trade(*s, m::cross_trade::price(p));
                     const char kind = m::cross_trade::cross_type(p);
                     if (kind == 'O') ++s->opening_crosses;
                     if (kind == 'C') ++s->closing_crosses;
@@ -222,6 +267,25 @@ uint64_t file_size(const std::string& path) {
     return n < 0 ? 0 : static_cast<uint64_t>(n);
 }
 
+// What every pass can report, whatever else it was asked to do. Separated out
+// because the floor -- decompress, frame, length-check, build nothing -- is
+// measured by the pass with NO other flags, and that pass has nothing else to
+// write. A number with no artifact is a number that gets retyped.
+bool write_timing(const std::string& path, const std::string& file, uint64_t total,
+                  uint64_t bytes, double elapsed_s, const char* pass) {
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    if (f == nullptr) return false;
+    std::fprintf(f, "{\n  \"file\": \"%s\",\n  \"pass\": \"%s\",\n"
+                    "  \"messages\": %llu,\n  \"bytes\": %llu,\n"
+                    "  \"compressed_bytes\": %llu,\n  \"elapsed_seconds\": %.2f\n}\n",
+                 file.c_str(), pass,
+                 static_cast<unsigned long long>(total),
+                 static_cast<unsigned long long>(bytes),
+                 static_cast<unsigned long long>(file_size(file)), elapsed_s);
+    const bool bad = std::ferror(f) != 0;
+    return std::fclose(f) == 0 && !bad;
+}
+
 bool write_per_symbol(const std::string& path, const std::string& file, uint64_t total,
                       uint64_t bytes, double elapsed_s, const Census& c) {
     std::FILE* f = std::fopen(path.c_str(), "w");
@@ -285,7 +349,12 @@ bool write_per_symbol(const std::string& path, const std::string& file, uint64_t
         print_price(f, "first_price", s.first_price);  std::fprintf(f, ",");
         print_price(f, "last_price", s.last_price);    std::fprintf(f, ",");
         print_price(f, "min_price", s.min_price);      std::fprintf(f, ",");
-        print_price(f, "max_price", s.max_price);
+        print_price(f, "max_price", s.max_price);      std::fprintf(f, ",");
+        std::fprintf(f, "\"prints\":%llu,", static_cast<unsigned long long>(s.prints));
+        print_price(f, "first_trade", s.first_trade);  std::fprintf(f, ",");
+        print_price(f, "last_trade", s.last_trade);    std::fprintf(f, ",");
+        print_price(f, "min_trade", s.min_trade);      std::fprintf(f, ",");
+        print_price(f, "max_trade", s.max_trade);
         std::fprintf(f, "}");
     }
     std::fprintf(f, "\n  ]\n}\n");
@@ -298,6 +367,7 @@ bool write_per_symbol(const std::string& path, const std::string& file, uint64_t
 int main(int argc, char** argv) {
     std::string path;
     std::string per_symbol_out;
+    std::string timing_out;
     bool peak_orders = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -306,8 +376,11 @@ int main(int argc, char** argv) {
             peak_orders = true;
         } else if (a == "--per-symbol" && i + 1 < argc) {
             per_symbol_out = argv[++i];
+        } else if (a == "--timing" && i + 1 < argc) {
+            timing_out = argv[++i];
         } else if (a == "--help" || a == "-h") {
-            std::printf("usage: %s <file.gz> [--peak-orders] [--per-symbol out.json]\n", argv[0]);
+            std::printf("usage: %s <file.gz> [--peak-orders] [--per-symbol out.json]"
+                        " [--timing out.json]\n", argv[0]);
             return 0;
         } else if (!a.empty() && a[0] == '-') {
             std::fprintf(stderr, "error: unknown option %s\n", a.c_str());
@@ -320,8 +393,8 @@ int main(int argc, char** argv) {
         }
     }
     if (path.empty()) {
-        std::fprintf(stderr, "usage: %s <file.gz> [--peak-orders] [--per-symbol out.json]\n",
-                     argv[0]);
+        std::fprintf(stderr, "usage: %s <file.gz> [--peak-orders] [--per-symbol out.json]"
+                             " [--timing out.json]\n", argv[0]);
         return 2;
     }
 
@@ -403,6 +476,16 @@ int main(int argc, char** argv) {
                         census.live.accounts() ? "yes" : "NO — BUG");
         }
 
+        const char* pass_name = peak_orders
+            ? (census.track_symbols ? "framing + live orders + per symbol"
+                                    : "framing + live orders")
+            : (census.track_symbols ? "framing + per symbol" : "framing only");
+        if (!timing_out.empty() &&
+            !write_timing(timing_out, path, total, reader.bytes(), elapsed_s, pass_name)) {
+            std::fprintf(stderr, "error: cannot write %s\n", timing_out.c_str());
+            return 1;
+        }
+
         if (census.track_symbols) {
             if (!write_per_symbol(per_symbol_out, path, total, reader.bytes(), elapsed_s,
                                   census)) {
@@ -410,19 +493,33 @@ int main(int argc, char** argv) {
                 return 1;
             }
             size_t seen = 0, directoried = 0, quoted = 0, with_close = 0;
+            size_t traded = 0, stub_high = 0, stub_low = 0;
+            // A stub quote is an order parked where it will never fill, to
+            // satisfy a two-sided quoting obligation. There is no flag for one
+            // on the wire; what identifies it is a price nothing could trade
+            // at. These two counts are what make the point that a symbol's
+            // quoted range cannot size a band.
+            constexpr int32_t kAbsurdlyHigh = 1000000000;   // $100,000
+            constexpr int32_t kAbsurdlyLow = 100;           // $0.01
             for (const PerSymbol& s : census.sym) {
                 if (s.messages == 0) continue;
                 ++seen;
                 if (s.directoried) ++directoried;
                 if (s.adds > 0) ++quoted;
+                if (s.prints > 0) ++traded;
                 if (s.closing_crosses > 0) ++with_close;
+                if (s.adds > 0 && s.max_price >= kAbsurdlyHigh) ++stub_high;
+                if (s.adds > 0 && s.min_price > 0 && s.min_price <= kAbsurdlyLow) ++stub_low;
             }
             std::printf("\nper-symbol -> %s\n", per_symbol_out.c_str());
             std::printf("---------------------------------------------------------------\n");
             std::printf("%-34s %14zu\n", "locates seen", seen);
             std::printf("%-34s %14zu\n", "with a stock directory entry", directoried);
             std::printf("%-34s %14zu\n", "that ever quoted an order", quoted);
+            std::printf("%-34s %14zu\n", "that ever printed a trade", traded);
             std::printf("%-34s %14zu\n", "with a closing cross", with_close);
+            std::printf("%-34s %14zu\n", "quoting at or above $100,000", stub_high);
+            std::printf("%-34s %14zu\n", "quoting at or below $0.01", stub_low);
         }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());

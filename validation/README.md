@@ -137,12 +137,54 @@ all-symbols replay: no end-to-end number phase 9 reports can be below it, and
 the gap between the two is the book's own cost. It is the cheapest measurement
 in the project and it was skipped the first time this ran.
 
-**Status: not yet run with these flags.** The numbers land in
-`validation/census-2019-12-30.json` and in the table above it when they do —
-they are not typed into this file by hand. What *is* already checked, on every
-push, is that the census and the book agree: two implementations that share no
-code count the live orders in the same generated feed and must return the same
-number.
+The table below is **generated** from `validation/census-2019-12-30.json` by
+`scripts/census-report.py`, and CI runs that script with `--check` on every push.
+Nothing here was typed off a terminal.
+
+<!-- census:begin -->
+
+| | |
+|---|---:|
+| messages | 268,744,780 |
+| uncompressed | 8.25 GB |
+| on disk (gzip) | 3.52 GB — a 2.34x ratio |
+| locates seen | 8,907 |
+| with a stock directory entry | 8,906 |
+| that ever quoted an order | 8,892 |
+
+| with a closing cross | 8,906 |
+
+**Live orders, one shared reference space across every symbol.**
+
+| | |
+|---|---:|
+| peak resting at once | **1,924,078** |
+| resting at the close | 0 |
+| adds (`A`+`F`) | 118,631,456 |
+| replaces (`U`) | 21,639,067 |
+| deletes (`D`) | 114,360,997 |
+| executions that emptied an order | 4,270,459 |
+| executions that did not | 1,552,282 |
+| cancels that emptied an order | 0 |
+| cancels that did not | 2,787,676 |
+| **references naming no live order** | **0** |
+
+The pass took **65.58 s** — 126 MB/s of feed, 4.10 M msg/s — and it was the `framing + live-order tracking` pass.
+
+**Stub quotes, and why a symbol's quoted range sizes nothing.**
+
+Of the 8,892 symbols that quoted at all, **6,896 (77.6%) posted an order at or above $100,000**, and **7,131 (80.2%) posted one at or below $0.01**. Those are orders parked where they will never fill, satisfying a two-sided quoting obligation. Nothing on the wire marks them; what identifies them is a price nothing could trade at.
+
+The consequence is concrete: the range of prices a symbol *quoted* spans almost the whole price axis for three symbols in four, so it cannot centre a dense band or predict which symbols will overflow one. The range it *printed* can, which is why the census records both — and no generated feed in this repository produces a stub quote, so nothing here would ever have shown it.
+
+**1 locate with no directory entry:** `0` (10 messages). That is the session itself — `S` system events and the market-wide `V` carry stock locate 0, and no `R` describes it. A message for an undirectoried locate is counted rather than ignored, because the benign explanation and a framing bug look identical until someone looks.
+
+<!-- census:end -->
+
+
+Also checked on every push, on generated data: the census and the book agree.
+Two implementations that share no code count the live orders in the same feed
+and must return the same number.
 
 ## The regression baseline, and why it is generated
 

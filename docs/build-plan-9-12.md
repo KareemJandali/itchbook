@@ -296,12 +296,32 @@ cannot state in advance. So:
    10% of that symbol's adds over its first 1,000. Re-centring rebuilds the dense
    array and re-indexes every resting order, so it is neither free nor silent:
    count re-centres and report how many symbols needed one.
-4. **Count overflow hits per symbol; report the distribution.** Prediction
-   written first: the failures are the high-priced names — a $1,800 stock at
-   penny ticks cannot be covered by any band you can afford — and the honest
-   conclusion is that a production system uses a per-symbol tick regime rather
-   than one global grid. `--per-symbol` from 9.0 tells you which symbols those
-   are *before* you run, so the prediction can name them.
+4. **Count overflow hits per symbol; report the distribution.**
+
+   The census ran, and it killed the version of this item that said the
+   per-symbol price ranges would name the overflow symbols in advance. They
+   cannot. Of the 8,892 symbols that quoted on 2019-12-30, **77.6% posted an
+   order at or above $100,000 and 80.2% posted one at or below $0.01** —
+   clustered on $199,999.99, $199,999.00 and $100,000.00. Those are **stub
+   quotes**: orders parked where they will never fill, satisfying a two-sided
+   quoting obligation. Nothing on the wire marks one; what identifies it is a
+   price nothing could trade at.
+
+   Three consequences, all of which are content:
+
+   - A symbol's *quoted* range spans nearly the whole price axis for three
+     symbols in four, so it can neither centre a band nor predict overflow. The
+     census now records the *printed* range as well — `C`/`P`/`Q` carry prices
+     and stubs do not trade — and that is the per-symbol scale the policy uses.
+   - **Overflow is not a failure mode here; it is the design working.** Every
+     symbol will hold stub quotes in its `std::map`, permanently, at any band
+     width. The number to report is therefore not "how many symbols used
+     overflow" (all of them will) but **what fraction of each symbol's adds
+     landed off-band**, and whether any *near-touch* level ever did.
+   - No generated feed in this repository produces a stub quote, so nothing
+     here would ever have shown this. That paragraph belongs in
+     `what-synthetic-data-hides.md`, which argued exactly this and now has a
+     second worked example.
 
 ### 9.9 — Sizing, and the two experiments that replace v1.0's unrunnable one
 
@@ -329,36 +349,63 @@ verbatim: pin, interleave, ≥5% or it is not a result.
 
 Before attributing anything to zlib, measure the framing. `Reader::next()`
 (`reader.hpp:46-62`) makes **two `gzread` calls and a `vector::resize` per
-message** — 537 million zlib entry points over this file. Batch the reads into a
-buffer and re-measure. Inside the no-third-party rule, and the 9.0 census time
-gives you the before number for free.
+message** — 537 million zlib entry points over this file.
+
+The census has since priced that whole path at **16.62 s for 268,744,780
+messages: 62 ns each, 496 MB/s**. That is a good deal faster than this item
+assumed when it was written, so the expected win shrinks accordingly: batching
+the reads is still worth doing and still inside the rule, but it is now a
+second-order optimisation against a path that is not the bottleneck. Say so
+rather than quietly dropping the item — a hypothesis that measurement demoted is
+worth as much as one it confirmed.
 
 **Check:** decompress-only, parse-only and book-only reported separately, so all
 three are attributable.
 
-### 9.11 — Throughput, with real inputs
+### 9.11 — Throughput, and a prediction the census already moved
 
-Arithmetic in the README **before** any full-day number, with the prediction
-attached:
+9.0 ran, and it settles two things this document previously guessed at. Both
+guesses were wrong, and in opposite directions.
 
-> The book does 43.9M msg/s on a cache-hot single-symbol feed, so 268,744,780
-> messages is an **upper bound** of **6.1 seconds** of book work. Written
-> prediction: multi-symbol lands materially below that — random access across
-> thousands of bands, and a ref map far past L2 — and the honest guess is a 2–3×
-> degradation, so **12–18 s**. The uncompressed day is 8.25 GB and
-> single-threaded zlib does a few hundred MB/s, so decompression is **tens of
-> seconds** — and unlike the draft, you do not have to guess, because 9.0
-> measured it on this machine.
+**Decompression is not the bottleneck. It was never close.** The framing-only
+pass — decompress, frame, length-check, build nothing — does the whole 8.25 GB
+file in **16.62 s**: 496 MB/s, 16.17 M msg/s. The v1.0 draft claimed the
+end-to-end run would be "decompression-bound by 3–7×". It will not be
+decompression-bound at all, on this hardware. That also downgrades what phase 10's
+reader thread buys: overlapping 16.6 s against a book that takes far longer is
+worth having, but it is a fraction saved, not a multiple.
+
+**The book will be far slower than the cache-hot extrapolation, and the census
+accidentally measured why.** Adding `--peak-orders` took the same pass from
+16.62 s to 65.58 s. That **48.96 s** bought roughly **285 M hash operations**
+against a table that grows to 4.19 M slots × 16 B = 67 MB — far past any cache —
+which works out at about **172 ns per operation**. It is memory-bound, and it is
+the *same shape of work the book's reference map does*: same table size, same
+random access by order reference, same backward-shift delete.
+
+So the prediction, written here before the run that grades it:
+
+> The single-symbol benchmark says 43.9 M msg/s — 22.8 ns per message — with a
+> working set of a few megabytes. At full-day scale the reference map alone is
+> 67 MB and the bands are hundreds of megabytes more. **Book-only wall clock is
+> predicted at 60–120 s**, not the 6.1 s the cache-hot number extrapolates to
+> and not the 12–18 s this document guessed one revision ago. **End-to-end will
+> therefore be book-bound**, at roughly 80–140 s, with decompression a ~15%
+> component rather than a 3–7× multiple.
+>
+> If that lands, the phase's headline result is not "we replayed a day" but
+> **"the same book costs 5–20× more per message when the working set stops
+> fitting in cache, and here is the counter that shows it"** — which is a phase-4
+> story told at a scale where it actually bites.
 
 Then report **two numbers, clearly labelled**: end-to-end from the `.gz`, and
 book-only from pre-decompressed input. Conflating them is the kind of lie this
-repo exists to not tell. Whether the run is decompression-bound, and by how much,
-is a measurement — this document is not entitled to the ratio.
+repo exists to not tell.
 
 The no-third-party rule stays (no libdeflate). The legitimate fix inside the rule
 is overlap — a reader thread decompressing ahead while the book consumes — which
-**is phase 10**. Ship the two honest numbers and one sentence saying which phase
-closes the gap.
+**is phase 10**. Ship the two honest numbers and one sentence saying what that
+phase can and cannot recover.
 
 Memory instrumentation: peak RSS from `/proc/self/status` `VmHWM` at exit, plus
 per-structure accounting (bands, pool, ref map, directory) so the total
