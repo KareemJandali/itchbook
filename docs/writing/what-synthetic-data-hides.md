@@ -207,6 +207,55 @@ exists for rather than assumed to.
 
 ---
 
+## 8. The fuzzer reported full coverage of two thirds of an engine
+
+Everything above is a synthetic *feed* misleading me about a real day. This one
+is worse, because the generator was not modelling reality at all — it was
+producing random input, which is supposed to be the honest kind.
+
+The matching engine implements six order types: limit, market, IOC, FOK,
+stop-market and stop-limit. A property fuzzer ran a million random sequences on
+every push, checking four invariants after every operation — the book is never
+crossed, shares are conserved, states move only where the machine permits,
+price-time priority holds. It had run tens of millions of sequences without a
+violation, and I quoted that in the README as evidence the engine was sound.
+
+The generator picked a type with `switch (in.u8() % 8)`, and the arms of that
+switch covered four types. It had never emitted a stop, of either kind, ever.
+`StopLimit` also had no unit test anywhere, so the strongest evidence in the
+project covered four of six types while reporting on all six.
+
+Adding stops to the generator broke it on the first run, twice. A stop that
+fires into an empty book attempted a transition the state machine forbids —
+`Accepted -> Rejected`, where `Rejected` means "never touched the book" and is
+reachable only from `New` — so it did not return an error, it tripped an assert
+and killed the process. And a triggered stop kept the arrival sequence it had
+been given when it was *parked*, so a stop dormant since the open could rest
+ahead of orders that had been queued at that price all morning.
+
+I fixed the second by giving a triggered stop a fresh sequence at trigger time.
+That is correct. It is also what made the next bug invisible.
+
+Underneath sat a third defect: the routine that fires elected stops removed them
+from its pending list by swapping the last element into the vacated slot. Park
+three stops, elect all three with one trade, and they rest in the order 1, 3, 2.
+The sequence fix meant the fuzzer's price-time-priority invariant no longer saw
+it — the numbers it compared were now assigned at election, so they agreed with
+the wrong order. Revert that one line and the fuzzer fails within fifty
+iterations. For as long as it took to look again, the repository sat in a state
+where a real bug had gone from *detectable* to *silent*, and the commit that did
+it was a bug fix with a green test suite.
+
+That is the failure mode this entire project is organised against, produced by
+the machinery built to prevent it. The repair is unglamorous — remove elements
+in place, add two tests that drive the queue directly and check who actually
+fills first — but the lesson is not about vectors. **A fuzzer that stops
+covering something does not report a gap. It reports a pass.** The generator now
+counts what it emitted and fails the run if any type's count is zero, which
+turns coverage from something I believed into something the build checks.
+
+---
+
 ## What I would do differently
 
 **Generate the failure, not the shape.** My feeds reproduced a real day's
@@ -222,9 +271,24 @@ tests the system.
 
 **Make the harness fail on purpose.** After the grader had returned only
 CORRECT and SAFE, I had no evidence it *could* return WRONG. Setting the
-convergence bar to a single reference produces four WRONG verdicts and a
+convergence bar to a single reference produces five WRONG verdicts and a
 non-zero exit, and that run is in CI alongside the real one. A check that has
 never failed is not a check yet — it is an assertion about a check.
+
+**Make coverage a failing condition, not a footnote.** A property fuzzer's
+output is "no invariant violated", and that sentence is equally true of an
+engine that is correct and of one that was never exercised. Every generator I
+write now reports what it produced and fails when a category comes back empty.
+"What did this run *not* test?" has to have an answer the build can check,
+because nobody reads a passing log.
+
+**Watch for fixes that silence the detector.** The most dangerous commit in this
+project was a correct bug fix. It repaired a real defect and, as a side effect,
+stopped a different one from being visible, and it shipped green. When a fix
+makes a check stop firing, the question is not "does it pass now" but "would
+this check still catch the thing it was written for". Reverting one line to
+confirm the harness still screams costs a minute, and it is the only way to
+know.
 
 **Distrust the flattering direction specifically.** Three separate bugs
 appeared the moment a strategy started losing money, and all three made the
