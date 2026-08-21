@@ -49,12 +49,26 @@ struct SymbolInfo {
     char financial_status = '\0';    // 'D' deficient, 'H' halted, ' ' normal
     uint32_t round_lot = 0;
     bool directoried = false;        // an 'R' was actually seen for this locate
+
+    // ---- tradability, from the messages that do not touch a book ------------
+    //
+    // 'H' (stock trading action) lives on the Book, because it has since phase
+    // 7 and it is per symbol there already. These two do not, and until a whole
+    // file was read they were not anywhere.
+    bool operational_halt = false;   // 'h' — venue-level, separate from 'H'
+    uint64_t operational_halts = 0;  // entries into it, so a count survives a resume
+    uint64_t broken_trades = 0;      // 'B' — a printed trade was busted
 };
 
 // One market, one clock. Not per symbol, however tempting the wire makes it
 // look: 'S' carries locate 0 and means the same thing for everything.
 struct SessionState {
     char system_event = '\0';        // 'O','S','Q','M','E','C'
+
+    // 'W'. A market-wide circuit breaker halts everything, so this is not a
+    // per-symbol fact and cannot be stored as one.
+    char mwcb_level_breached = '\0';  // '1', '2', '3'; '\0' = none this session
+    uint64_t mwcb_events = 0;
 };
 
 class BookSet {
@@ -126,6 +140,87 @@ public:
 
     const SessionState& session() const { return session_; }
     char system_event() const { return session_.system_event; }
+
+    // ---- tradability --------------------------------------------------------
+    //
+    // From 'h'. Per symbol, and deliberately not routed through at(): a book
+    // exists to hold orders, and conjuring one for a symbol whose only message
+    // was a halt would put a phantom row in every summary.
+    void set_operational_halt(uint16_t locate, char action) {
+        SymbolInfo& s = dir_[locate];
+        const bool halted = (action == 'H');
+        if (halted && !s.operational_halt) ++s.operational_halts;
+        s.operational_halt = halted;
+    }
+
+    // From 'W'.
+    void set_mwcb_breached(char level) {
+        session_.mwcb_level_breached = level;
+        ++session_.mwcb_events;
+    }
+
+    // From 'B'. Counted, not applied: busting a print would mean revising
+    // volume, VWAP and possibly the close, and doing that correctly needs the
+    // match number of every trade the day printed — 268 million lookups to
+    // undo something that happened zero times in the file this project
+    // validates against. The number is reported instead, so that a daily bar
+    // which disagrees with a vendor's can be explained rather than argued with.
+    void note_broken_trade(uint16_t locate) { ++dir_[locate].broken_trades; }
+
+    // Whether this symbol may trade right now, from all three sources.
+    //
+    // Two things a reader is owed about this predicate.
+    //
+    // **'h' and 'W' have never fired on real data.** 'H' is graded against real
+    // bytes across a whole day; the other two do not occur in the file this
+    // project validates against, so those conditions are derived from the spec
+    // and have never been exercised by anything but a generated feed. See
+    // messages.hpp, which marks all three offsets UNCONFIRMED for the same
+    // reason.
+    //
+    // **A circuit-breaker breach is treated as permanent, and it is not.** A
+    // Level 1 or 2 breach halts the market for a fixed period and then trading
+    // resumes; only Level 3 ends the day. Nothing in the feed says "the MWCB
+    // halt is over" — the resume arrives as ordinary session and trading-action
+    // messages — so reconstructing it means modelling the halt clock, which
+    // this does not do. The consequence is that after a breach this returns
+    // false for the rest of the session, including a period when the market has
+    // in fact reopened. That is wrong in the safe direction for a predicate
+    // whose consumers are risk checks, and it is a limitation rather than a
+    // conservatism to be proud of: it is written down here so it can be fixed
+    // deliberately rather than discovered.
+    bool tradable(uint16_t locate) const {
+        const Book* b = books_[locate].get();
+        if (b == nullptr || b->trading_state() != 'T') return false;
+        if (dir_[locate].operational_halt) return false;
+        if (session_.mwcb_level_breached != '\0') return false;
+        return true;
+    }
+
+    // Feed-level tallies for the three, so a run reports them whether or not
+    // any occurred. A zero here is a result: it says the constants those
+    // messages are parsed with are still unconfirmed, and why.
+    uint64_t operational_halts() const {
+        uint64_t n = 0;
+        for (const SymbolInfo& s : dir_) n += s.operational_halts;
+        return n;
+    }
+
+    size_t symbols_operationally_halted() const {
+        size_t n = 0;
+        for (const SymbolInfo& s : dir_) {
+            if (s.operational_halt) ++n;
+        }
+        return n;
+    }
+
+    uint64_t broken_trades() const {
+        uint64_t n = 0;
+        for (const SymbolInfo& s : dir_) n += s.broken_trades;
+        return n;
+    }
+
+    char mwcb_level_breached() const { return session_.mwcb_level_breached; }
 
     Storage& storage() { return store_; }
     const Storage& storage() const { return store_; }

@@ -127,6 +127,78 @@ void test_the_session_belongs_to_the_market_not_to_a_symbol() {
     CHECK_EQ(set.system_event(), 'C');
 }
 
+void test_tradability_comes_from_three_places_not_one() {
+    // 'H' has been per symbol since phase 7. 'h' and 'W' were nowhere: the book
+    // derived tradability from 'H' alone, so a symbol could be operationally
+    // halted, or the whole market could be through a circuit breaker, and every
+    // book would still call itself tradable. One symbol on one quiet day
+    // reaches neither, which is why it went unnoticed for eight phases.
+    BookSet set;
+    set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    set.set_directory(2, "BBB     ", 8, 'Q', ' ', 100);
+    set.at(1).add(1, 'B', 1000000, 100);
+    set.at(2).add(2, 'B', 1000000, 100);
+
+    // Nothing has said the symbol may trade yet, so it may not. Unknown is not
+    // the same as permitted.
+    CHECK(!set.tradable(1));
+
+    set.at(1).set_trading_state('T');
+    set.at(2).set_trading_state('T');
+    CHECK(set.tradable(1));
+    CHECK(set.tradable(2));
+
+    // 'h' — venue-level, one symbol only.
+    set.set_operational_halt(1, 'H');
+    CHECK(!set.tradable(1));
+    CHECK(set.tradable(2));            // its neighbour is unaffected
+    CHECK_EQ(set.operational_halts(), 1u);
+    CHECK_EQ(set.symbols_operationally_halted(), 1u);
+
+    // A repeated halt is not a second halt.
+    set.set_operational_halt(1, 'H');
+    CHECK_EQ(set.operational_halts(), 1u);
+
+    set.set_operational_halt(1, 'T');
+    CHECK(set.tradable(1));
+    CHECK_EQ(set.symbols_operationally_halted(), 0u);
+    CHECK_EQ(set.operational_halts(), 1u);   // the count survives the resume
+
+    // 'W' — market-wide, so it takes everything down at once.
+    set.set_mwcb_breached('1');
+    CHECK(!set.tradable(1));
+    CHECK(!set.tradable(2));
+    CHECK_EQ(set.mwcb_level_breached(), '1');
+
+    // A locate that never got a book is not tradable, and asking must not
+    // build one for it.
+    CHECK(!set.tradable(9));
+    CHECK(set.peek(9) == nullptr);
+}
+
+void test_a_broken_trade_is_counted_and_not_applied() {
+    // 'B' busts a print, which means a day's volume can be revised after the
+    // fact. Undoing it needs the match number of every trade the day printed,
+    // and the file this project validates against contains no 'B' at all. So
+    // the number is reported instead: a daily bar that disagrees with a
+    // vendor's can then be explained rather than argued with.
+    BookSet set;
+    set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+    set.at(1).add(1, 'B', 1000000, 100);
+    set.at(1).execute(1, 100);
+    const uint64_t volume = set.peek(1)->volume();
+    CHECK_EQ(volume, 100u);
+
+    set.note_broken_trade(1);
+    CHECK_EQ(set.broken_trades(), 1u);
+    CHECK_EQ(set.peek(1)->volume(), volume);   // unchanged, deliberately
+
+    // And it does not conjure a book for a symbol that has none.
+    set.note_broken_trade(5);
+    CHECK_EQ(set.broken_trades(), 2u);
+    CHECK(set.peek(5) == nullptr);
+}
+
 void test_the_counters_that_matter_are_asked_of_the_feed() {
     BookSet set;
     set.at(1).add(10, 'B', 1000000, 100);
@@ -172,6 +244,8 @@ int main() {
     test_the_directory_is_kept_and_the_padding_is_not();
     test_a_message_for_an_undirectoried_locate_is_counted_not_ignored();
     test_the_session_belongs_to_the_market_not_to_a_symbol();
+    test_tradability_comes_from_three_places_not_one();
+    test_a_broken_trade_is_counted_and_not_applied();
     test_the_counters_that_matter_are_asked_of_the_feed();
     test_walking_the_set_visits_the_books_that_exist_in_locate_order();
     return REPORT();

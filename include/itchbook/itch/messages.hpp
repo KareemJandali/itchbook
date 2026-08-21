@@ -251,4 +251,34 @@ inline char     financial_status(const uint8_t* p) { return static_cast<char>(p[
 inline uint32_t round_lot_size(const uint8_t* p)   { return be32(p + 21); }
 }  // namespace stock_directory
 
+// ---- the three that bear on whether a symbol traded --------------------------
+//
+// None of these mutates a book, which is why they were skipped for eight
+// phases. Two of them decide whether a symbol may trade at all, and the third
+// decides whether a day's printed volume is final — and a single symbol on a
+// quiet day reaches none of them, so they went unexamined until a whole file
+// was read.
+//
+// **UNCONFIRMED, all three.** 12302019 contains no 'h', no 'W' and no 'B', so
+// these offsets have never been checked against a real message. They are read
+// from the spec, exactly like the length constants above them, and they are
+// marked here for the same reason: a number that has met real bytes and a
+// number that has not are different kinds of claim, and a reader cannot tell
+// them apart unless the file says so. The lengths at least fail loudly on
+// contact — a wrong offset inside a correct length does not.
+
+namespace operational_halt {  // 'h' — venue-level halt, separate from 'H'
+inline const uint8_t* stock(const uint8_t* p) { return p + 11; }
+inline char market_code(const uint8_t* p) { return static_cast<char>(p[19]); }  // 'Q','B','X'
+inline char action(const uint8_t* p) { return static_cast<char>(p[20]); }       // 'H','T'
+}  // namespace operational_halt
+
+namespace mwcb_status {  // 'W' — a market-wide circuit-breaker level was breached
+inline char breached_level(const uint8_t* p) { return static_cast<char>(p[11]); }  // '1','2','3'
+}  // namespace mwcb_status
+
+namespace broken_trade {  // 'B' — a previously printed trade is busted
+inline uint64_t match_number(const uint8_t* p) { return be64(p + 11); }
+}  // namespace broken_trade
+
 }  // namespace itchbook::itch

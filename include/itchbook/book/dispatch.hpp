@@ -117,6 +117,19 @@ inline bool apply(BookSet& set, char type, const uint8_t* p) {
                               m::stock_directory::financial_status(p),
                               m::stock_directory::round_lot_size(p));
             return false;
+        // Three that never touch a book and are not routed to one. Handling
+        // them here rather than in modelled() keeps the C++/Python contract
+        // exactly where it was: the oracle mirrors apply(Book&), and none of
+        // these produces a book mutation for it to mirror.
+        case 'h':
+            set.set_operational_halt(m::stock_locate(p), m::operational_halt::action(p));
+            return false;
+        case 'W':
+            set.set_mwcb_breached(m::mwcb_status::breached_level(p));
+            return false;
+        case 'B':
+            set.note_broken_trade(m::stock_locate(p));
+            return false;
         default:
             if (!modelled(type)) return false;
             return apply(set.at(m::stock_locate(p)), type, p);

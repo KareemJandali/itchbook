@@ -226,7 +226,8 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
     }
     std::fputs("locate,symbol,directoried,resting_orders,resting_shares,volume,notional,"
                "trades,hidden_volume,cross_volume,open,high,low,close,best_bid,best_ask,"
-               "unknown_refs,locate_mismatch,overflow_levels,trading_state,system_event\n", f);
+               "unknown_refs,locate_mismatch,overflow_levels,trading_state,system_event,"
+               "operational_halts,broken_trades,tradable\n", f);
     a.set.for_each_book([&](uint16_t locate, const itchbook::book::Book& b,
                             const itchbook::book::SymbolInfo& info) {
         int32_t bid = 0;
@@ -240,7 +241,8 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
         auto opt_px = [](int32_t v) { return v < 0 ? std::string() : std::to_string(v); };
         std::fprintf(f,
                      "%u,%s,%s,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-                     ",%" PRIu64 ",%s,%s,%s,%s,%s,%s,%" PRIu64 ",%" PRIu64 ",%zu,%c,%c\n",
+                     ",%" PRIu64 ",%s,%s,%s,%s,%s,%s,%" PRIu64 ",%" PRIu64 ",%zu,%c,%c"
+                     ",%" PRIu64 ",%" PRIu64 ",%s\n",
                      locate, info.symbol, info.directoried ? "yes" : "no",
                      b.resting_orders(), b.resting_shares(), b.volume(), b.notional(),
                      b.trades(), b.hidden_volume(), b.cross_volume(),
@@ -250,7 +252,9 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
                      (have_ask ? std::to_string(ask) : std::string()).c_str(),
                      b.unknown_ref(), b.locate_mismatch(), b.overflow_levels(),
                      b.trading_state() == 0 ? '-' : b.trading_state(),
-                     b.system_event() == 0 ? '-' : b.system_event());
+                     b.system_event() == 0 ? '-' : b.system_event(),
+                     info.operational_halts, info.broken_trades,
+                     a.set.tradable(locate) ? "yes" : "no");
     });
     const bool bad = std::ferror(f) != 0;
     return std::fclose(f) == 0 && !bad;
@@ -284,6 +288,17 @@ void print_all_summary(const AllSymbols& a) {
     std::printf("%-28s %16s\n", "locate mismatches", comma(a.set.locate_mismatch()).c_str());
     std::printf("%-28s %16s\n", "undirectoried messages",
                 comma(a.set.undirectoried_messages()).c_str());
+    // The three the book does not model and cannot ignore. Reported whether or
+    // not any occurred: a zero here says the constants they are parsed with are
+    // still unconfirmed against real bytes, which is a fact about the run.
+    std::printf("%-28s %16s\n", "operational halts ('h')",
+                comma(a.set.operational_halts()).c_str());
+    std::printf("%-28s %16s\n", "  symbols halted at close",
+                comma(a.set.symbols_operationally_halted()).c_str());
+    std::printf("%-28s %16s\n", "broken trades ('B')",
+                comma(a.set.broken_trades()).c_str());
+    std::printf("%-28s %16c\n", "MWCB level breached ('W')",
+                a.set.mwcb_level_breached() == 0 ? '-' : a.set.mwcb_level_breached());
     std::printf("%-28s %16c\n", "last system event",
                 a.set.system_event() == 0 ? '-' : a.set.system_event());
 }
