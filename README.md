@@ -239,8 +239,18 @@ its queue as an intrusive linked list, while arrival sequences are assigned by
 the engine and never touched by the book. A bug in either shows up as a
 disagreement.
 
-Run to date: **1,000,000 sequences (135M operations) on seed 1, plus 500,000
-each on seeds 2–5** — no invariant violated. CI runs a million on every push.
+Run to date: **1,000,000 sequences on each of seeds 1–5 — 677M operations** —
+no invariant violated, with every one of the six order types emitted and the
+count reported, because a run that violated nothing because it never exercised
+something has not shown anything about it. CI runs a million on every push and
+fails if any type goes unemitted.
+
+Stops were the type it never emitted. Adding them found two bugs immediately: a
+parked stop firing into an empty book attempted `Accepted -> Rejected`, which
+the state machine forbids and which aborted the process; and a triggered stop
+kept the arrival sequence it was given at submit time, so a stop parked in the
+morning could claim priority over orders that had been queued at that price all
+day. Both have regression tests that fail without their fix.
 
 Input is a byte buffer decoded into operations, so the same file runs under
 libFuzzer where its runtime is available:
