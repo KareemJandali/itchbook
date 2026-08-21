@@ -13,6 +13,9 @@
 // writes one summary row per symbol. It is a separate handler on purpose: the
 // single-symbol path above carries a byte-identical regression gate, and the
 // safest way to keep that promise is to leave its code alone.
+#include <sys/resource.h>
+
+#include <chrono>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -191,6 +194,8 @@ struct AllSymbols {
     itchbook::book::BookSet set;
     uint64_t read = 0;
     uint64_t applied = 0;
+    double elapsed_s = 0.0;
+    uint64_t peak_rss_bytes = 0;
     bool stop = false;
 
     explicit AllSymbols(const Options& o)
@@ -262,6 +267,103 @@ bool write_per_symbol(const AllSymbols& a, const char* path) {
     return std::fclose(f) == 0 && !bad;
 }
 
+// Peak resident set, from the OS rather than from an accounting of what we
+// meant to allocate. VmHWM on Linux; ru_maxrss on macOS and the BSDs, where it
+// is already in bytes rather than kilobytes.
+uint64_t peak_rss() {
+#if defined(__linux__)
+    std::FILE* f = std::fopen("/proc/self/status", "r");
+    if (f == nullptr) return 0;
+    char line[256];
+    uint64_t kb = 0;
+    while (std::fgets(line, sizeof(line), f) != nullptr) {
+        if (std::sscanf(line, "VmHWM: %llu kB", reinterpret_cast<unsigned long long*>(&kb)) == 1) break;
+    }
+    std::fclose(f);
+    return kb * 1024;
+#else
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) != 0) return 0;
+#if defined(__APPLE__)
+    return static_cast<uint64_t>(ru.ru_maxrss);          // bytes
+#else
+    return static_cast<uint64_t>(ru.ru_maxrss) * 1024;   // kilobytes
+#endif
+#endif
+}
+
+// The same figures the summary prints, as an artifact. Standing rule 7: a
+// number that only ever appears on a terminal is a number that reaches a
+// document by being retyped, and three rounds of auditing this repository
+// found exactly that defect over and over.
+bool write_all_json(const AllSymbols& a, const char* path) {
+    uint64_t volume = 0, adds = 0, off_band = 0, recentres = 0, resting_shares = 0;
+    size_t quoted = 0;
+    a.set.for_each_book([&](uint16_t, const itchbook::book::Book& b,
+                            const itchbook::book::SymbolInfo&) {
+        volume += b.volume();
+        resting_shares += b.resting_shares();
+        adds += b.adds();
+        off_band += b.off_band_adds();
+        recentres += b.recentres();
+        if (b.resting_orders() > 0) ++quoted;
+    });
+    std::FILE* f = std::fopen(path, "w");
+    if (f == nullptr) {
+        std::fprintf(stderr, "error: cannot write %s\n", path);
+        return false;
+    }
+    const double band_mb = static_cast<double>(a.set.books()) * 2.0 *
+                           static_cast<double>(a.opt.band_levels) *
+                           static_cast<double>(sizeof(itchbook::book::Level)) / 1e6;
+    std::fprintf(f,
+        "{\n"
+        "  \"feed\": \"%s\",\n"
+        "  \"elapsed_seconds\": %.2f,\n"
+        "  \"peak_rss_bytes\": %llu,\n"
+        "  \"messages_read\": %llu,\n"
+        "  \"messages_applied\": %llu,\n"
+        "  \"books\": %zu,\n"
+        "  \"directory_entries\": %zu,\n"
+        "  \"symbols_still_quoting\": %zu,\n"
+        "  \"executed_volume\": %llu,\n"
+        "  \"resting_orders\": %llu,\n"
+        "  \"resting_shares\": %llu,\n"
+        "  \"adds\": %llu,\n"
+        "  \"off_band_adds\": %llu,\n"
+        "  \"recentres\": %llu,\n"
+        "  \"band_levels\": %zu,\n"
+        "  \"band_memory_bytes\": %llu,\n"
+        "  \"ref_map_slots\": %zu,\n"
+        "  \"pool_capacity_orders\": %zu,\n"
+        "  \"unknown_refs\": %llu,\n"
+        "  \"locate_mismatch\": %llu,\n"
+        "  \"undirectoried_messages\": %llu,\n"
+        "  \"operational_halts\": %llu,\n"
+        "  \"broken_trades\": %llu\n"
+        "}\n",
+        a.opt.feed, a.elapsed_s,
+        static_cast<unsigned long long>(a.peak_rss_bytes),
+        static_cast<unsigned long long>(a.read),
+        static_cast<unsigned long long>(a.applied),
+        a.set.books(), a.set.directory_entries(), quoted,
+        static_cast<unsigned long long>(volume),
+        static_cast<unsigned long long>(a.set.resting_orders()),
+        static_cast<unsigned long long>(resting_shares),
+        static_cast<unsigned long long>(adds),
+        static_cast<unsigned long long>(off_band),
+        static_cast<unsigned long long>(recentres),
+        a.opt.band_levels, static_cast<unsigned long long>(band_mb * 1e6),
+        a.set.storage().refs.capacity(), a.set.storage().pool.capacity(),
+        static_cast<unsigned long long>(a.set.unknown_ref()),
+        static_cast<unsigned long long>(a.set.locate_mismatch()),
+        static_cast<unsigned long long>(a.set.undirectoried_messages()),
+        static_cast<unsigned long long>(a.set.operational_halts()),
+        static_cast<unsigned long long>(a.set.broken_trades()));
+    const bool bad = std::ferror(f) != 0;
+    return std::fclose(f) == 0 && !bad;
+}
+
 void print_all_summary(const AllSymbols& a) {
     uint64_t volume = 0;
     uint64_t resting_shares = 0;
@@ -306,6 +408,13 @@ void print_all_summary(const AllSymbols& a) {
                           : (std::to_string(static_cast<double>(off_band) * 100.0 /
                                             static_cast<double>(adds)).substr(0, 5)).c_str());
     std::printf("%-28s %16s\n", "symbols re-centred once", comma(recentres).c_str());
+    std::printf("%-28s %13.1f MB\n", "peak RSS",
+                static_cast<double>(a.peak_rss_bytes) / 1e6);
+    std::printf("%-28s %13.2f s\n", "wall clock", a.elapsed_s);
+    if (a.elapsed_s > 0.0) {
+        std::printf("%-28s %16.2f\n", "M msg/s",
+                    static_cast<double>(a.read) / a.elapsed_s / 1e6);
+    }
     // The three that must be zero on a feed that is what it claims to be.
     std::printf("%-28s %16s\n", "unknown references", comma(a.set.unknown_ref()).c_str());
     std::printf("%-28s %16s\n", "locate mismatches", comma(a.set.locate_mismatch()).c_str());
@@ -544,10 +653,15 @@ int main(int argc, char** argv) {
         }
         try {
             AllSymbols a(opt);
+            const auto started = std::chrono::steady_clock::now();
             itchbook::Reader reader(opt.feed);
             itchbook::parse(reader, a);
+            a.elapsed_s = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - started).count();
+            a.peak_rss_bytes = peak_rss();
             if (!opt.quiet) print_all_summary(a);
             if (opt.per_symbol != nullptr && !write_per_symbol(a, opt.per_symbol)) return 1;
+            if (opt.json != nullptr && !write_all_json(a, opt.json)) return 1;
         } catch (const std::exception& e) {
             std::fprintf(stderr, "error: %s\n", e.what());
             return 1;

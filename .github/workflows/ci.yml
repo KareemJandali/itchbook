@@ -141,6 +141,20 @@ jobs:
           ./build/itch_slice data/raw/multi.gz SY0003 data/sliced/SY0003.gz
           ./scripts/full-day-differential.sh data/sliced/SY0003.gz 1000 10
 
+      # The other half of verification at scale. The oracle proves a symbol
+      # right one symbol at a time and cannot chew a whole feed; these catch
+      # what sampling misses -- a dropped message type, a double-counted
+      # locate, volume lost between symbols. All correct per symbol, all wrong
+      # in aggregate, all invisible to a per-symbol differential.
+      - name: Global invariants (the census and the book agree in aggregate)
+        run: |
+          ./build/itch_census data/raw/multi.gz --peak-orders \
+            --per-symbol /tmp/census.json
+          ./build/book_replay data/raw/multi.gz --all-symbols \
+            --json /tmp/run.json --per-symbol /tmp/per.csv --quiet
+          python3 scripts/full-day-check.py --census /tmp/census.json \
+            --run /tmp/run.json --per-symbol /tmp/per.csv
+
       - name: Smoke test (reference book replay)
         run: |
           python3 python/reference/replay.py data/raw/sample.gz --symbol TEST \

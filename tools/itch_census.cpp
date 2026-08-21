@@ -288,6 +288,7 @@ bool write_timing(const std::string& path, const std::string& file, uint64_t tot
 
 bool write_per_symbol(const std::string& path, const std::string& file, uint64_t total,
                       uint64_t bytes, double elapsed_s, const Census& c) {
+    auto c_counts = [&c](int i) { return c.counts[static_cast<size_t>(i)]; };
     std::FILE* f = std::fopen(path.c_str(), "w");
     if (f == nullptr) return false;
     std::fprintf(f, "{\n  \"file\": \"%s\",\n", file.c_str());
@@ -317,6 +318,19 @@ bool write_per_symbol(const std::string& path, const std::string& file, uint64_t
                      static_cast<unsigned long long>(c.partial_cancels),
                      static_cast<unsigned long long>(c.live.unknown()));
     }
+    // The type histogram, so that a later run can check its own arithmetic
+    // against this one. "messages read minus messages applied" has to equal the
+    // unmodelled count plus the modelled-but-non-mutating types, and there is
+    // no way to check that without knowing how many of each there were.
+    std::fprintf(f, "  \"types\": {");
+    bool first_type = true;
+    for (int c = 0; c < 256; ++c) {
+        if (c_counts(c) == 0) continue;
+        if (!first_type) std::fprintf(f, ", ");
+        first_type = false;
+        std::fprintf(f, "\"%c\": %llu", c, static_cast<unsigned long long>(c_counts(c)));
+    }
+    std::fprintf(f, "},\n");
     std::fprintf(f, "  \"symbols\": [\n");
     bool first = true;
     for (size_t loc = 0; loc < c.sym.size(); ++loc) {
