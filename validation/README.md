@@ -144,6 +144,51 @@ push, is that the census and the book agree: two implementations that share no
 code count the live orders in the same generated feed and must return the same
 number.
 
+## The regression baseline, and why it is generated
+
+`validation/regression/` holds one feed's reconstruction, frozen: the snapshot
+CSV, the summary JSON, and the same feed through `--all-symbols`. CI regenerates
+and diffs them on every push.
+
+```bash
+./scripts/regression-gate.sh            # check
+./scripts/regression-gate.sh --update   # re-record, deliberately
+```
+
+It exists because phase 9 rewrote the inside of the book — storage moved out
+from under it, every order gained a field, messages now arrive through a router
+— and none of that is supposed to change what a reconstruction produces.
+"Supposed to" is not a standard this project accepts, so the claim is checked
+rather than asserted.
+
+The baseline is a **generated** feed with a fixed seed, not MSFT, for the
+obvious reason: licensed market data cannot live in a repository. That is a real
+weakness and worth naming — a generated feed does not contain the paths a real
+day contains, which is the entire argument of
+[`what-synthetic-data-hides.md`](../docs/writing/what-synthetic-data-hides.md).
+What this gate catches is *drift*: a change that alters output the author did
+not intend to alter. What it cannot catch is a reconstruction that was already
+wrong, which is what the oracle differential and the Databento comparison above
+are for. Three checks, three different questions.
+
+The gate hashes the feed before it compares anything else. A generator whose
+output moved and a book whose output moved fail in the same place and mean
+opposite things, so it says which — the difference between a five-minute fix and
+an afternoon.
+
+**The real-day equivalent belongs here too, and cannot be committed.** With
+`12302019.NASDAQ_ITCH50.gz` on the machine:
+
+```bash
+./build-release/book_replay data/sliced/MSFT.gz --symbol MSFT \
+    --snapshots msft-snapshots.csv --interval-ms 1000 --json msft-summary.json
+```
+
+Keep those two files somewhere outside the repository and diff them after any
+change to the book. The committed `MSFT_2019-12-30.json` above already serves
+part of this purpose: it is a recorded reconstruction, and a later change that
+alters it will show up when it is re-graded.
+
 ## Which oracle, and why not the one the plan named
 
 The build plan's done-condition says match "NASDAQ's published daily summary
