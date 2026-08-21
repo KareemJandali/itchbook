@@ -258,6 +258,134 @@ def svg_lines(xs, series, title, subtitle, x_label, y_label, include_zero=False)
     return "\n".join(p)
 
 
+def svg_loglog(xs, series, title, subtitle, x_label, y_label, rules=()):
+    """Latency against offered rate: both axes logarithmic, with vertical rules.
+
+    A third form, because neither of the two above can draw this honestly.
+
+      * `svg_lines` positions x by INDEX. That is right for a handful of named
+        configurations and wrong here: the rate ladder is geometric, 1x to
+        800x, and index spacing would draw the gap from 1x to 2x the same width
+        as the gap from 400x to 800x. Those are the same ratio, so on a log
+        axis they SHOULD be equal -- but index spacing also makes 1x-to-2x
+        equal to 100x-to-200x while claiming a linear axis, which is a
+        different chart telling a different lie depending on the ladder.
+      * y must be log for the same reason the histogram's is: p50 sits in the
+        microseconds and p99.9 above the knee is in the milliseconds, and on a
+        linear axis every percentile below the worst one is a flat line on the
+        floor. The interesting claim -- that p50 barely moves while the tail
+        explodes -- is exactly what a linear axis erases.
+
+    Both axes are labelled as log, and gridded at decades so the spacing gives
+    the scale away without the reader having to take the label on trust.
+
+    `rules` is a sequence of (label, x) drawn as vertical dashed lines: the knee
+    and the max sustainable rate. They are the deliverable, so they are drawn on
+    the chart rather than left to a caption.
+    """
+    import math
+    W, H = 820, 460
+    left, right, top, bottom = 82, 140, 92, 66
+    plot_w, plot_h = W - left - right, H - top - bottom
+
+    all_y = [v for _, vals in series for v in vals if v > 0]
+    if not all_y or not xs:
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>'
+    ylo, yhi = math.log10(min(all_y)), math.log10(max(all_y))
+    if yhi - ylo < 0.5:
+        mid = (ylo + yhi) / 2
+        ylo, yhi = mid - 0.25, mid + 0.25
+    ylo, yhi = ylo - 0.08 * (yhi - ylo), yhi + 0.08 * (yhi - ylo)
+    xlo, xhi = math.log10(min(xs)), math.log10(max(xs))
+    if xhi - xlo < 0.3:
+        xlo, xhi = xlo - 0.15, xhi + 0.15
+    xlo, xhi = xlo - 0.04 * (xhi - xlo), xhi + 0.04 * (xhi - xlo)
+
+    def px(v):
+        return left + (math.log10(v) - xlo) / (xhi - xlo) * plot_w
+
+    def py(v):
+        return top + plot_h - (math.log10(max(v, 1e-9)) - ylo) / (yhi - ylo) * plot_h
+
+    def si_fmt(v):
+        for div, suf in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
+            if v >= div:
+                q = v / div
+                return f"{q:.0f}{suf}" if q >= 10 else f"{q:.1f}{suf}"
+        return f"{v:.0f}"
+
+    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+         f'width="{W}" height="{H}" role="img" aria-label="{esc(title)}">',
+         f"<style>{STYLE}</style>",
+         f'<rect class="surface" width="{W}" height="{H}"/>',
+         f'<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" '
+         f'font-size="15" font-weight="600">{esc(title)}</text>',
+         f'<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" '
+         f'font-size="11.5">{esc(subtitle)}</text>',
+         f'<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" '
+         f'font-size="11">both axes logarithmic; gridlines at decades</text>']
+
+    d = math.floor(ylo)
+    while d <= yhi:
+        if d >= ylo:
+            y = py(10 ** d)
+            p.append(f'<line class="grid" x1="{left}" y1="{y:.1f}" '
+                     f'x2="{left + plot_w}" y2="{y:.1f}"/>')
+            p.append(f'<text class="muted" x="{left - 10}" y="{y + 4:.1f}" text-anchor="end" '
+                     f'font-family="ui-monospace,monospace" font-size="10.5">'
+                     f'{esc(si_fmt(10 ** d))}</text>')
+        d += 1
+    d = math.floor(xlo)
+    while d <= xhi:
+        if d >= xlo:
+            x = px(10 ** d)
+            p.append(f'<line class="grid" x1="{x:.1f}" y1="{top}" '
+                     f'x2="{x:.1f}" y2="{top + plot_h}"/>')
+            p.append(f'<text class="muted" x="{x:.1f}" y="{top + plot_h + 18}" '
+                     f'text-anchor="middle" font-family="ui-monospace,monospace" '
+                     f'font-size="10.5">{esc(si_fmt(10 ** d))}</text>')
+        d += 1
+
+    # The annotations, drawn before the data so the lines sit on top of them.
+    for i, (label, xv) in enumerate(rules):
+        if xv is None or xv <= 0:
+            continue
+        x = px(xv)
+        p.append(f'<line class="axis" x1="{x:.1f}" y1="{top}" x2="{x:.1f}" '
+                 f'y2="{top + plot_h}" stroke-dasharray="5 4"/>')
+        p.append(f'<text class="ink" x="{x + 5:.1f}" y="{top + 14 + i * 15:.1f}" '
+                 f'font-family="system-ui,sans-serif" font-size="11">{esc(label)}</text>')
+
+    p.append(f'<text class="muted" x="{left + plot_w / 2:.0f}" y="{top + plot_h + 44}" '
+             f'text-anchor="middle" font-family="system-ui,sans-serif" '
+             f'font-size="11">{esc(x_label)}</text>')
+    p.append(f'<text class="muted" transform="translate(20,{top + plot_h / 2:.0f}) rotate(-90)" '
+             f'text-anchor="middle" font-family="system-ui,sans-serif" '
+             f'font-size="11">{esc(y_label)}</text>')
+
+    for si, (name, vals) in enumerate(series):
+        cls = si % 4 + 1
+        pts = " ".join(f"{px(x):.1f},{py(v):.1f}" for x, v in zip(xs, vals) if v > 0)
+        p.append(f'<polyline class="k{cls}" stroke-width="2" '
+                 f'stroke-linejoin="round" points="{pts}"/>')
+        for x, v in zip(xs, vals):
+            if v > 0:
+                p.append(f'<circle class="s{cls}" cx="{px(x):.1f}" cy="{py(v):.1f}" r="3.5"/>')
+
+    ends = sorted(((py(vals[-1]), name, si) for si, (name, vals) in enumerate(series)
+                   if vals and vals[-1] > 0))
+    placed = []
+    for y, name, si in ends:
+        y = max(y, (placed[-1] + 15) if placed else top + 6)
+        placed.append(y)
+        cls = si % 4 + 1
+        p.append(f'<circle class="s{cls}" cx="{left + plot_w + 12}" cy="{y - 4:.1f}" r="4"/>')
+        p.append(f'<text class="ink" x="{left + plot_w + 22}" y="{y:.1f}" '
+                 f'font-family="system-ui,sans-serif" font-size="11.5">{esc(name)}</text>')
+    p.append("</svg>")
+    return "\n".join(p)
+
+
 def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per message",
                   y_label="messages", compare=None, labels=("before", "after")):
     """A distribution over log-spaced buckets: vertical bars, one colour.

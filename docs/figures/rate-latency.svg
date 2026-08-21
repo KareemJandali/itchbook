@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 460" width="820" height="460" role="img" aria-label="Wire-to-book latency against offered rate">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="820" height="460"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Wire-to-book latency against offered rate</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">252,101 messages, 4,196 msg/s at 1x real time; ring 65,536 slots; best of 2; UNPINNED — describes a scheduler as much as a pipeline</text>
+<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">both axes logarithmic; gridlines at decades</text>
+<line class="grid" x1="82" y1="364.7" x2="680" y2="364.7"/>
+<text class="muted" x="72" y="368.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10k</text>
+<line class="grid" x1="82" y1="286.0" x2="680" y2="286.0"/>
+<text class="muted" x="72" y="290.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100k</text>
+<line class="grid" x1="82" y1="207.3" x2="680" y2="207.3"/>
+<text class="muted" x="72" y="211.3" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1.0M</text>
+<line class="grid" x1="82" y1="128.6" x2="680" y2="128.6"/>
+<text class="muted" x="72" y="132.6" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10M</text>
+<line class="grid" x1="170.6" y1="92" x2="170.6" y2="394"/>
+<text class="muted" x="170.6" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10k</text>
+<line class="grid" x1="346.8" y1="92" x2="346.8" y2="394"/>
+<text class="muted" x="346.8" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100k</text>
+<line class="grid" x1="523.1" y1="92" x2="523.1" y2="394"/>
+<text class="muted" x="523.1" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1.0M</text>
+<line class="axis" x1="615.7" y1="92" x2="615.7" y2="394" stroke-dasharray="5 4"/>
+<text class="ink" x="620.7" y="106.0" font-family="system-ui,sans-serif" font-size="11">max sustainable 3,356,066/s (800x)</text>
+<line class="axis" x1="403.5" y1="92" x2="403.5" y2="394" stroke-dasharray="5 4"/>
+<text class="ink" x="408.5" y="121.0" font-family="system-ui,sans-serif" font-size="11">knee 209,794/s (50x)</text>
+<text class="muted" x="381" y="438" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">offered rate (messages/second)</text>
+<text class="muted" transform="translate(20,243) rotate(-90)" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">latency (nanoseconds)</text>
+<polyline class="k1" stroke-width="2" stroke-linejoin="round" points="104.1,327.7 227.3,351.7 333.4,359.2 403.5,362.5 456.6,355.7 509.6,366.7 562.7,373.2 615.7,333.0 657.9,150.6"/>
+<circle class="s1" cx="104.1" cy="327.7" r="3.5"/>
+<circle class="s1" cx="227.3" cy="351.7" r="3.5"/>
+<circle class="s1" cx="333.4" cy="359.2" r="3.5"/>
+<circle class="s1" cx="403.5" cy="362.5" r="3.5"/>
+<circle class="s1" cx="456.6" cy="355.7" r="3.5"/>
+<circle class="s1" cx="509.6" cy="366.7" r="3.5"/>
+<circle class="s1" cx="562.7" cy="373.2" r="3.5"/>
+<circle class="s1" cx="615.7" cy="333.0" r="3.5"/>
+<circle class="s1" cx="657.9" cy="150.6" r="3.5"/>
+<polyline class="k2" stroke-width="2" stroke-linejoin="round" points="104.1,290.4 227.3,302.2 333.4,297.7 403.5,254.7 456.6,124.0 509.6,213.6 562.7,120.2 615.7,126.7 657.9,123.9"/>
+<circle class="s2" cx="104.1" cy="290.4" r="3.5"/>
+<circle class="s2" cx="227.3" cy="302.2" r="3.5"/>
+<circle class="s2" cx="333.4" cy="297.7" r="3.5"/>
+<circle class="s2" cx="403.5" cy="254.7" r="3.5"/>
+<circle class="s2" cx="456.6" cy="124.0" r="3.5"/>
+<circle class="s2" cx="509.6" cy="213.6" r="3.5"/>
+<circle class="s2" cx="562.7" cy="120.2" r="3.5"/>
+<circle class="s2" cx="615.7" cy="126.7" r="3.5"/>
+<circle class="s2" cx="657.9" cy="123.9" r="3.5"/>
+<polyline class="k3" stroke-width="2" stroke-linejoin="round" points="104.1,264.2 227.3,218.0 333.4,151.4 403.5,213.4 456.6,112.8 509.6,195.9 562.7,118.2 615.7,125.9 657.9,123.7"/>
+<circle class="s3" cx="104.1" cy="264.2" r="3.5"/>
+<circle class="s3" cx="227.3" cy="218.0" r="3.5"/>
+<circle class="s3" cx="333.4" cy="151.4" r="3.5"/>
+<circle class="s3" cx="403.5" cy="213.4" r="3.5"/>
+<circle class="s3" cx="456.6" cy="112.8" r="3.5"/>
+<circle class="s3" cx="509.6" cy="195.9" r="3.5"/>
+<circle class="s3" cx="562.7" cy="118.2" r="3.5"/>
+<circle class="s3" cx="615.7" cy="125.9" r="3.5"/>
+<circle class="s3" cx="657.9" cy="123.7" r="3.5"/>
+<circle class="s3" cx="692" cy="119.7" r="4"/>
+<text class="ink" x="702" y="123.7" font-family="system-ui,sans-serif" font-size="11.5">p99.9</text>
+<circle class="s2" cx="692" cy="134.7" r="4"/>
+<text class="ink" x="702" y="138.7" font-family="system-ui,sans-serif" font-size="11.5">p99</text>
+<circle class="s1" cx="692" cy="149.7" r="4"/>
+<text class="ink" x="702" y="153.7" font-family="system-ui,sans-serif" font-size="11.5">p50</text>
+</svg>

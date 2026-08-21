@@ -563,6 +563,10 @@ python/
 bench/              baseline/after JSON, compare.py (A/B with pinning), and
                     regression_check.py — the CI gate that the pool change
                     still pays, by ratio so the runner's speed cancels out
+                    rate-sweep.py — offers the feed at a ladder of rates
+                    anchored to the feed's own clock, extends itself until
+                    something drops, and reports the knee and the max
+                    sustainable rate
 scripts/            real-data-run.sh, full-day-differential.sh,
                     update-real-numbers.py, render-writeup.py,
                     make-synthetic-feed.py — a spec-shaped ITCH feed owing
@@ -573,6 +577,8 @@ scripts/            real-data-run.sh, full-day-differential.sh,
                     determinism-gate.sh — the pipeline may reorder time, never
                     effect: its book must equal the synchronous one, byte for
                     byte, across six timing regimes
+                    phase10-report.py — the rate-latency tables, generated from
+                    the committed sweep and --check'd in CI
 tests/              unit, property fuzzers, and the cross-implementation differentials
 data/  out/         gitignored — raw feeds, per-symbol slices, generated results
 ```

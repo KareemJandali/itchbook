@@ -199,6 +199,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    uint64_t send_end = 0;
     bench::Histogram lateness(1 << 20);
     uint64_t packets = 0;
     uint64_t messages = 0;
@@ -206,6 +207,13 @@ int main(int argc, char** argv) {
     uint64_t bytes = 0;
     uint64_t feed_t0 = 0;
     bool feed_t0_known = false;
+    // What the sender ACTUALLY managed, as distinct from what it was told to
+    // manage. Those are the same number only while it keeps its schedule, and
+    // a sweep that quotes the offered rate as the sustained rate is quoting an
+    // argument it passed to itself. The pipeline can only have absorbed what
+    // was really sent.
+    double achieved = 0.0;
+    double send_seconds = 0.0;
 
     // ---- load first, send second -------------------------------------------
     std::vector<std::vector<uint8_t>> wire;
@@ -244,6 +252,7 @@ int main(int argc, char** argv) {
         // in the worst-sample column of every table downstream.
         const uint64_t start = now_ns();
         uint64_t last_intended = start;
+        send_end = start;
 
         for (const std::vector<uint8_t>& buf : wire) {
 
@@ -292,11 +301,14 @@ int main(int argc, char** argv) {
             lateness.add(actual > intended ? actual - intended : 0);
 
             mold::Header h;
+            send_end = actual;
             if (mold::parse_header(buf.data(), buf.size(), &h)) {
                 messages += h.message_count();
             }
             ++packets;
         }
+        send_seconds = static_cast<double>(send_end - start) / 1e9;
+        if (send_seconds > 0.0) achieved = static_cast<double>(messages) / send_seconds;
     }
     ::close(fd);
 
@@ -317,6 +329,7 @@ int main(int argc, char** argv) {
         std::printf("%-30s %" PRIu64 " (%.2f s to load, not counted as lateness)\n",
                     "packets preloaded", static_cast<uint64_t>(wire.size()),
                     static_cast<double>(preload_ns) / 1e9);
+        std::printf("%-30s %.0f msg/s\n", "achieved rate", achieved);
         std::printf("%-30s %" PRIu64 "\n", "packets sent", packets);
         std::printf("%-30s %" PRIu64 "\n", "messages sent", messages);
         std::printf("%-30s %" PRIu64 "\n", "bytes sent", bytes);
@@ -358,8 +371,10 @@ int main(int argc, char** argv) {
             "{\n  \"packets\": %" PRIu64 ",\n  \"messages\": %" PRIu64 ",\n"
             "  \"bytes\": %" PRIu64 ",\n  \"send_errors\": %" PRIu64 ",\n"
             "  \"rate_msg_per_s\": %.3f,\n  \"multiplier\": %.3f,\n"
+            "  \"achieved_msg_per_s\": %.1f,\n  \"send_seconds\": %.6f,\n"
             "  \"lateness_ns\": {\"p50\": %.0f, \"p99\": %.0f, \"p999\": %.0f, \"max\": %u}\n}\n",
             packets, messages, bytes, send_errors, opt.rate, opt.multiplier,
+            achieved, send_seconds,
             late_p50, late_p99, late_p999, lateness.max());
         if (std::fclose(f) != 0) return 1;
     }

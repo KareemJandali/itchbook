@@ -112,10 +112,27 @@ struct Census {
     uint64_t adds = 0, deletes = 0, replaces = 0;
     uint64_t full_executions = 0, partial_executions = 0;
     uint64_t full_cancels = 0, partial_cancels = 0;
+    uint64_t first_ts = 0, last_ts = 0, timestamped = 0;
+    bool have_ts = false;
 
     void on_message(char type, const uint8_t* p, uint16_t) {
         namespace m = itchbook::itch;
         ++counts[static_cast<uint8_t>(type)];
+
+        // The span of the session as the FEED tells it, which is the only
+        // honest source for "one times real time". Phase 10.7 sweeps an offered
+        // rate starting from real time, and a real-time figure copied out of a
+        // document is a constant that drifts from the file it claims to
+        // describe. Ignore zeros: a few message types carry no timestamp, and
+        // one of them would put the session start at midnight.
+        const uint64_t ts = m::timestamp(p);
+        if (ts != 0) {
+            if (!have_ts || ts < first_ts) first_ts = ts;
+            if (!have_ts || ts > last_ts) last_ts = ts;
+            have_ts = true;
+            ++timestamped;
+        }
+
         if (!track_live && !track_symbols) return;
 
         PerSymbol* s = nullptr;
@@ -244,17 +261,46 @@ uint64_t file_size(const std::string& path) {
 // because the floor -- decompress, frame, length-check, build nothing -- is
 // measured by the pass with NO other flags, and that pass has nothing else to
 // write. A number with no artifact is a number that gets retyped.
+// ITCH timestamps are nanoseconds since midnight Eastern. Printed as a clock
+// time because "34200000000000" and "09:30:00" are the same fact, and only one
+// of them lets a reader notice the session started at the opening bell.
+std::string hhmmss(uint64_t ns) {
+    const uint64_t s = ns / 1000000000ULL;
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%02llu:%02llu:%02llu",
+                  static_cast<unsigned long long>(s / 3600),
+                  static_cast<unsigned long long>((s / 60) % 60),
+                  static_cast<unsigned long long>(s % 60));
+    return buf;
+}
+
+// Messages per second at one times real time: the feed's own message count
+// over the feed's own elapsed session. Not wall clock -- that is how fast this
+// machine read the file, which is a different question and already reported.
+double real_time_rate(const Census& c) {
+    if (!c.have_ts || c.last_ts <= c.first_ts) return 0.0;
+    const double span_s = static_cast<double>(c.last_ts - c.first_ts) / 1e9;
+    return static_cast<double>(c.timestamped) / span_s;
+}
+
 bool write_timing(const std::string& path, const std::string& file, uint64_t total,
-                  uint64_t bytes, double elapsed_s, const char* pass) {
+                  uint64_t bytes, double elapsed_s, const char* pass, const Census& c) {
     std::FILE* f = std::fopen(path.c_str(), "w");
     if (f == nullptr) return false;
     std::fprintf(f, "{\n  \"file\": \"%s\",\n  \"pass\": \"%s\",\n"
                     "  \"messages\": %llu,\n  \"bytes\": %llu,\n"
-                    "  \"compressed_bytes\": %llu,\n  \"elapsed_seconds\": %.2f\n}\n",
+                    "  \"compressed_bytes\": %llu,\n  \"elapsed_seconds\": %.2f,\n"
+                    "  \"first_timestamp_ns\": %llu,\n  \"last_timestamp_ns\": %llu,\n"
+                    "  \"timestamped_messages\": %llu,\n"
+                    "  \"real_time_msg_per_s\": %.1f\n}\n",
                  file.c_str(), pass,
                  static_cast<unsigned long long>(total),
                  static_cast<unsigned long long>(bytes),
-                 static_cast<unsigned long long>(file_size(file)), elapsed_s);
+                 static_cast<unsigned long long>(file_size(file)), elapsed_s,
+                 static_cast<unsigned long long>(c.first_ts),
+                 static_cast<unsigned long long>(c.last_ts),
+                 static_cast<unsigned long long>(c.timestamped),
+                 real_time_rate(c));
     const bool bad = std::ferror(f) != 0;
     return std::fclose(f) == 0 && !bad;
 }
@@ -431,6 +477,24 @@ int main(int argc, char** argv) {
                         static_cast<double>(total) / elapsed_s / 1e6);
         }
 
+        // The session's own clock, which is a different question from the one
+        // above: that is how fast this machine read the file, this is how fast
+        // the market produced it. Phase 10.7's rate ladder starts here.
+        if (census.have_ts) {
+            const double span_s =
+                static_cast<double>(census.last_ts - census.first_ts) / 1e9;
+            std::printf("\n%-34s %14s\n", "first timestamp",
+                        hhmmss(census.first_ts).c_str());
+            std::printf("%-34s %14s\n", "last timestamp", hhmmss(census.last_ts).c_str());
+            std::printf("%-34s %14.2f\n", "session seconds", span_s);
+            std::printf("%-34s %14.0f\n", "msg/s at 1x real time",
+                        real_time_rate(census));
+            if (census.timestamped != total) {
+                std::printf("%-34s %14llu\n", "  (messages with no timestamp)",
+                            static_cast<unsigned long long>(total - census.timestamped));
+            }
+        }
+
         if (peak_orders) {
             std::printf("\nlive orders (every symbol, one shared reference space)\n");
             std::printf("---------------------------------------------------------------\n");
@@ -468,7 +532,8 @@ int main(int argc, char** argv) {
                                     : "framing + live orders")
             : (census.track_symbols ? "framing + per symbol" : "framing only");
         if (!timing_out.empty() &&
-            !write_timing(timing_out, path, total, reader.bytes(), elapsed_s, pass_name)) {
+            !write_timing(timing_out, path, total, reader.bytes(), elapsed_s, pass_name,
+                          census)) {
             std::fprintf(stderr, "error: cannot write %s\n", timing_out.c_str());
             return 1;
         }
