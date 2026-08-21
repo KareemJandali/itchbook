@@ -81,6 +81,22 @@ inline uint64_t cycles_end() { return cycles_begin(); }
 
 #endif
 
+// What a build is ACTUALLY timing with, for anything that reports it.
+//
+// A tool that prints the wrong clock's name is a tool whose other statements
+// are worth less: tsc_offset said "CLOCK_MONOTONIC" for a build that had
+// already been switched to CLOCK_UPTIME_RAW, which is a small lie about a
+// measurement in a project whose entire argument is that it does not tell them.
+inline const char* clock_name() {
+#if ITCHBOOK_HAVE_RDTSC
+    return "rdtsc / rdtscp (per-core counter)";
+#elif defined(__APPLE__)
+    return "clock_gettime CLOCK_UPTIME_RAW (system-wide)";
+#else
+    return "clock_gettime CLOCK_MONOTONIC (system-wide)";
+#endif
+}
+
 // True when the TSC ticks at a fixed rate regardless of frequency and C-state.
 // Without it, cycle counts are not comparable across a run.
 inline bool tsc_is_invariant() {

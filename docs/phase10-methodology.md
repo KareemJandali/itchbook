@@ -52,7 +52,44 @@ The rule here:
   it.
 
 If the sender's lateness is not small compared with the latency being reported,
-the run is measuring the sender and the results say so.
+the run is measuring the sender and the results say so. `mold_replay_udp` warns
+above a **10 µs p99.9**, because loopback wire-to-book is measured in
+microseconds and a sender tail of the same order contaminates it completely.
+The first version of that check used a millisecond and would have passed a run
+whose generator was two orders of magnitude noisier than the thing it measured.
+
+### The sender is also the machine's qualification test
+
+Two things had to be fixed before its own numbers were usable, and both are
+worth knowing because they are the shape of mistake this section is about.
+
+It decompressed inside its send loop, which put a single ~5.8 ms outlier at
+every rate — the schedule started before gzip's first inflate, so packet zero
+was always late by the cost of opening the stream — and gave it a tail that grew
+with the rate, because a generator competing with the system under test for CPU
+is not measuring it. Packets are preloaded now, the clock starts at the first
+send, and the memory that costs is bounded and refused above a stated limit
+rather than discovered as a swap storm.
+
+What remains is not the program. Sweeping the spin margin on a shared container:
+
+| spin margin | p50 | p99 | p99.9 |
+|---|---:|---:|---:|
+| 100 µs | 267 ns | 96 µs | 259 µs |
+| 500 µs | 52 ns | 27 µs | 84 µs |
+| 2000 µs | 53 ns | 21 µs | 101 µs |
+
+The margin buys an improvement and then stops, which says the residual is not
+`nanosleep` overshoot but the sender thread being descheduled. **No margin fixes
+that, and no amount of care in the code will.** A p50 of 52 ns and a p99.9 of
+84 µs is a machine that cannot hold a schedule, and running the latency
+experiment on it would produce a distribution whose tail belongs to the
+scheduler.
+
+So the first thing to run on any candidate machine is the sender alone, against
+a sink that does nothing. If its p99.9 lateness will not come under 10 µs, the
+machine is disqualified before the receiver is even written — which is a much
+cheaper way to find out than reading it out of a rate–latency curve later.
 
 ## 2. Clock domain — and the assumption this document exists to kill
 
