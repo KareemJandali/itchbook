@@ -1,0 +1,57 @@
+{
+  "sweep": "load",
+  "label": "reference map slots (peak live orders was 1,924,078)",
+  "rounds": 3,
+  "pinned": false,
+  "feed": "/Users/kareemjandali/Desktop/12302019.NASDAQ_ITCH50.gz",
+  "variants": [
+    {
+      "variant": "4M slots (46% load)",
+      "median_seconds": 93.05,
+      "spread_percent": 7.297152068780233,
+      "peak_rss_bytes": 483852288,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 4194304,
+      "band_levels": 512,
+      "off_band_adds": 18739843,
+      "samples": [
+        93.05,
+        96.75,
+        89.96
+      ]
+    },
+    {
+      "variant": "8M slots (23% load)",
+      "median_seconds": 50.54,
+      "spread_percent": 11.515631183221211,
+      "peak_rss_bytes": 550846464,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 8388608,
+      "band_levels": 512,
+      "off_band_adds": 18739843,
+      "samples": [
+        55.88,
+        50.54,
+        50.06
+      ]
+    },
+    {
+      "variant": "2M slots (92% load)",
+      "median_seconds": 95.88,
+      "spread_percent": 35.700876095118886,
+      "peak_rss_bytes": 517455872,
+      "pool_capacity_orders": 2093056,
+      "pools": 1,
+      "ref_map_slots": 4194304,
+      "band_levels": 512,
+      "off_band_adds": 18739843,
+      "samples": [
+        95.88,
+        89.73,
+        123.96
+      ]
+    }
+  ]
+}
