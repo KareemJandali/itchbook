@@ -71,18 +71,54 @@ a clock bug rather than what they are.
 
 So, before any latency table is produced:
 
-1. **Measure the offset.** A ping-pong between two pinned threads, each stamping
-   its own TSC around a handoff, bounds the offset by the round-trip time. Run
-   it in both directions; the asymmetry is the offset.
-2. **Report it** next to the latencies, in the same units.
-3. **If it is not negligible** against the numbers being measured, do not
-   correct for it — use `CLOCK_MONOTONIC_RAW` for the cross-thread sample and
-   keep the TSC for intra-thread work only. A correction is a model; a
-   different clock is a fact.
+1. **Measure the offset.** `tools/tsc_offset.cpp`. Two pinned threads ping-pong
+   a token; A stamps `t1`, B stamps `t2`, A stamps `t3`. Whatever instant B's
+   stamp really corresponds to lies in `[t1, t3]` on A's clock, so
+   `offset ≈ t2 − (t1+t3)/2` with `uncertainty ≤ (t3−t1)/2`. The tightest sample
+   is the fastest one, not the average of samples that were interrupted.
+2. **Report the bound, not the estimate.** An estimate smaller than the method's
+   own resolution has not been distinguished from zero, and printing it as an
+   offset is printing the noise floor as a finding. The tool's verdict is
+   therefore a three-way one: unresolvable (report the bound), a protocol
+   artefact (the sign fails to reverse when the roles do), or a real offset.
+3. **If it is real and not negligible**, do not correct for it — use
+   `CLOCK_MONOTONIC_RAW` for the cross-thread sample and keep the TSC for
+   intra-thread work only. A correction is a model; a different clock is a fact.
 4. **State which clock produced which table.** Every one of them.
 
-On a single-socket machine with invariant TSC the offset is usually near zero,
-and "usually" is not a measurement.
+The tool also reports what it could not control: which timestamp source the
+build actually compiled in — on a platform without `rdtsc`, `bench/rdtsc.hpp`
+falls back to `clock_gettime`, which is system-wide and the question does not
+arise — and whether thread pinning was available at all, because on a machine
+that cannot pin there is no guarantee the two threads ever ran on different
+cores and a small answer means nothing.
+
+### What it found about itself, first
+
+The first version reported **−37.5 ns forward and −38.9 ns reversed**. Same
+sign, same magnitude — and a real offset reverses when the roles do. The sign
+check, built to separate clock offsets from protocol artefacts, caught a
+protocol artefact on its first run.
+
+The cause was mixing stamping instructions: `t1` used `cycles_begin()`
+(`lfence; rdtsc`) while `t2` and `t3` used `cycles_end()` (`rdtscp; lfence`).
+`rdtscp` waits for prior instructions to retire and `rdtsc` does not, so `t1`
+sat systematically earlier within its own instruction stream than `t3` did
+within its, dragging the midpoint later and making `t2` look early by a fixed
+amount in both directions at once. All three stamps now use the same
+instruction.
+
+That halved it and did not remove it, which is the more useful outcome: what
+remains is inside the method's resolution, so the honest report is a bound. On
+this hardware, two pinned threads at 100,000 samples give a fastest round trip
+of ~262 ns and an offset estimate of ~40 ns — **under the ~131 ns the method can
+resolve, therefore not distinguishable from zero**.
+
+For phase 10 that is a usable answer rather than a clean one. Loopback
+wire-to-book will be measured in microseconds; a bound of ~131 ns is a small
+fraction of that and the tables can subtract the two clocks — provided they
+**quote the bound beside the number**, which is what standing rule 3 has always
+required of a caveat.
 
 ## 3. Loopback is not a network
 

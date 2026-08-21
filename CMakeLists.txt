@@ -75,6 +75,17 @@ add_executable(mold_replay tools/mold_replay.cpp)
 add_executable(mold_damage tools/mold_damage.cpp)
 add_executable(restart_check tools/restart_check.cpp)
 
+# ---- Phase 10 ----
+# Always optimised, and never sanitised: this measures a handoff between two
+# cores in the tens of nanoseconds, and a sanitiser's instrumentation is larger
+# than the thing being measured.
+add_executable(tsc_offset tools/tsc_offset.cpp)
+target_compile_options(tsc_offset PRIVATE -O2)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  target_compile_options(tsc_offset PRIVATE -fno-sanitize=all)
+  target_link_options(tsc_offset PRIVATE -fno-sanitize=all)
+endif()
+
 add_executable(book_bench tools/book_bench.cpp)
 target_compile_options(book_bench PRIVATE -O3 -fno-omit-frame-pointer)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -82,7 +93,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(book_bench PRIVATE -fno-sanitize=all)
 endif()
 
-foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
+foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest tsc_offset
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()

@@ -183,6 +183,24 @@ jobs:
       - name: The phase 9 results match their artifacts
         run: python3 scripts/phase9-report.py --check
 
+      # Phase 10 subtracts a timestamp taken on one core from one taken on
+      # another, which nothing in this repository had ever done. This keeps the
+      # measuring tool alive; it asserts nothing about the runner's clocks,
+      # because a shared CI machine cannot support a claim about core
+      # synchronisation. The number that matters is measured on the hardware the
+      # results come from and quoted in docs/phase10-methodology.md.
+      - name: Cross-core clock offset tool runs
+        run: |
+          ./build/tsc_offset --samples 20000 --cpu-a 0 --cpu-b 1 --json /tmp/tsc.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/tsc.json'))
+          for k in ('timestamp_source','pinned','resolution_ns','resolvable'):
+              assert k in d, k
+          print('offset tool reports:', d['timestamp_source'],
+                '| resolvable' if d['resolvable'] else '| bounded at %.0f ns' % d['resolution_ns'])
+          "
+
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh
 
