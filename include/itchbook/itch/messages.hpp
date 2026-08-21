@@ -145,6 +145,41 @@ constexpr int spec_length(char t) {
     }
 }
 
+// The name the spec gives a type. Lives here rather than in the one tool that
+// first needed it: two tools now print type tables, and a switch copied into
+// both is a table that drifts the first time a type is added to one of them.
+//
+// Empty string for a type not in ITCH 5.0 -- not "Unknown", which reads like a
+// name and would sit in a column beside real ones.
+constexpr const char* type_name(char t) {
+    switch (t) {
+        case 'S': return "System Event";
+        case 'R': return "Stock Directory";
+        case 'H': return "Stock Trading Action";
+        case 'Y': return "Reg SHO Restriction";
+        case 'L': return "Market Participant Position";
+        case 'A': return "Add Order";
+        case 'F': return "Add Order w/ MPID";
+        case 'E': return "Order Executed";
+        case 'C': return "Order Executed w/ Price";
+        case 'X': return "Order Cancel";
+        case 'D': return "Order Delete";
+        case 'U': return "Order Replace";
+        case 'P': return "Trade (non-cross)";
+        case 'Q': return "Cross Trade";
+        case 'B': return "Broken Trade";
+        case 'I': return "NOII";
+        case 'h': return "Operational Halt";
+        case 'V': return "MWCB Decline Level";
+        case 'W': return "MWCB Status";
+        case 'K': return "IPO Quoting Period Update";
+        case 'J': return "LULD Auction Collar";
+        case 'N': return "Retail Price Improvement";
+        case 'O': return "Direct Listing w/ Capital Raise";
+        default:  return "";
+    }
+}
+
 // Whether this book interprets the message, as opposed to merely framing it.
 // Used by tools that want to report what a feed contained but was ignored.
 constexpr bool modelled(char t) {

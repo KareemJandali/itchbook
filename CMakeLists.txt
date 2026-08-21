@@ -76,10 +76,16 @@ add_executable(mold_damage tools/mold_damage.cpp)
 add_executable(restart_check tools/restart_check.cpp)
 
 # ---- Phase 10 ----
-# Always optimised, and never sanitised: this measures a handoff between two
-# cores in the tens of nanoseconds, and a sanitiser's instrumentation is larger
-# than the thing being measured.
+# These two follow the build type, unlike book_bench and tsc_offset above, and
+# the difference is deliberate. A sanitiser's instrumentation is far larger than
+# the handoff being measured, so a MEASUREMENT run is -DCMAKE_BUILD_TYPE=Release
+# and gets no sanitiser at all. But these are the first programs here with two
+# threads and a socket in them, and Debug is where their correctness is checked:
+# under ASan/UBSan, and under ThreadSanitizer via -DITCHBOOK_TSAN=ON. Excusing
+# them from sanitisers to protect numbers that are never taken in Debug would
+# buy nothing and cost the only race detection they have.
 add_executable(mold_replay_udp tools/mold_replay_udp.cpp)
+add_executable(wire_to_book tools/wire_to_book.cpp)
 
 add_executable(tsc_offset tools/tsc_offset.cpp)
 target_compile_options(tsc_offset PRIVATE -O2)
@@ -96,7 +102,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
-          tsc_offset mold_replay_udp
+          tsc_offset mold_replay_udp wire_to_book
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()

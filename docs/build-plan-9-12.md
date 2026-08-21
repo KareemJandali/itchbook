@@ -679,6 +679,89 @@ the phase-7 grader exist for.
    moment. Preallocate it, or write the exception into the methodology doc. Do
    not let it pass unnoticed.
 
+### 10.4 / 10.5 — what actually happened
+
+Built as `tools/wire_to_book.cpp`, gated by `scripts/wire-to-book-check.sh`, run
+in CI under gcc, ASan/UBSan and ThreadSanitizer. Feed is
+`scripts/make-synthetic-feed.py` — 252,482 messages over 64 symbols, no market
+data required, which is why any of this can run on a runner at all.
+
+**Four bugs the write-up would have shipped, and what found each.**
+
+1. *The receiver returned from inside the batch loop on the sender's
+   end-of-session packet* — which is the normal way a run ends. Everything below
+   that `return` was the code that copied the sequencer's counters out. Every
+   clean run would have reported **zero gaps and zero messages lost** because
+   the counters were never read, not because nothing was lost. A clean sheet by
+   construction, which is precisely the failure phase 7 exists to prevent. Found
+   by reading the exit paths before running it; there is no test that would have
+   caught it, because the number it prints is the number you expect.
+2. *`hdr.message_count()` was read after `parse_header` returned false* — a live
+   read of uninitialised stack deciding how much ring space to reserve.
+3. *The drop decision used `writable()`*, which the ring's own header documents
+   as a **lower bound** that refreshes only when it would report zero. Dropping
+   on a lower bound counts drops that never happened, which would have put a
+   cliff in 10.7's curve that the pipeline does not have.
+4. *The sequencer can deliver more messages than the packet it was handed.* A
+   packet held out of order is released when the gap in front of it closes, so
+   one `on_packet` can emit a whole reorder buffer's worth. The budget guard
+   added for this caught **1,065 real overruns** at `--ring-log2 12` on its first
+   run — messages that would have been written past the room that was checked
+   for, over slots the consumer had not finished reading.
+
+**Loss is accounted for, and the accounting is the gate.** Three identities, all
+failable, checked by the tool on every run:
+
+- every message the sequencer delivered was staged, refused for size, or refused
+  for room — there is no fourth outcome;
+- the sequence cursor advanced exactly once per message delivered plus once per
+  message declared lost;
+- and nothing fell between the wire and those buckets.
+
+Plus two categories that no sequencer can see and so are counted separately:
+messages lost **before** it started and **after** it last advanced. A run whose
+first packets are dropped starts the sequencer later, and without this those
+messages vanish with nothing counting them — the drop path erasing its own
+evidence.
+
+Measured on the synthetic feed: 5,566 packets, 252,482 messages, **zero lost at
+every layer** at a sustainable rate; and at `--ring-log2 10` with a 15× rate,
+5,539 packets dropped, 251,479 messages declared lost, 1,003 delivered —
+1,003 + 251,479 = 252,482 exactly.
+
+**Exit codes carry the distinction the sweep needs.** `1` is a broken identity
+and nothing the run printed means anything. `3` is *lossy*: the pipeline behaved
+exactly as designed and the offered load exceeded what it could absorb — which
+is not a failure, it is the measurement 10.7 is looking for. `4` is
+*unverified*: ring drops were zero but `/proc/net/udp` is unreadable, so the rate
+cannot be called sustainable. Kernel drops gate alongside ring drops, because on
+loopback the socket buffer overflows first and a gate watching only the ring
+would call a rate clean while thousands of datagrams went upstream.
+
+**The gate can fail.** CI runs it twice: once expecting a clean run, and once
+told to expect a clean run from a configuration that cannot deliver one. A gate
+whose failure case is never exercised is a gate nobody has checked opens.
+
+**Still open, carried into 10.6+:**
+
+- *Item 4 above is stated, not fixed.* `sequencer.hpp`'s reorder buffer is a
+  `std::map<uint64_t, std::vector<uint8_t>>`, so it allocates on the producer
+  path exactly when the system is stressed — a phase-4 violation at the worst
+  possible moment, and the runs above exercised it (65 gaps declared at
+  `--ring-log2 12`). It is not on the measured path for a clean run, which is
+  why it did not block this step, and it distorts the tail of every lossy one.
+- *No latency number here is quotable.* Both threads are unpinned, the container
+  has two cores, and `tsc_offset` reports UNMEASURABLE on this hardware. The tool
+  prints all three caveats itself. Real figures need the pinned Linux host.
+- *One stamp per `recvmmsg` batch*, not per packet. `SO_TIMESTAMPNS` remains the
+  stretch goal; the output records which instrument was used.
+- *The synthetic feed is not the market.* No stub quotes, no crosses, no halts,
+  no NOII stream, and an invented price distribution — deliberately shaped so
+  quotes cluster near the touch (6.99% of adds land off-band, 24 symbols
+  re-centre) because a uniform price range sends 99% of adds to the cold
+  `std::map` and would have made this measure `std::map::find`. It proves the
+  pipeline conserves messages. It proves nothing about how fast a real day is.
+
 ### 10.6 — The determinism gate
 
 Below the knee with drops == 0, the pipeline's book must be byte-identical to

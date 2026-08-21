@@ -538,7 +538,8 @@ include/itchbook/   public headers (this is a library, not an app)
   bench/            rdtsc timing and latency percentiles
 tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
                     queue_sim, queue_backtest, latency_sweep, restart_check,
-                    mold_wrap, mold_replay, mold_damage
+                    mold_wrap, mold_replay, mold_damage,
+                    tsc_offset, mold_replay_udp, wire_to_book
 python/
   make_sample.py       synthetic spec-shaped feed, so you can run without a download
   make_queue_feed.py   feed with real queue structure, halts and a moving price
@@ -563,7 +564,12 @@ bench/              baseline/after JSON, compare.py (A/B with pinning), and
                     regression_check.py — the CI gate that the pool change
                     still pays, by ratio so the runner's speed cancels out
 scripts/            real-data-run.sh, full-day-differential.sh,
-                    update-real-numbers.py, render-writeup.py
+                    update-real-numbers.py, render-writeup.py,
+                    make-synthetic-feed.py — a spec-shaped ITCH feed owing
+                    nothing to NASDAQ, so the pipeline tools are testable on a
+                    machine with no market data on it
+                    wire-to-book-check.sh — the UDP pipeline must lose nothing,
+                    and must notice when it does
 tests/              unit, property fuzzers, and the cross-implementation differentials
 data/  out/         gitignored — raw feeds, per-symbol slices, generated results
 ```
