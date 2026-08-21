@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# verify-local.sh — everything CI checks that a laptop can check, in one command.
+#
+# This exists because of a specific failure. Phase 10's last commit went to CI
+# red on a clang-only error -- `variable set but not used`, which gcc does not
+# warn about and `-Werror` turns into a build failure -- after a local run that
+# built with gcc three times and clang zero times. The gcc job in CI exists
+# precisely to catch the reverse case, and the reason the repo builds with two
+# compilers is that neither one sees everything. A local gate that uses one
+# compiler is a local gate that finds out on push.
+#
+# BOTH COMPILERS, and clang without sanitizers when its runtime is missing: the
+# point of the second compiler here is its FRONT END, and a clang build that
+# cannot link is still a clang build that has parsed every line.
+#
+# What this does NOT do is the long tail: the full-day differentials, the
+# adversarial matrix, the rate sweep. Those live in CI and take minutes. This is
+# the fast gate -- compile clean on both, all unit tests on both, every
+# generated document still matching its artifacts.
+#
+# Usage: scripts/verify-local.sh
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+fail=0
+step() {
+    printf '\n=== %s\n' "$1"
+}
+check() {
+    if "$@"; then return 0; fi
+    echo "  FAILED: $*"
+    fail=1
+    return 1
+}
+
+build_with() {   # $1 dir, $2 cc, $3 cxx, $4 build type
+    local dir=$1 cc=$2 cxx=$3 type=$4
+    if ! command -v "$cxx" >/dev/null 2>&1; then
+        echo "  SKIP: $cxx not installed"
+        return 0
+    fi
+    CC=$cc CXX=$cxx cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE="$type" >/dev/null 2>&1
+    local out
+    out=$(cmake --build "$dir" -j 2>&1)
+    if [[ $? -ne 0 ]]; then
+        echo "$out" | grep -E "error:|warning:" | head -10
+        echo "  FAILED: $cxx $type build"
+        fail=1
+        return 1
+    fi
+    if echo "$out" | grep -qE "warning:"; then
+        echo "$out" | grep -E "warning:" | head -10
+        echo "  FAILED: $cxx emitted warnings"
+        fail=1
+        return 1
+    fi
+    echo "  $cxx $type: clean"
+    ctest --test-dir "$dir" 2>&1 | grep -E "tests passed|tests failed" | sed 's/^/  /'
+    if ! ctest --test-dir "$dir" >/dev/null 2>&1; then
+        echo "  FAILED: $cxx unit tests"
+        fail=1
+    fi
+}
+
+step "gcc, Debug + ASan/UBSan"
+build_with build-verify-gcc gcc g++ Debug
+
+# Clang's sanitizer runtime is a separate package and is often absent on a dev
+# box. Release still exercises the whole front end, which is what the second
+# compiler is here for.
+step "clang, Release (front end; sanitizer runtime not required)"
+build_with build-verify-clang clang clang++ Release
+
+step "generated documents still match their artifacts"
+check python3 scripts/census-report.py --check
+check python3 scripts/phase9-report.py --check
+check python3 scripts/phase10-report.py --check
+check python3 scripts/phase10-8-report.py --check
+
+step "the regression gate"
+check ./scripts/regression-gate.sh >/dev/null
+
+echo
+if [[ $fail -ne 0 ]]; then
+    echo "verify-local FAILED — do not push"
+    exit 1
+fi
+echo "verify-local PASSED (the long tail — differentials, adversarial matrix,"
+echo "rate sweep — still runs only in CI)"

@@ -796,6 +796,8 @@ int run(const Options& opt) {
         std::printf("%-32s %14" PRIu64 "\n", "sequence gaps declared", seq_stats.gaps);
         std::printf("%-32s %14" PRIu64 "\n", "messages lost to gaps", seq_stats.messages_lost);
         std::printf("%-32s %14" PRIu64 "\n", "  gaps that reached the book", gaps_seen);
+        std::printf("%-32s %14" PRIu64 "\n", "  messages the book was told were lost",
+                    messages_lost);
         std::printf("%-32s %14" PRIu64 "\n", "  gaps lost to a full ring", gap_overflow_out);
 
         // Phase 7's verdict inputs, on phase 10's pipeline. "Trusted" is a
@@ -937,6 +939,7 @@ int run(const Options& opt) {
             "  \"malformed_packets\": %" PRIu64 ",\n"
             "  \"staging_overflow\": %" PRIu64 ",\n"
             "  \"gaps_to_book\": %" PRIu64 ",\n"
+            "  \"messages_lost_seen_by_book\": %" PRIu64 ",\n"
             "  \"gaps_lost_to_full_ring\": %" PRIu64 ",\n"
             "  \"state\": \"%s\",\n"
             "  \"trusted\": %s,\n"
@@ -960,7 +963,7 @@ int run(const Options& opt) {
             kernel_known ? std::to_string(kernel_lost).c_str() : "null",
             seq_stats.gaps, seq_stats.messages_lost, oversize, malformed,
             stage_overflow,
-            gaps_seen, gap_overflow_out,
+            gaps_seen, messages_lost, gap_overflow_out,
             recover::to_string(gap.state()), gap.trusted() ? "true" : "false",
             gap.stats().rebuilds, gap.stats().recoveries,
             opt.kill_ring_occupancy == 0
@@ -1011,6 +1014,18 @@ int run(const Options& opt) {
         std::fprintf(stderr, "\nFAIL: sequencer declared %" PRIu64 " gaps, %" PRIu64
                              " reached the book, %" PRIu64 " were refused.\n",
                      seq_stats.gaps, gaps_seen, gap_overflow_out);
+        ++failures;
+    }
+    // 1c. ...and the two ends agree on HOW MUCH was lost, not just on how many
+    //     times. The sequencer counts messages it declared missing; the book
+    //     counts messages it was told about. With no gap refused those are the
+    //     same number, and if they ever differ while gap_overflow is zero then
+    //     a gap arrived carrying the wrong count -- which would leave the book
+    //     rebuilding at the right place for the wrong reason.
+    if (gap_overflow_out == 0 && messages_lost != seq_stats.messages_lost) {
+        std::fprintf(stderr, "\nFAIL: sequencer lost %" PRIu64 " messages, the book "
+                             "was told about %" PRIu64 ".\n",
+                     seq_stats.messages_lost, messages_lost);
         ++failures;
     }
     // 2. The sequencer's cursor moved exactly once per message it delivered and
