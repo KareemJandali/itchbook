@@ -120,6 +120,33 @@ fraction of that and the tables can subtract the two clocks — provided they
 **quote the bound beside the number**, which is what standing rule 3 has always
 required of a caveat.
 
+### And the platform this cannot be measured on
+
+Run on an Apple-silicon Mac, the same tool reported a fastest round trip of
+**0 ns**, a median of 0 ns, and — in its first version — concluded that the
+offset was "bounded under 0 ns". That is the most reassuring sentence it could
+possibly have produced and it was worth nothing: a round trip of zero is not a
+fast handoff, it is a clock that cannot tell the two ends apart.
+
+The tool now measures **its own clock's granularity** before trusting any
+interval, by sampling back to back and keeping the smallest non-zero gap, and
+refuses to bound anything when the round trip is not several ticks wide. That
+check turned a confident number into `VERDICT: UNMEASURED`, which is the correct
+output.
+
+Two consequences, and both constrain where phase 10's numbers can come from:
+
+* `bench/rdtsc.hpp`'s fallback now uses `CLOCK_UPTIME_RAW` on Apple rather than
+  `CLOCK_MONOTONIC` — Apple's un-adjusted counter, finer and cheaper, since it
+  skips the NTP-adjusted path. It is still system-wide, which is this
+  fallback's one advantage over the TSC: there is no per-core offset to find.
+* **The latency runs need Linux.** macOS exposes no call that binds a thread to
+  a core, so the tool reports pinning as unavailable and says a small offset
+  there is not evidence of anything. Section 4 requires pinning, and a headline
+  latency number from an unpinned machine would be the 19.3%-variance mistake
+  from phase 4 repeated at a larger scale. The book and the sweeps can run
+  anywhere; the wire-to-book histogram cannot.
+
 ## 3. Loopback is not a network
 
 The numbers this phase produces come from UDP over loopback. That means:

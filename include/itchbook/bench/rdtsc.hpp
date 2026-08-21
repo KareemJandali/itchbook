@@ -49,11 +49,32 @@ inline uint64_t cycles_end() {
     return t;
 }
 
-#else  // no rdtsc: fall back to the clock, coarser but not wrong
+#else  // no rdtsc: fall back to a clock, coarser but not wrong
+
+// CLOCK_MONOTONIC was the original choice and it is the wrong one on Apple
+// silicon, where its granularity is far coarser than the interval phase 10
+// needs to see. tools/tsc_offset measured a cross-thread handoff there as
+// ZERO nanoseconds -- not a fast handoff, a clock that cannot tell the two ends
+// apart -- and every figure derived from it was arithmetic on rounding.
+//
+// CLOCK_UPTIME_RAW is Apple's un-adjusted counter and is both finer and
+// cheaper: it does not go through the NTP-adjusted path CLOCK_MONOTONIC does.
+// Everywhere else CLOCK_MONOTONIC is already fine, so the choice is made here
+// rather than at the call sites.
+//
+// It is still a system-wide clock, which is the one advantage this fallback has
+// over the TSC: there is no per-core offset to worry about. What it does not
+// give back is resolution, so anything measuring it should ask
+// tsc_offset --samples N what one tick costs before trusting a difference.
+#if defined(__APPLE__)
+#define ITCHBOOK_FALLBACK_CLOCK CLOCK_UPTIME_RAW
+#else
+#define ITCHBOOK_FALLBACK_CLOCK CLOCK_MONOTONIC
+#endif
 
 inline uint64_t cycles_begin() {
     timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(ITCHBOOK_FALLBACK_CLOCK, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL + static_cast<uint64_t>(ts.tv_nsec);
 }
 inline uint64_t cycles_end() { return cycles_begin(); }
