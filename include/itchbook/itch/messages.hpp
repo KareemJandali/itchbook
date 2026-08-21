@@ -60,10 +60,46 @@ enum class Type : char {
     StockTradingAction   = 'H',
 };
 
+// The ITCH 5.0 types this book does NOT model, and why each is safe to skip.
+// Listing them is the point: an unmodelled type that nobody wrote down is
+// indistinguishable from one nobody thought about, and two of these bear
+// directly on tradability, which is the property recover/halt.hpp exists to
+// get right.
+//
+//   'B'  Broken Trade          busts a previously printed trade. No book
+//                              effect — trades never entered the book — but it
+//                              does mean a day's printed volume can be revised
+//                              after the fact.
+//   'h'  Operational Halt      a venue-level halt of a symbol, separate from
+//                              the 'H' trading action. TRADABILITY-RELEVANT:
+//                              halt.hpp derives its session state from 'H'
+//                              alone, so an operational halt is currently not
+//                              reflected. It is rare and did not occur in the
+//                              day this project validates against, which makes
+//                              it a known gap rather than a measured one.
+//   'V'  MWCB Decline Level    market-wide circuit-breaker trigger levels,
+//   'W'  MWCB Status           and the announcement that one was breached. A
+//                              breach halts the whole market, so this is also
+//                              tradability-relevant and also not modelled.
+//   'Y'  Reg SHO Restriction   short-sale price-test state. Constrains who may
+//                              post, not what the book contains.
+//   'L'  Market Participant    per-MPID quoting state. TotalView carries the
+//        Position              orders themselves as 'A'/'F'.
+//   'K'  IPO Quoting Period    first-day quoting windows.
+//   'J'  LULD Auction Collar   limit-up/limit-down collar prices.
+//   'N'  RPII                  retail price improvement interest, indicative.
+//   'I'  NOII                  auction imbalance, indicative. The auction
+//                              itself arrives as a 'Q' cross trade, which IS
+//                              modelled.
+//
 // Spec message lengths (payload bytes, including the type byte). Used to assert
-// the length prefix agrees with the type — a mismatch means desync.
+// the length prefix agrees with the type — a mismatch means desync. Unmodelled
+// types are listed here too: the handler ignores them, but the frame is still
+// checked, so a desync that lands inside a metadata message is caught at that
+// message rather than at the next one this book happens to care about.
 constexpr int spec_length(char t) {
     switch (t) {
+        // Modelled.
         case 'S': return 12;
         case 'R': return 39;
         case 'A': return 36;
@@ -76,7 +112,30 @@ constexpr int spec_length(char t) {
         case 'P': return 44;
         case 'Q': return 40;
         case 'H': return 25;
-        default:  return -1;  // metadata type we don't model yet
+        // Framed and length-checked, but not modelled. See the note above.
+        case 'Y': return 20;
+        case 'L': return 26;
+        case 'V': return 35;
+        case 'W': return 12;
+        case 'K': return 28;
+        case 'J': return 35;
+        case 'h': return 21;
+        case 'B': return 19;
+        case 'I': return 50;
+        case 'N': return 20;
+        default:  return -1;  // genuinely unknown — do not guess a length
+    }
+}
+
+// Whether this book interprets the message, as opposed to merely framing it.
+// Used by tools that want to report what a feed contained but was ignored.
+constexpr bool modelled(char t) {
+    switch (t) {
+        case 'S': case 'R': case 'A': case 'F': case 'E': case 'C':
+        case 'X': case 'D': case 'U': case 'P': case 'Q': case 'H':
+            return true;
+        default:
+            return false;
     }
 }
 
