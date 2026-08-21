@@ -107,6 +107,12 @@ jobs:
       # the FEED's hash first, because a generator whose output moved and a
       # book whose output moved fail in the same place and mean opposite
       # things.
+      # Standing rule 7: no number reaches a document by being retyped. The
+      # census block in validation/README.md is generated from the committed
+      # census JSON, and this fails if the prose has drifted from the data.
+      - name: The census block matches the census
+        run: python3 scripts/census-report.py --check
+
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh
 
