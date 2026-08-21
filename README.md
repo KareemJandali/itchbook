@@ -3,12 +3,21 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–8 complete. The correctness, fill and recovery claims
-> below are measured on a real NASDAQ trading day — MSFT, 30 December 2019,
-> 1,221,484 messages over the whole file. **Performance is the exception**, and
-> says so where it appears: a benchmark has to replay the same messages every
-> time to mean anything, so those numbers come from a generated feed built to
-> that day's message mix.
+> **Status:** Phases 1–9 complete. Every claim below is measured on a real
+> NASDAQ trading day, 30 December 2019 — the whole feed where it says so, and
+> MSFT's 1,221,484-message slice where the oracle or a vendor bar is the grader.
+> **One exception, and it says so where it appears:** the cycles-per-message
+> benchmark comes from a generated feed built to that day's message mix, because
+> a benchmark has to replay identical messages to mean anything. The wall-clock
+> and memory figures for the full day are the real file.
+>
+> **A whole market, not a symbol.** One process reconstructs **every one of
+> 8,906 securities** for 30 December 2019 — 268,744,780 messages, 971 million
+> shares — in **87 s** at 484 MB, with **zero unknown order references and zero
+> locate mismatches across the entire feed**. The single-symbol benchmark says
+> 22.8 ns per message; at market scale it is 263 ns, an 11.5x cost for a working
+> set that stopped fitting in cache — predicted before the run, in print.
+> See [`docs/phase9-results.md`](docs/phase9-results.md).
 >
 > **Correct.** The framing is checked against a whole day of every symbol —
 > **268,744,780 messages, 8.25 GB, no length mismatch**. Replaying one symbol's

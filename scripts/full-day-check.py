@@ -42,13 +42,23 @@ def main():
     types = census.get("types")
 
     checks = []
+    skipped = []
 
     def check(name, got, want, note=""):
         checks.append((name, got, want, got == want, note))
 
+    def skip(name, why):
+        # A check that did not run must not look like a check that passed.
+        # Two of these went quiet on the first real run -- the census predated
+        # the type histogram -- and the only thing that said so was the count.
+        skipped.append((name, why))
+
     check("messages read", run["messages_read"], census["messages"],
           "the book and the census must have seen the same file")
 
+    if not types:
+        skip("messages skipped", "census has no type histogram; re-run itch_census")
+        skip("books built", "census has no type histogram; re-run itch_census")
     if types:
         modelled = {"S", "R", "A", "F", "E", "C", "X", "D", "U", "P", "Q", "H"}
         unmodelled = sum(n for t, n in types.items() if t not in modelled)
@@ -74,6 +84,9 @@ def main():
     check("undirectoried messages", run["undirectoried_messages"], 0,
           "every message routed to a book had a directory entry")
 
+    if not args.per_symbol:
+        for name in ("per-symbol rows", "summed volume", "summed adds", "summed off-band"):
+            skip(name, "no --per-symbol file given")
     if args.per_symbol:
         rows = list(csv.DictReader(Path(args.per_symbol).open()))
         check("per-symbol rows", len(rows), run["books"])
@@ -92,11 +105,20 @@ def main():
             print(f"       {note}")
         failed += 0 if ok else 1
 
+    for name, why in skipped:
+        print(f"  SKIP {name:<{width}} {why}")
+
     if failed:
         print(f"\n{failed} global invariant(s) failed")
         return 1
     print(f"\nOK: {len(checks)} global invariants hold across "
           f"{run['messages_read']:,} messages and {run['books']:,} symbols")
+    if skipped:
+        # Exit 2, not 0. Ten checks passing out of twelve is not the same claim
+        # as twelve checks passing, and the only thing that said so on the first
+        # real run was a count nobody was reading.
+        print(f"    {len(skipped)} did NOT run -- see SKIP above. They are not passes.")
+        return 2
     return 0
 
 
