@@ -62,6 +62,16 @@ struct SymbolInfo {
 
 // One market, one clock. Not per symbol, however tempting the wire makes it
 // look: 'S' carries locate 0 and means the same thing for everything.
+// Where orders are allocated from.
+//
+// Shared is the arrangement phase 9.1 argued for: allocation order follows
+// arrival order, so orders that arrive together sit together and a cache line
+// pulled in for one message is warm for the next. PerBook is the alternative
+// that argument was made against, and phase 9.9 exists to find out whether the
+// argument was right -- a prediction is not a measurement, and this repository
+// has three of them on record that measured flat.
+enum class PoolMode { Shared, PerBook };
+
 struct SessionState {
     char system_event = '\0';        // 'O','S','Q','M','E','C'
 
@@ -93,9 +103,16 @@ public:
     // keeps the phase-3 percentage policy, which is what every single-symbol
     // caller still gets.
     explicit BookSet(size_t refs_capacity = 1u << 22, int32_t tick = 100,
-                     int32_t band_pct = 20, size_t band_levels = 0)
-        : store_(refs_capacity), tick_(tick), band_pct_(band_pct),
-          band_levels_(band_levels), books_(kLocates), dir_(kLocates) {}
+                     int32_t band_pct = 20, size_t band_levels = 0,
+                     PoolMode pool_mode = PoolMode::Shared,
+                     size_t pool_first_chunk = ITCHBOOK_POOL_FIRST_CHUNK,
+                     size_t pool_max_chunk = ITCHBOOK_POOL_MAX_CHUNK)
+        : store_(refs_capacity, pool_first_chunk, pool_max_chunk), tick_(tick),
+          band_pct_(band_pct), band_levels_(band_levels), pool_mode_(pool_mode),
+          pool_first_chunk_(pool_first_chunk), pool_max_chunk_(pool_max_chunk),
+          books_(kLocates), dir_(kLocates) {
+        if (pool_mode_ == PoolMode::PerBook) pools_.resize(kLocates);
+    }
 
     // The book for a locate, created if this is the first message for it. A
     // newly created book inherits the session state, so a symbol that first
@@ -103,7 +120,8 @@ public:
     Book& at(uint16_t locate) {
         std::unique_ptr<Book>& slot = books_[locate];
         if (slot == nullptr) {
-            slot = std::make_unique<Book>(store_, locate, tick_, band_pct_);
+            slot = std::make_unique<Book>(store_.refs, pool_for(locate), locate, tick_,
+                                          band_pct_);
             slot->set_band_levels(band_levels_);
             slot->set_system_event(session_.system_event);
             ++constructed_;
@@ -144,6 +162,30 @@ public:
             if (b != nullptr) b->set_system_event(code);
         }
     }
+
+    // Total capacity across however many pools there are. With one shared pool
+    // this is that pool; with 8,900 of them it is their sum, which is the
+    // number the per-book variant has to be judged on -- a free list per symbol
+    // means every symbol rounds up to a whole chunk.
+    size_t pool_capacity() const {
+        if (pool_mode_ == PoolMode::Shared) return store_.pool.capacity();
+        size_t total = 0;
+        for (const std::unique_ptr<Pool>& p : pools_) {
+            if (p != nullptr) total += p->capacity();
+        }
+        return total;
+    }
+
+    size_t pools() const {
+        if (pool_mode_ == PoolMode::Shared) return 1;
+        size_t n = 0;
+        for (const std::unique_ptr<Pool>& p : pools_) {
+            if (p != nullptr) ++n;
+        }
+        return n;
+    }
+
+    PoolMode pool_mode() const { return pool_mode_; }
 
     const SessionState& session() const { return session_; }
     char system_event() const { return session_.system_event; }
@@ -265,7 +307,22 @@ public:
         return n;
     }
 
-    size_t resting_orders() const { return store_.pool.live(); }
+    // Summed from the books, not read off the pool.
+    //
+    // pool.live() was right while there was one pool, and phase 9.9 made a
+    // second arrangement in which it silently reads zero -- the shared pool
+    // exists and is empty, so nothing throws and nothing is obviously wrong.
+    // It would have passed the global invariant check on the day this project
+    // validates against, too, because that day ends with an empty book and
+    // zero is the right answer by coincidence. Asking the books removes the
+    // coincidence.
+    size_t resting_orders() const {
+        size_t n = 0;
+        for (const std::unique_ptr<Book>& b : books_) {
+            if (b != nullptr) n += b->resting_orders();
+        }
+        return n;
+    }
 
 private:
     Storage store_;
@@ -273,6 +330,17 @@ private:
     int32_t tick_;
     int32_t band_pct_;
     size_t band_levels_;
+    PoolMode pool_mode_;
+    size_t pool_first_chunk_;
+    size_t pool_max_chunk_;
+    std::vector<std::unique_ptr<Pool>> pools_;   // empty unless PerBook
+
+    Pool& pool_for(uint16_t locate) {
+        if (pool_mode_ == PoolMode::Shared) return store_.pool;
+        std::unique_ptr<Pool>& p = pools_[locate];
+        if (p == nullptr) p = std::make_unique<Pool>(pool_first_chunk_, pool_max_chunk_);
+        return *p;
+    }
     std::vector<std::unique_ptr<Book>> books_;
     std::vector<SymbolInfo> dir_;
     size_t constructed_ = 0;
