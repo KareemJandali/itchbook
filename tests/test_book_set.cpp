@@ -1,0 +1,178 @@
+// test_book_set — every symbol in one process.
+//
+// The container is small; what it has to get right is not. Three of these
+// tests exist because the failure they guard against is silent: a book that
+// never learns the session opened, 8,699 summaries with no symbol on them, and
+// a locate nothing in the directory ever named.
+#include <cstdint>
+#include <string>
+
+#include "itchbook/book/book_set.hpp"
+#include "tests/check.hpp"
+
+using itchbook::book::BookSet;
+using itchbook::book::SymbolInfo;
+
+namespace {
+
+void test_books_are_built_on_demand_not_up_front() {
+    BookSet set;
+    CHECK_EQ(set.books(), 0u);
+    CHECK(set.peek(42) == nullptr);
+
+    set.at(42).add(1, 'B', 1000000, 100);
+    CHECK_EQ(set.books(), 1u);
+    CHECK(set.peek(42) != nullptr);
+    CHECK(set.peek(43) == nullptr);
+
+    // Asking again does not build a second one.
+    set.at(42).add(2, 'B', 999900, 200);
+    CHECK_EQ(set.books(), 1u);
+    CHECK_EQ(set.peek(42)->resting_orders(), 2u);
+
+    // A locate that never appears costs a null pointer and a SymbolInfo. If
+    // this ever constructs 65,536 books the process will say so long before
+    // the assertion does.
+    CHECK(set.peek(65535) == nullptr);
+}
+
+void test_two_symbols_share_storage_and_nothing_else() {
+    BookSet set;
+    set.at(1).add(10, 'B', 1000000, 100);
+    set.at(1).add(11, 'S', 1000200, 300);
+    set.at(2).add(20, 'B', 500000, 400);
+
+    CHECK_EQ(set.peek(1)->resting_orders(), 2u);
+    CHECK_EQ(set.peek(2)->resting_orders(), 1u);
+    // One pool for the pair. This is the whole point of the arrangement: the
+    // set's resting count is the market's, each book's is its own.
+    CHECK_EQ(set.resting_orders(), 3u);
+    CHECK_EQ(set.storage().refs.size(), 3u);
+
+    set.at(1).execute(10, 100);
+    CHECK_EQ(set.peek(1)->volume(), 100u);
+    CHECK_EQ(set.peek(2)->volume(), 0u);      // symbol 2 did not trade
+    CHECK_EQ(set.resting_orders(), 2u);
+
+    int32_t px = 0;
+    CHECK(set.peek(2)->best_bid(&px));
+    CHECK_EQ(px, 500000);
+}
+
+void test_the_directory_is_kept_and_the_padding_is_not() {
+    BookSet set;
+    CHECK_EQ(set.directory_entries(), 0u);
+    CHECK(!set.info(7).directoried);
+
+    set.set_directory(7, "MSFT    ", 8, 'Q', ' ', 100);
+    CHECK_EQ(set.directory_entries(), 1u);
+    CHECK(set.info(7).directoried);
+    // Trailing spaces are the wire's, not the symbol's. A summary keyed on
+    // "MSFT    " is a summary nobody can grep.
+    CHECK_STR(set.info(7).symbol, "MSFT");
+    CHECK_EQ(set.info(7).market_category, 'Q');
+    CHECK_EQ(set.info(7).financial_status, ' ');
+    CHECK_EQ(set.info(7).round_lot, 100u);
+
+    // A symbol that fills the field keeps all eight characters.
+    set.set_directory(8, "ABCDEFGH", 8, 'N', 'D', 1);
+    CHECK_STR(set.info(8).symbol, "ABCDEFGH");
+    CHECK_EQ(set.directory_entries(), 2u);
+
+    // A second 'R' for a locate updates it without double-counting.
+    set.set_directory(7, "MSFT    ", 8, 'Q', 'D', 100);
+    CHECK_EQ(set.directory_entries(), 2u);
+    CHECK_EQ(set.info(7).financial_status, 'D');
+}
+
+void test_a_message_for_an_undirectoried_locate_is_counted_not_ignored() {
+    // On a well-formed day every 'R' precedes every order. If that is ever not
+    // true, the alternative to counting it is guessing, and this project does
+    // not do that quietly.
+    BookSet set;
+    set.set_directory(1, "AAA     ", 8, 'Q', ' ', 100);
+
+    set.at(1).add(1, 'B', 1000000, 100);
+    CHECK_EQ(set.undirectoried_messages(), 0u);
+
+    set.at(2).add(2, 'B', 1000000, 100);
+    set.at(2).add(3, 'B', 1000000, 100);
+    CHECK_EQ(set.undirectoried_messages(), 2u);
+
+    // Once the directory catches up, the count stops growing.
+    set.set_directory(2, "BBB     ", 8, 'Q', ' ', 100);
+    set.at(2).add(4, 'B', 1000000, 100);
+    CHECK_EQ(set.undirectoried_messages(), 2u);
+}
+
+void test_the_session_belongs_to_the_market_not_to_a_symbol() {
+    // 'S' carries stock locate 0. Routing it by locate would file the whole
+    // market's session state under whichever symbol owns that code and leave
+    // every other summary blank — 8,699 wrong outputs and no crash.
+    BookSet set;
+    set.at(1).add(1, 'B', 1000000, 100);
+
+    set.set_system_event('Q');                 // market hours
+    CHECK_EQ(set.system_event(), 'Q');
+    CHECK_EQ(set.peek(1)->system_event(), 'Q');  // a book that already existed
+
+    // ...and one that did not. A symbol whose first order arrives at 10:00
+    // must not think the market never opened.
+    set.at(2).add(2, 'B', 500000, 100);
+    CHECK_EQ(set.peek(2)->system_event(), 'Q');
+
+    set.set_system_event('C');                 // close
+    CHECK_EQ(set.peek(1)->system_event(), 'C');
+    CHECK_EQ(set.peek(2)->system_event(), 'C');
+    CHECK_EQ(set.system_event(), 'C');
+}
+
+void test_the_counters_that_matter_are_asked_of_the_feed() {
+    BookSet set;
+    set.at(1).add(10, 'B', 1000000, 100);
+    set.at(2).add(20, 'B', 500000, 100);
+    CHECK_EQ(set.unknown_ref(), 0u);
+    CHECK_EQ(set.locate_mismatch(), 0u);
+
+    set.at(1).remove(999);                     // no order anywhere has it
+    set.at(2).remove(998);
+    CHECK_EQ(set.unknown_ref(), 2u);
+
+    // Symbol 2 handed symbol 1's reference. Impossible on a real feed, which
+    // is why the aggregate has to be reported rather than assumed.
+    set.at(2).remove(10);
+    CHECK_EQ(set.locate_mismatch(), 1u);
+    CHECK_EQ(set.unknown_ref(), 2u);           // still two: a different fact
+    CHECK_EQ(set.peek(1)->resting_orders(), 1u);
+}
+
+void test_walking_the_set_visits_the_books_that_exist_in_locate_order() {
+    BookSet set;
+    set.set_directory(5, "EEE     ", 8, 'Q', ' ', 100);
+    set.set_directory(2, "BBB     ", 8, 'Q', ' ', 100);
+    set.at(5).add(1, 'B', 1000000, 100);
+    set.at(2).add(2, 'B', 500000, 200);
+
+    std::string seen;
+    size_t visits = 0;
+    set.for_each_book([&](uint16_t loc, const itchbook::book::Book& b, const SymbolInfo& info) {
+        ++visits;
+        seen += std::string(info.symbol) + ":" + std::to_string(loc) + " ";
+        CHECK_EQ(b.resting_orders(), 1u);
+    });
+    CHECK_EQ(visits, 2u);
+    CHECK_STR(seen, "BBB:2 EEE:5 ");
+}
+
+}  // namespace
+
+int main() {
+    test_books_are_built_on_demand_not_up_front();
+    test_two_symbols_share_storage_and_nothing_else();
+    test_the_directory_is_kept_and_the_padding_is_not();
+    test_a_message_for_an_undirectoried_locate_is_counted_not_ignored();
+    test_the_session_belongs_to_the_market_not_to_a_symbol();
+    test_the_counters_that_matter_are_asked_of_the_feed();
+    test_walking_the_set_visits_the_books_that_exist_in_locate_order();
+    return REPORT();
+}
