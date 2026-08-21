@@ -53,6 +53,9 @@ struct Options {
     const char* per_symbol = nullptr;   // one row per security
     size_t refs_capacity = size_t{1} << 22;
     size_t band_levels = 512;   // per side, per symbol; see BookSet's comment
+    bool per_book_pools = false;
+    size_t pool_first_chunk = ITCHBOOK_POOL_FIRST_CHUNK;
+    size_t pool_max_chunk = ITCHBOOK_POOL_MAX_CHUNK;
 };
 
 // 1,234,567 — matches Python's f"{n:,}" so the two summaries diff cleanly.
@@ -199,7 +202,10 @@ struct AllSymbols {
     bool stop = false;
 
     explicit AllSymbols(const Options& o)
-        : opt(o), set(o.refs_capacity, o.tick, 20, o.band_levels) {}
+        : opt(o), set(o.refs_capacity, o.tick, 20, o.band_levels,
+                      o.per_book_pools ? itchbook::book::PoolMode::PerBook
+                                       : itchbook::book::PoolMode::Shared,
+                      o.pool_first_chunk, o.pool_max_chunk) {}
 
     void on_message(char type, const uint8_t* p, uint16_t) {
         if (stop) return;
@@ -336,6 +342,9 @@ bool write_all_json(const AllSymbols& a, const char* path) {
         "  \"band_memory_bytes\": %llu,\n"
         "  \"ref_map_slots\": %zu,\n"
         "  \"pool_capacity_orders\": %zu,\n"
+        "  \"pools\": %zu,\n"
+        "  \"pool_first_chunk\": %zu,\n"
+        "  \"pool_max_chunk\": %zu,\n"
         "  \"unknown_refs\": %llu,\n"
         "  \"locate_mismatch\": %llu,\n"
         "  \"undirectoried_messages\": %llu,\n"
@@ -354,7 +363,8 @@ bool write_all_json(const AllSymbols& a, const char* path) {
         static_cast<unsigned long long>(off_band),
         static_cast<unsigned long long>(recentres),
         a.opt.band_levels, static_cast<unsigned long long>(band_mb * 1e6),
-        a.set.storage().refs.capacity(), a.set.storage().pool.capacity(),
+        a.set.storage().refs.capacity(), a.set.pool_capacity(),
+        a.set.pools(), a.opt.pool_first_chunk, a.opt.pool_max_chunk,
         static_cast<unsigned long long>(a.set.unknown_ref()),
         static_cast<unsigned long long>(a.set.locate_mismatch()),
         static_cast<unsigned long long>(a.set.undirectoried_messages()),
@@ -385,7 +395,8 @@ void print_all_summary(const AllSymbols& a) {
     std::printf("%-28s %16s\n", "resting shares", comma(resting_shares).c_str());
     std::printf("%-28s %16s\n", "resting orders", comma(a.set.resting_orders()).c_str());
     std::printf("%-28s %16s\n", "ref map slots", comma(a.set.storage().refs.capacity()).c_str());
-    std::printf("%-28s %16s\n", "pool capacity (orders)", comma(a.set.storage().pool.capacity()).c_str());
+    std::printf("%-28s %16s\n", "pool capacity (orders)", comma(a.set.pool_capacity()).c_str());
+    std::printf("%-28s %16s\n", "pools", comma(a.set.pools()).c_str());
     std::printf("%-28s %16s\n", "symbols using overflow", comma(overflow_symbols).c_str());
     // The band, priced and graded. Memory is knowable before the run; the
     // off-band fraction is the only thing that says whether the width was
@@ -585,6 +596,12 @@ bool parse_args(int argc, char** argv, Options* opt) {
         } else if (a == "--per-symbol") {
             opt->per_symbol = next("--per-symbol");
             opt->all_symbols = true;
+        } else if (a == "--per-book-pools") {
+            opt->per_book_pools = true;
+        } else if (a == "--pool-first-chunk") {
+            opt->pool_first_chunk = static_cast<size_t>(std::strtoull(next("--pool-first-chunk"), nullptr, 10));
+        } else if (a == "--pool-max-chunk") {
+            opt->pool_max_chunk = static_cast<size_t>(std::strtoull(next("--pool-max-chunk"), nullptr, 10));
         } else if (a == "--band-levels") {
             opt->band_levels = static_cast<size_t>(std::strtoull(next("--band-levels"), nullptr, 10));
         } else if (a == "--refs-capacity") {
@@ -636,7 +653,8 @@ int main(int argc, char** argv) {
                      "           [--tick N] [--end-ns N] [--json out.json] [--quiet]\n"
                      "       %s <feed.gz> --all-symbols [--per-symbol out.csv]\n"
                      "           [--band-levels N] [--refs-capacity N] [--limit N]\n"
-                     "           [--tick N] [--quiet]\n",
+                     "           [--per-book-pools] [--pool-first-chunk N]\n"
+                     "           [--pool-max-chunk N] [--tick N] [--quiet]\n",
                      argv[0], argv[0]);
         return 2;
     }

@@ -145,6 +145,67 @@ void fill_a_drifting_book(BookSet& set, uint16_t locate, int32_t start, int step
     }
 }
 
+void test_a_pool_per_symbol_builds_the_same_book_and_costs_more() {
+    // Phase 9.9 measures whether sharing the pool is worth anything. For that
+    // measurement to mean anything, the two arrangements have to produce the
+    // same book -- otherwise the timing compares two different days -- and the
+    // per-book variant has to be honestly priced, which means counting every
+    // pool's capacity rather than one of them.
+    auto fill = [](BookSet& set) {
+        for (uint16_t locate = 1; locate <= 20; ++locate) {
+            set.set_directory(locate, "SYM     ", 8, 'Q', ' ', 100);
+            itchbook::book::Book& b = set.at(locate);
+            uint64_t ref = static_cast<uint64_t>(locate) * 100000;
+            for (int i = 0; i < 50; ++i) {
+                b.add(ref++, 'B', 1000000 - i * 100, 100);
+                b.add(ref++, 'S', 1000100 + i * 100, 100);
+            }
+        }
+    };
+
+    // The chunk size is the whole story, so it is the default one: 4,096
+    // orders, which phase 4 chose because a smaller first slab kept the page
+    // faults off the hot path. Twenty symbols of a hundred orders each fit in
+    // ONE such chunk shared, and need TWENTY of them apiece.
+    BookSet shared(1u << 12, 100, 20, 64, itchbook::book::PoolMode::Shared, 4096, 4096);
+    BookSet apiece(1u << 12, 100, 20, 64, itchbook::book::PoolMode::PerBook, 4096, 4096);
+    fill(shared);
+    fill(apiece);
+
+    CHECK_EQ(shared.pools(), 1u);
+    CHECK_EQ(apiece.pools(), 20u);
+    CHECK_EQ(shared.resting_orders(), apiece.resting_orders());
+
+    for (uint16_t locate = 1; locate <= 20; ++locate) {
+        const itchbook::book::Book& a = *shared.peek(locate);
+        const itchbook::book::Book& b = *apiece.peek(locate);
+        CHECK_EQ(a.resting_orders(), b.resting_orders());
+        CHECK_EQ(a.resting_shares(), b.resting_shares());
+        int32_t pa = 0;
+        int32_t pb = 0;
+        CHECK_EQ(a.best_bid(&pa), b.best_bid(&pb));
+        CHECK_EQ(pa, pb);
+    }
+
+    // Twenty free lists means twenty symbols each rounding up to a whole chunk.
+    // At the default 4,096 that is 81,920 orders of capacity to hold 2,000, and
+    // at 8,906 symbols it is why the per-book variant is only runnable at all
+    // with a shrunken chunk -- which is itself part of what phase 9.9 measures,
+    // and why the comparison cannot be reported as if the two arrangements were
+    // otherwise identical.
+    CHECK_EQ(shared.pool_capacity(), 4096u);
+    CHECK_EQ(apiece.pool_capacity(), 20u * 4096u);
+
+    // ...and the waste is not intrinsic to the arrangement, it is intrinsic to
+    // the chunk. Shrink it below a symbol's order count and per-book is the
+    // tighter of the two, because a shared pool's doubling overshoots.
+    BookSet small_shared(1u << 12, 100, 20, 64, itchbook::book::PoolMode::Shared, 64, 4096);
+    BookSet small_apiece(1u << 12, 100, 20, 64, itchbook::book::PoolMode::PerBook, 64, 4096);
+    fill(small_shared);
+    fill(small_apiece);
+    CHECK(small_apiece.pool_capacity() < small_shared.pool_capacity());
+}
+
 void test_band_width_changes_nothing_the_book_reports() {
     // Same messages, three wildly different budgets. A width of 4 slots cannot
     // hold a book that walks 300 ticks; a width of 4096 holds all of it. The
@@ -403,6 +464,7 @@ int main() {
     test_the_directory_is_kept_and_the_padding_is_not();
     test_a_message_for_an_undirectoried_locate_is_counted_not_ignored();
     test_the_session_belongs_to_the_market_not_to_a_symbol();
+    test_a_pool_per_symbol_builds_the_same_book_and_costs_more();
     test_band_width_changes_nothing_the_book_reports();
     test_the_band_waits_for_a_two_sided_quote();
     test_a_recentre_keeps_price_time_priority();
