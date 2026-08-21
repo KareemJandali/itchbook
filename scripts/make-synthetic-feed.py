@@ -56,7 +56,9 @@ class Feed:
                      for i in range(symbols)}
 
     def head(self, t, locate, length):
-        self.ts += self.rng.randrange(1, 5000)
+        # Placeholder; every timestamp is rewritten by stamp() once the message
+        # count is known. See stamp() for why.
+        self.ts += 1
         b = bytearray(length)
         b[0] = ord(t)
         b[1:3] = be(locate, 2)
@@ -188,16 +190,48 @@ class Feed:
         self.system_event("E")
         self.system_event("C")
 
+    def stamp(self, session_seconds):
+        """Rewrite every timestamp so the feed spans a realistic session.
+
+        Phase 10.7's rate ladder starts at one times real time, computed by
+        itch_census from the feed's own clock. A generator that advanced the
+        clock by a uniform 1-2.5 us per message produced a 252,000-message feed
+        spanning 0.63 seconds, so "real time" came out at 399,000 msg/s -- above
+        the rate at which this pipeline starts dropping, which would have made
+        the first rung of the ladder the cliff.
+
+        Arrivals are exponential rather than uniform, which is both closer to
+        the truth and the point: a market's messages arrive in bursts, and a
+        pipeline sized for the mean of a bursty process is a pipeline that drops
+        packets at the peaks. A uniform feed would hide exactly the queueing
+        this phase exists to measure.
+        """
+        n = len(self.msgs)
+        if n == 0 or session_seconds <= 0:
+            return
+        mean_gap = session_seconds * 1e9 / n
+        t = 34200 * 1_000_000_000            # 09:30:00
+        for i, m in enumerate(self.msgs):
+            t += max(1, int(self.rng.expovariate(1.0) * mean_gap))
+            b = bytearray(m)
+            b[5:11] = be(t & ((1 << 48) - 1), 6)
+            self.msgs[i] = bytes(b)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
     ap.add_argument("--messages", type=int, default=200000)
     ap.add_argument("--symbols", type=int, default=64)
     ap.add_argument("--seed", type=int, default=20191230)
+    ap.add_argument("--session-seconds", type=float, default=60.0,
+                    help="wall time the feed's own timestamps should span; "
+                         "sets what one times real time means")
     a = ap.parse_args()
 
     f = Feed(a.symbols, a.seed)
     f.build(a.messages)
+    f.stamp(a.session_seconds)
 
     # [len][payload], the same framing the rest of the repo reads. mtime=0 so
     # the gzip bytes are reproducible and a hash of the file means something.
@@ -205,7 +239,9 @@ def main():
         for m in f.msgs:
             g.write(struct.pack(">H", len(m)))
             g.write(m)
-    print(f"{len(f.msgs)} messages, {a.symbols} symbols -> {a.out}", file=sys.stderr)
+    rate = len(f.msgs) / a.session_seconds if a.session_seconds > 0 else 0
+    print(f"{len(f.msgs)} messages, {a.symbols} symbols, {a.session_seconds:g}s session "
+          f"({rate:,.0f} msg/s at 1x) -> {a.out}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

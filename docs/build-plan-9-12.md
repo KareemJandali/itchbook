@@ -858,6 +858,96 @@ appears, and the **max sustainable rate** — the highest rate with zero ring-fu
 drops *and* zero kernel drops over a full day. That second number is the CV
 number.
 
+### 10.7 — what actually happened
+
+`bench/rate-sweep.py` → `validation/rate-sweep.json` →
+`python/analysis/rate_latency.py` (curve + distribution) and
+`scripts/phase10-report.py --check` (tables). Numbers live in
+`docs/phase10-results.md` and are generated; nothing below repeats one.
+
+**One times real time is now computed.** `itch_census` gained the session's own
+clock — first timestamp, last timestamp, span, and messages per second at real
+time — reported and written into both its JSON artifacts. The ladder anchors to
+that. Standing rule 7 turns out to apply to a script's *inputs* as much as to a
+document's outputs: a real-time constant typed into a sweep is a number that
+drifts from the feed it claims to describe.
+
+This immediately caught the synthetic feed lying about itself. Its generator
+advanced the clock 1–2.5 µs per message, so 252,000 messages spanned 0.63 s and
+"real time" came out at 399,000 msg/s — *above* the rate at which this pipeline
+starts dropping. The first rung of the ladder would have been the cliff. The
+generator now spaces arrivals as an exponential process over a stated session
+length, which is both closer to the truth and the point: a market's messages
+arrive in bursts, and a pipeline sized for the mean of a bursty process drops
+packets at the peaks. A uniform feed hides exactly the queueing this phase
+measures.
+
+**Four decisions in the sweep, each a way of being wrong that was avoided:**
+
+1. *Best of N, and never pooling clean runs with lossy ones.* Latency noise is
+   one-sided, so best-of-N measures the pipeline rather than the machine's other
+   tenants — phase 9.9's lesson. But a run that dropped half the feed did almost
+   no work; letting it win its rate is how a cliff gets smoothed into a slope.
+2. *The ladder extends itself.* If the top rung is still clean the sweep doubles
+   and runs again. Otherwise "max sustainable rate" is a fact about how high the
+   script was told to count. When the extension budget runs out with the top
+   still clean, the figure is reported as a lower bound (`≥`) and the JSON
+   carries `is_lower_bound: true`. The first version of this reported the top of
+   its ladder as a measurement, which was the honest-looking version of making
+   the number up.
+3. *Offered rate is not achieved rate.* `mold_replay_udp` now reports what it
+   actually managed alongside what it was asked for. They agree only while it
+   keeps its schedule, and the pipeline can only have absorbed the second one.
+   The curve is plotted against achieved, because plotting against offered
+   stretches the x axis by exactly the amount the generator fell short — moving
+   the knee to the right and flattering the pipeline.
+4. *Kernel and ring drops stay separate, and UNKNOWN is not zero.* A sustainable
+   rate requires zero of both.
+
+**A third chart form.** `svg_loglog` in `svgchart.py`, because neither existing
+form could draw this honestly: `svg_lines` positions x by index, which would
+draw 1×→2× the same width as 400×→800× while claiming a linear axis; and a
+linear y turns every percentile below the worst into a flat line on the floor,
+erasing the one claim worth making — that p50 barely moves while the tail
+explodes. Knee and cliff are drawn as vertical rules on the chart rather than
+left to a caption.
+
+**Two findings that survive the caveats, because they are about shape:**
+
+- *p50 falls as the offered rate rises.* Not the pipeline getting faster: at low
+  rates both threads are descheduled between messages and every message pays a
+  wake-up, and the arrival stamp is per `recvmmsg` batch, which at real time is
+  usually one packet. As the rate climbs the pipeline stays hot and batches
+  fill. A single-threaded benchmark cannot show this at all, which is most of
+  why phase 10 exists.
+- *The tail leaves long before the drops do.* p99.9 climbs by orders of
+  magnitude while p50 is flat and both drop counters still read zero. The knee
+  is a queueing phenomenon, the cliff a capacity one, and the gap between them
+  is where a system is already missing its latency budget while every counter it
+  keeps looks clean.
+
+**What this run is not.** Two cores, nothing pinned, `tsc_offset` reports the
+cross-core offset UNMEASURABLE here, and the sender missed its 10 µs p99.9
+schedule at *every* rate — so the sweep prints `NO RATE QUALIFIED` and says the
+numbers describe the load generator. The committed artifact exists so the
+machinery is exercised and the doc cannot drift; the CV number needs a pinned
+Linux host. That qualification is computed and printed by the tool, not left to
+whoever reads the table.
+
+**A hypothesis that died, recorded because it will be re-derived otherwise.**
+The sender is later at low rates than at high ones, which looked exactly like
+the consumer's unbounded spin starving its `nanosleep` on two cores — and the
+first measurement said 26 µs alone against 14.3 ms with the pipeline running,
+539×. Best of five per side says 812 µs against 562 µs: indistinguishable, and
+nominally better with the consumer. The original pair was one sample from each
+side of a distribution spanning 40 ms. The yield was reverted; the finding is in
+`docs/phase10-results.md`. Second time this phase that one sample produced a
+confident wrong mechanism.
+
+**Still open from the phase 10 done-list:** `consumer-slow` graded on the
+phase-7 scale; the kill switch's ring-occupancy input; cached-index and
+batched-publish measured with predictions written first.
+
 ### 10.8 — Close phase 9's gap
 
 The reader path becomes a thread decompressing ahead into buffers while the book

@@ -105,6 +105,32 @@ struct Slot {
 };
 static_assert(sizeof(Slot) == 64, "the slot is a cache line; keep it one");
 
+// A NOTE ON THE CONSUMER'S SPIN, AND A HYPOTHESIS THAT DIED.
+//
+// The book thread below spins on readable() without pausing or yielding. That
+// is deliberate: this consumer is meant to own a core, and a sleeping consumer
+// pays a wake-up on every message, which is most of the latency at low rates.
+//
+// It was still suspected of something. Phase 10.7's sweep found the paced
+// sender missing its schedule at every rate, and the first measurement of the
+// sender with and without this program running showed p99.9 lateness of 26 us
+// against 14,277,397 ns -- 539x -- which looked exactly like a spinning
+// consumer starving the sender's nanosleep on a two-core box. A bounded spin
+// with a yield was written to fix it.
+//
+// It fixed nothing, because there was nothing there. Best of five runs each:
+// 811,999 ns for the sender alone against 562,005 ns with this program
+// consuming -- indistinguishable, and nominally BETTER with the consumer
+// running. Both configurations ranged over two orders of magnitude between
+// repeats. The original pair was one sample of each side of a distribution
+// that spans 40 ms, and the 539x was noise wearing a mechanism's clothes.
+//
+// The scheduler jitter in this container is simply larger than anything being
+// measured, which is what the sweep's NO RATE QUALIFIED verdict already said.
+// The spin stays unbounded, the yield was reverted, and this comment is here
+// because a refuted hypothesis that leaves no trace gets re-derived by the next
+// person to read the sweep output -- most likely me.
+
 constexpr size_t kBatch = 32;          // recvmmsg batch
 constexpr size_t kMaxDatagram = 2048;
 

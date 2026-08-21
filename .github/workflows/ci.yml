@@ -339,6 +339,47 @@ jobs:
       - name: Determinism gate (the pipeline's book equals the synchronous book)
         run: ./scripts/determinism-gate.sh build
 
+      # Phase 10.7. A three-rung ladder, two runs each, purely to keep the
+      # sweep path alive: it asserts that the ladder anchors to the feed's own
+      # clock, that every rate produces the columns the report needs, and that
+      # both figures render. It asserts NOTHING about the timings, because a
+      # two-core shared runner cannot support a latency claim and the sweep says
+      # so itself. The real curve comes from a pinned host and is committed as
+      # validation/rate-sweep.json.
+      - name: Rate sweep runs end to end and both figures render
+        run: |
+          python3 bench/rate-sweep.py --build build --out /tmp/sweep.json \
+            --messages 60000 --session-seconds 20 --repeats 1 \
+            --multipliers 5,20,50 --extend 0
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('/tmp/sweep.json'))
+          assert d['feed']['real_time_msg_per_s'] > 0, 'the ladder was not anchored'
+          assert len(d['rows']) == 3, d['rows']
+          for r in d['rows']:
+              for k in ('offered_rate', 'wire_to_book_ns', 'ring_full_drops',
+                        'kernel_drops', 'staging_overflow', 'peak_ring_occupancy',
+                        'lossy', 'sender_late', 'sender'):
+                  assert k in r, (k, sorted(r))
+          # A sweep that reached the top of its ladder clean must SAY the
+          # sustainable rate is a lower bound rather than report it as measured.
+          if d['max_sustainable'] and not d['cliff_reached']:
+              assert d['max_sustainable']['is_lower_bound'], d['max_sustainable']
+          print('sweep shape ok;',
+                d['sender_qualified_rates'], 'of', d['rates_tried'],
+                'rates had the sender holding its schedule')
+          PY
+          python3 python/analysis/rate_latency.py /tmp/sweep.json \
+            --svg /tmp/rate-latency.svg --hist-svg /tmp/wtb-hist.svg
+          for f in /tmp/rate-latency.svg /tmp/wtb-hist.svg; do
+            test -s "$f"; grep -q '<svg' "$f"; grep -q '</svg>' "$f"
+          done
+
+      # Standing rule 7 for phase 10: the results doc's tables are generated
+      # from the committed sweep, and this fails if the prose has drifted.
+      - name: The phase 10 results match their artifacts
+        run: python3 scripts/phase10-report.py --check
+
       - name: Regression gate (the same feed reconstructs to the same bytes)
         run: ./scripts/regression-gate.sh
 
