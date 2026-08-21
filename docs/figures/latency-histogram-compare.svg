@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" width="720" height="440" role="img" aria-label="Per-message book latency: before and after the pool change">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="720" height="440"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Per-message book latency: before and after the pool change</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">one 42MB slab p50 64 / p99 431  -&gt;  geometric chunks p50 76 / p99 512   (bucket resolution)</text>
+<line class="grid" x1="79" y1="378.0" x2="690" y2="378.0"/>
+<text class="muted" x="71" y="382.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1</text>
+<line class="grid" x1="79" y1="333.7" x2="690" y2="333.7"/>
+<text class="muted" x="71" y="337.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10</text>
+<line class="grid" x1="79" y1="289.3" x2="690" y2="289.3"/>
+<text class="muted" x="71" y="293.3" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100</text>
+<line class="grid" x1="79" y1="245.0" x2="690" y2="245.0"/>
+<text class="muted" x="71" y="249.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1,000</text>
+<line class="grid" x1="79" y1="200.7" x2="690" y2="200.7"/>
+<text class="muted" x="71" y="204.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10,000</text>
+<line class="grid" x1="79" y1="156.3" x2="690" y2="156.3"/>
+<text class="muted" x="71" y="160.3" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100,000</text>
+<line class="grid" x1="79" y1="112.0" x2="690" y2="112.0"/>
+<text class="muted" x="71" y="116.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1,000,000</text>
+<line class="grid" x1="79.0" y1="112" x2="79.0" y2="378"/>
+<text class="muted" x="79.0" y="396" text-anchor="start" font-family="ui-monospace,monospace" font-size="10.5">1</text>
+<line class="grid" x1="155.4" y1="112" x2="155.4" y2="378"/>
+<line class="grid" x1="231.8" y1="112" x2="231.8" y2="378"/>
+<text class="muted" x="231.8" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100</text>
+<line class="grid" x1="308.1" y1="112" x2="308.1" y2="378"/>
+<line class="grid" x1="384.5" y1="112" x2="384.5" y2="378"/>
+<text class="muted" x="384.5" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10,000</text>
+<line class="grid" x1="460.9" y1="112" x2="460.9" y2="378"/>
+<line class="grid" x1="537.2" y1="112" x2="537.2" y2="378"/>
+<text class="muted" x="537.2" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1,000,000</text>
+<line class="grid" x1="613.6" y1="112" x2="613.6" y2="378"/>
+<line class="grid" x1="690.0" y1="112" x2="690.0" y2="378"/>
+<text class="muted" x="690.0" y="396" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100,000,000</text>
+<polyline class="k2" stroke-width="2" points="138.4,378.0 138.4,378.0 143.5,378.0 148.0,378.0 148.0,316.8 155.4,316.8 155.4,316.8 155.4,276.4 158.5,276.4 158.5,276.4 158.5,253.7 164.1,253.7 164.1,253.7 164.1,237.7 171.0,237.7 171.0,237.7 171.0,257.8 176.7,257.8 176.7,257.8 176.7,261.7 183.0,261.7 183.0,261.7 183.0,288.4 188.3,288.4 188.3,288.4 188.3,262.9 194.0,262.9 194.0,262.9 194.0,192.8 199.7,192.8 199.7,192.8 199.7,154.8 205.3,154.8 205.3,154.8 205.3,152.9 211.3,152.9 211.3,152.9 211.3,148.1 216.9,148.1 216.9,148.1 216.9,152.0 222.6,152.0 222.6,152.0 222.6,159.4 228.6,159.4 228.6,159.4 228.6,155.1 234.3,155.1 234.3,155.1 234.3,157.8 239.9,157.8 239.9,157.8 239.9,164.3 245.6,164.3 245.6,164.3 245.6,171.9 251.4,171.9 251.4,171.9 251.4,187.5 257.1,187.5 257.1,187.5 257.1,194.8 262.9,194.8 262.9,194.8 262.9,195.8 268.6,195.8 268.6,195.8 268.6,201.0 274.4,201.0 274.4,201.0 274.4,206.1 280.2,206.1 280.2,206.1 280.2,207.3 285.9,207.3 285.9,207.3 285.9,218.3 291.7,218.3 291.7,218.3 291.7,233.4 297.4,233.4 297.4,233.4 297.4,245.5 303.2,245.5 303.2,245.5 303.2,249.5 308.9,249.5 308.9,249.5 308.9,259.8 314.7,259.8 314.7,259.8 314.7,268.8 320.4,268.8 320.4,268.8 320.4,284.0 326.2,284.0 326.2,284.0 326.2,307.0 331.9,307.0 331.9,307.0 331.9,325.9 337.6,325.9 337.6,325.9 337.6,320.3 343.4,320.3 343.4,320.3 343.4,335.7 349.1,335.7 372.1,335.7 372.1,343.5 377.9,343.5 377.9,343.5 377.9,331.8 383.6,331.8 383.6,331.8 383.6,330.2 389.4,330.2 389.4,330.2 389.4,340.5 395.1,340.5 395.1,340.5 395.1,304.3 400.9,304.3 400.9,304.3 400.9,364.7 406.6,364.7 406.6,364.7 406.6,364.7 412.4,364.7 418.1,364.7 418.1,378.0 423.9,378.0 423.9,378.0 423.9,364.7 429.6,364.7 435.4,364.7 435.4,364.7 441.1,364.7 441.1,364.7 441.1,309.5 446.9,309.5 446.9,309.5 446.9,331.8 452.6,331.8 452.6,331.8 452.6,356.8 458.4,356.8 458.4,356.8 458.4,328.6 464.1,328.6 464.1,328.6 464.1,378.0 469.8,378.0 671.0,378.0 671.0,378.0 676.8,378.0 676.8,378.0"/>
+<text class="ink" x="211.3" y="123.1" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="600">one 42MB slab</text>
+<polyline class="k1" stroke-width="2" points="138.4,378.0 138.4,378.0 143.5,378.0 148.0,378.0 148.0,317.6 155.4,317.6 155.4,317.6 155.4,278.0 158.5,278.0 158.5,278.0 158.5,260.1 164.1,260.1 164.1,260.1 164.1,240.7 171.0,240.7 171.0,240.7 171.0,260.0 176.7,260.0 176.7,260.0 176.7,262.9 183.0,262.9 183.0,262.9 183.0,281.8 188.3,281.8 188.3,281.8 188.3,263.1 194.0,263.1 194.0,263.1 194.0,198.5 199.7,198.5 199.7,198.5 199.7,157.4 205.3,157.4 205.3,157.4 205.3,155.4 211.3,155.4 211.3,155.4 211.3,150.2 216.9,150.2 216.9,150.2 216.9,152.9 222.6,152.9 222.6,152.9 222.6,158.2 228.6,158.2 228.6,158.2 228.6,154.8 234.3,154.8 234.3,154.8 234.3,157.0 239.9,157.0 239.9,157.0 239.9,162.3 245.6,162.3 245.6,162.3 245.6,167.8 251.4,167.8 251.4,167.8 251.4,180.4 257.1,180.4 257.1,180.4 257.1,189.2 262.9,189.2 262.9,189.2 262.9,191.0 268.6,191.0 268.6,191.0 268.6,196.3 274.4,196.3 274.4,196.3 274.4,202.6 280.2,202.6 280.2,202.6 280.2,204.3 285.9,204.3 285.9,204.3 285.9,213.8 291.7,213.8 291.7,213.8 291.7,229.1 297.4,229.1 297.4,229.1 297.4,239.8 303.2,239.8 303.2,239.8 303.2,247.4 308.9,247.4 308.9,247.4 308.9,257.7 314.7,257.7 314.7,257.7 314.7,264.7 320.4,264.7 320.4,264.7 320.4,277.9 326.2,277.9 326.2,277.9 326.2,306.0 331.9,306.0 331.9,306.0 331.9,322.3 337.6,322.3 337.6,322.3 337.6,289.5 343.4,289.5 343.4,289.5 343.4,325.9 349.1,325.9 360.6,325.9 360.6,378.0 366.4,378.0 372.1,378.0 372.1,330.2 377.9,330.2 377.9,330.2 377.9,325.9 383.6,325.9 383.6,325.9 383.6,324.6 389.4,324.6 389.4,324.6 389.4,307.5 395.1,307.5 395.1,307.5 395.1,327.2 400.9,327.2 400.9,327.2 400.9,347.0 406.6,347.0 406.6,347.0 406.6,356.8 412.4,356.8 412.4,356.8 412.4,378.0 418.1,378.0 418.1,378.0 418.1,378.0 423.9,378.0 435.4,378.0 435.4,364.7 441.1,364.7 441.1,364.7 441.1,364.7 446.9,364.7 446.9,364.7 446.9,316.8 452.6,316.8 452.6,316.8 452.6,313.2 458.4,313.2 458.4,313.2 458.4,333.7 464.1,333.7 464.1,333.7 464.1,347.0 469.8,347.0 469.8,347.0 469.8,356.8 475.6,356.8 481.3,356.8 481.3,378.0 487.1,378.0 487.1,378.0 487.1,378.0 492.8,378.0 492.8,378.0 492.8,364.7 498.6,364.7 504.3,364.7 504.3,378.0 510.1,378.0 510.1,378.0 510.1,378.0 515.8,378.0 521.6,378.0 521.6,378.0 527.3,378.0 527.3,378.0"/>
+<text class="ink" x="211.3" y="140.2" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="600">geometric chunks</text>
+<line class="axis" x1="79" y1="378" x2="690" y2="378"/>
+<rect class="s2" x="83" y="418" width="10" height="10" rx="2"/>
+<text class="muted" x="98" y="427" font-family="system-ui,sans-serif" font-size="11">one 42MB slab</text>
+<rect class="s1" x="196" y="418" width="10" height="10" rx="2"/>
+<text class="muted" x="211" y="427" font-family="system-ui,sans-serif" font-size="11">geometric chunks</text>
+<text class="muted" x="384" y="414" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">cycles per message — log scale</text>
+<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">messages — log</text>
+</svg>

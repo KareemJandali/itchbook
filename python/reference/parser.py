@@ -24,12 +24,25 @@ import struct
 
 HEADER_LEN = 11
 
-# Payload length (including the type byte) for the types we model. A prefix that
-# disagrees with the table means we have desynced, and we want to know now
-# rather than 200MB later.
+# Payload length (including the type byte) for every ITCH 5.0 type, modelled or
+# not. A prefix that disagrees with the table means we have desynced, and we
+# want to know now rather than 200MB later.
+#
+# The unmodelled types are in here for the same reason they are in the C++
+# spec_length(): the handler ignores them, but a desync that starts inside a
+# metadata message is a desync all the same, and leaving them unchecked means
+# noticing it only at the next message we happen to care about. This table must
+# stay identical to include/itchbook/itch/messages.hpp — the two parsers are a
+# differential test of each other, and a table that drifts turns that test into
+# noise.
 SPEC_LENGTH = {
+    # Modelled.
     b"S": 12, b"R": 39, b"A": 36, b"F": 40, b"E": 31,
     b"C": 36, b"X": 23, b"D": 19, b"U": 35, b"P": 44, b"Q": 40, b"H": 25,
+    # Framed and length-checked, but not interpreted. See messages.hpp for what
+    # each one is and why skipping it is safe.
+    b"Y": 20, b"L": 26, b"V": 35, b"W": 12, b"K": 28, b"J": 35,
+    b"h": 21, b"B": 19, b"I": 50, b"N": 20, b"O": 48,
 }
 
 # The seven types that mutate the book. Everything else is metadata or feeds the

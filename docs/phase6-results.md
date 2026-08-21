@@ -34,7 +34,7 @@ position limit, at 250 µs one-way latency.
 
 **It loses money in every model.** That is the phase's stated done-condition —
 "run a strategy you know is unprofitable and confirm it loses money" — met on a
-real day rather than by construction. Naive still flatters: it reports $401.35
+real day rather than by construction. Naive still flatters: it reports $401.34
 more than pessimistic. But the size of that flattery is nothing like the
 synthetic feed's, and the *shape* of the result is different in a way worth
 being explicit about.
@@ -113,18 +113,28 @@ bound was right.
 
 ### The external check on real orders
 
-50 MSFT orders that were pulled part-filled — the discriminating cases —
+200 MSFT orders that were pulled part-filled — the discriminating cases —
 shadowed one message ahead of their own add and graded against what they
-actually filled.
+actually filled. 2,011 such orders exist in the day; these are 200 of them,
+drawn from 576,026 orders across 1,221,484 messages:
+
+```
+./scripts/real-data-run.sh <day>.gz MSFT 200
+```
 
 | model | mean error | mean abs error | over | under | exact |
 |---|---:|---:|---:|---:|---:|
-| naive | +25.5 | 25.5 | 24 | 0 | 26 |
-| optimistic | +9.0 | 9.0 | 11 | 0 | 39 |
-| mbo | 0.0 | 0.0 | 0 | 0 | **50** |
-| pessimistic | −25.4 | 25.4 | 0 | 21 | 29 |
+| naive | +23.6 | 23.6 | 89 | 0 | 111 |
+| optimistic | +12.0 | 12.0 | 47 | 0 | 153 |
+| mbo | 0.0 | 0.0 | 0 | 0 | **200** |
+| pessimistic | -27.9 | 27.9 | 0 | 96 | 104 |
 
-**`mbo` reproduced all 50 exactly, and 50/50 fell inside
+The truth totals 12,189 shares over the 200 orders, 61 per order. An earlier
+run at the default 50 samples gave the same shape — naive over 24 and never
+under, pessimistic under 21 and never over, `mbo` exact on all 50 — so the
+result is not an artefact of which orders were sampled.
+
+**`mbo` reproduced all 200 exactly, and 200/200 fell inside
 [pessimistic, optimistic].** Naive over-fills and never under-fills;
 pessimistic under-fills and never over-fills. This is the result that matters
 most, because it is the only one in the phase measured against ground truth
@@ -152,7 +162,11 @@ climbs further. For a strategy that loses money, filling more is losing more —
 the rising share count and the worsening per-share number are the same fact
 twice.
 
+![P&L vs latency, MSFT](figures/MSFT-latency-pnl.svg)
 ![Fill volume vs latency, MSFT](figures/MSFT-latency-shares.svg)
+
+Both panels, for the reason the table gives: the per-share number worsens while
+the share count climbs, and either panel alone shows half of that.
 
 This is not an argument for slow infrastructure. It is an argument that
 `TouchMaker` requotes too eagerly, and it is only visible because the queue
@@ -419,10 +433,11 @@ long horizon toward whatever the middle of the session looked like.
 
 Established on **real data** (section 1):
 
-* The band is a bound and `mbo` is exact. 50/50 real MSFT orders fell inside
-  [pessimistic, optimistic]; `mbo` reproduced all 50 exactly; naive over-filled
-  24 times and under-filled never; pessimistic under-filled 21 and over-filled
-  never.
+* The band is a bound and `mbo` is exact. 200/200 real MSFT orders fell inside
+  [pessimistic, optimistic]; `mbo` reproduced all 200 exactly; naive over-filled
+  89 times and under-filled never; pessimistic under-filled 96 and over-filled
+  never. The same held at the default 50 samples (50/50, 24 over, 21 under),
+  so it is not a fact about which orders were drawn.
 * A passive maker at the touch is adversely selected. Drift is negative at
   100 ms, 1 s and 10 s in every model and worsens with the horizon.
 * The strategy loses money, which is the phase's done-condition.

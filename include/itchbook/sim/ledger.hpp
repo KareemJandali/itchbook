@@ -139,6 +139,42 @@ public:
         return shares == 0 ? 0 : divide_round(total, static_cast<Money>(shares));
     }
 
+    // ---- state, for a mid-day restart --------------------------------------
+    //
+    // The build plan's phase 7 asks to "reconstruct position and open orders
+    // after a mid-day process restart". Position is this class. The fee
+    // schedule is deliberately NOT part of the state: it is configuration, it
+    // comes from the command line on both sides of the restart, and restoring
+    // it from a file would let a snapshot silently override the schedule the
+    // operator asked for.
+    //
+    // The fill log travels with it. Position and cash alone would restore the
+    // number that matters and quietly change every derived one — drift()
+    // integrates over fills, and per_share() divides by their total — so a
+    // restart would report a different edge/drift decomposition for the same
+    // day and nothing would say why.
+    struct State {
+        Money cash = 0;
+        int64_t position = 0;
+        Money fees_total = 0;
+        int64_t two_edge = 0;
+        uint64_t fills_without_mid = 0;
+        std::vector<LedgerFill> fills;
+    };
+
+    State state() const {
+        return State{cash_, position_, fees_total_, two_edge_, fills_without_mid_, fills_};
+    }
+
+    void restore(const State& s) {
+        cash_ = s.cash;
+        position_ = s.position;
+        fees_total_ = s.fees_total;
+        two_edge_ = s.two_edge;
+        fills_without_mid_ = s.fills_without_mid;
+        fills_ = s.fills;
+    }
+
 private:
     FeeSchedule schedule_;
     Money cash_ = 0;

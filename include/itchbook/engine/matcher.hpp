@@ -215,21 +215,31 @@ private:
         // Both rejection cases are settled before a single share is counted
         // into the engine. Deciding afterwards would mean unwinding the
         // accounting, and unwinding is how share counts stop adding up.
+        //
+        // Which state that refusal lands in depends on where the order came
+        // from. Rejected means "never touched the book", so it is only
+        // reachable from New. A stop arrives here a second time: it was parked
+        // as Accepted when it was submitted, and Accepted -> Rejected is not a
+        // move the state machine permits — it aborted the process. An order
+        // that has already been accepted and then cannot trade is CANCELLED.
+        // Same share count either way; the difference is a word that stays
+        // true and a transition that is legal.
+        const State refused = (m.state == State::New) ? State::Rejected : State::Cancelled;
 
         // Fill-or-kill is all-or-nothing: a partial fill that then unwinds is
         // not the same thing, and would leave prints on the tape that never
         // happened.
         if (type == Type::FOK && available(m.req, type) < remaining) {
-            transition(m.state, State::Rejected);
-            r.state = State::Rejected;
+            transition(m.state, refused);
+            r.state = refused;
             r.reject = Reject::FokUnfillable;
             return r;
         }
-        // A market order with nothing to trade against is rejected, not
-        // cancelled: it never had a chance to rest in the first place.
+        // A market order with nothing to trade against never had a chance to
+        // rest in the first place.
         if (type == Type::Market && !has_liquidity(m.req)) {
-            transition(m.state, State::Rejected);
-            r.state = State::Rejected;
+            transition(m.state, refused);
+            r.state = refused;
             r.reject = Reject::NoLiquidity;
             return r;
         }
@@ -381,11 +391,15 @@ private:
         m.hidden = 0;
         m.cancelled += gone;
         cancelled_total_ += gone;
-        // A stop that never triggered is still parked; drop it.
+        // A stop that never triggered is still parked; drop it. Erased in
+        // place rather than swapped with the back: pending_stops_ is in
+        // arrival order and fire_stops() depends on that, so a swap-pop here
+        // would reorder the survivors and hand a later stop the priority of
+        // the cancelled one. The vector holds parked stops only, so it is
+        // short and the shift is cheaper than the bug.
         for (size_t i = 0; i < pending_stops_.size(); ++i) {
             if (pending_stops_[i] == m.req.id) {
-                pending_stops_[i] = pending_stops_.back();
-                pending_stops_.pop_back();
+                pending_stops_.erase(pending_stops_.begin() + static_cast<long>(i));
                 break;
             }
         }
@@ -394,6 +408,19 @@ private:
 
     // A trade may take the price through a resting stop, which then becomes a
     // live order and may itself trade through another. Loop until quiet.
+    //
+    // ORDER MATTERS HERE, and it is the whole reason this loop is not a simple
+    // scan-and-swap-pop. One trade can elect several stops at once. They all
+    // join the book at that instant, so among themselves they must queue in
+    // ARRIVAL order — the order they were submitted and parked — exactly as two
+    // limit orders sent at the same price would.
+    //
+    // pending_stops_ is in arrival order because submit() push_backs. Removing
+    // an element by swapping the back into its slot destroys that: park stops
+    // 1, 2, 3 and elect all three, and the list goes [1,2,3] -> fire 1 -> [3,2]
+    // -> fire 3 -> fire 2, resting them 1, 3, 2. Order 2 arrived before order 3
+    // and was elected at the same instant, yet 3 takes priority and fills
+    // first. Every removal below therefore erases in place.
     bool fire_stops() {
         bool any = false;
         bool again = true;
@@ -402,8 +429,7 @@ private:
             for (size_t i = 0; i < pending_stops_.size();) {
                 auto it = orders_.find(pending_stops_[i]);
                 if (it == orders_.end() || is_terminal(it->second.state)) {
-                    pending_stops_[i] = pending_stops_.back();
-                    pending_stops_.pop_back();
+                    pending_stops_.erase(pending_stops_.begin() + static_cast<long>(i));
                     continue;
                 }
                 Meta& m = it->second;
@@ -411,11 +437,18 @@ private:
                     ++i;
                     continue;
                 }
-                pending_stops_[i] = pending_stops_.back();
-                pending_stops_.pop_back();
+                pending_stops_.erase(pending_stops_.begin() + static_cast<long>(i));
 
                 Result sub;
                 sub.first_fill = fills_.size();
+                // A parked stop is not in any queue: it holds no shares and
+                // nobody can trade with it. It joins the market at the moment
+                // it TRIGGERS, so that is when its arrival sequence is taken —
+                // the same rule refresh_iceberg() applies for the same reason.
+                // Keeping the sequence it got at submit time would let a stop
+                // parked at 09:31 fire at 15:00 and rest ahead of every order
+                // that had been queued at that price all day.
+                m.sequence = ++seq_;
                 // It runs from Accepted; run() moves it on from there. Forcing
                 // it back to New would be an illegal transition.
                 run(m, sub, effective_type(m.req.type));

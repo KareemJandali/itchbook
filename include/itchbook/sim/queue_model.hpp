@@ -520,6 +520,77 @@ private:
     std::vector<Entry> entries_;
     std::unordered_map<uint64_t, AheadSet> ahead_sets_;
 
+public:
+    // ---- state, for a mid-day restart --------------------------------------
+    //
+    // "Open orders" in the plan's phase 7 line is entries_, and restoring them
+    // means restoring `ahead` with them: an order whose queue position resets
+    // to zero on restart is an order that fills instantly and reports a P&L
+    // the strategy never earned. For the mbo model the ahead SET has to come
+    // too, because that model resolves its queue against specific references
+    // and an empty set makes it silently degrade to optimistic.
+    //
+    // The config is not stored, for the same reason the fee schedule is not:
+    // it is the operator's instruction, not recovered state.
+    struct State {
+        std::vector<Entry> entries;
+        // A map is not stable in iteration order, and a snapshot has to be
+        // byte-identical for the same state or a diff of two snapshots is
+        // meaningless. Flattened and sorted by id on the way out.
+        std::vector<std::pair<uint64_t, std::vector<std::pair<uint64_t, uint32_t>>>> ahead_sets;
+        char state = '\0';
+        bool tradable = false;
+        uint64_t clamp_events = 0;
+        uint64_t clamp_shares = 0;
+        uint64_t priority_anomalies = 0;
+        uint64_t anomaly_shares = 0;
+        uint64_t hidden_inside_shares = 0;
+        uint64_t naive_hidden_fills = 0;
+        uint64_t naive_hidden_shares = 0;
+    };
+
+    State state_snapshot() const {
+        State s;
+        s.entries = entries_;
+        s.ahead_sets.reserve(ahead_sets_.size());
+        for (const auto& [id, set] : ahead_sets_) {
+            std::vector<std::pair<uint64_t, uint32_t>> flat(set.begin(), set.end());
+            std::sort(flat.begin(), flat.end());
+            s.ahead_sets.emplace_back(id, std::move(flat));
+        }
+        std::sort(s.ahead_sets.begin(), s.ahead_sets.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        s.state = state_;
+        s.tradable = tradable_;
+        s.clamp_events = clamp_events_;
+        s.clamp_shares = clamp_shares_;
+        s.priority_anomalies = priority_anomalies_;
+        s.anomaly_shares = anomaly_shares_;
+        s.hidden_inside_shares = hidden_inside_shares_;
+        s.naive_hidden_fills = naive_hidden_fills_;
+        s.naive_hidden_shares = naive_hidden_shares_;
+        return s;
+    }
+
+    void restore(const State& s) {
+        entries_ = s.entries;
+        ahead_sets_.clear();
+        for (const auto& [id, flat] : s.ahead_sets) {
+            ahead_sets_.emplace(id, AheadSet(flat.begin(), flat.end()));
+        }
+        state_ = s.state;
+        tradable_ = s.tradable;
+        clamp_events_ = s.clamp_events;
+        clamp_shares_ = s.clamp_shares;
+        priority_anomalies_ = s.priority_anomalies;
+        anomaly_shares_ = s.anomaly_shares;
+        hidden_inside_shares_ = s.hidden_inside_shares;
+        naive_hidden_fills_ = s.naive_hidden_fills;
+        naive_hidden_shares_ = s.naive_hidden_shares;
+    }
+
+private:
+
     char state_ = '\0';
     bool tradable_ = false;
 

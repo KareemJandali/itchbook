@@ -1,8 +1,15 @@
 # Phase 6 — Queue-Position-Aware Backtester: Design
 
-**Status:** design, not yet built. Written after five independent designs and five
-adversarial critiques; this document is the merged, corrected position. Section 11
-records the errors the critiques caught so they are not reintroduced.
+**Status:** BUILT. This document is the design as written *before* the phase was
+implemented, kept unedited as the record of what was intended — the results and
+what actually happened are in
+[`docs/phase6-results.md`](phase6-results.md). Written after five independent
+designs and five adversarial critiques; section 11 records the errors the
+critiques caught so they are not reintroduced.
+
+Two things in it were **not** built, and section 9 says which and why. Reading
+this as a description of the shipped code will mislead you in those two places;
+everything else shipped substantially as designed.
 
 **Deliverables:** `include/itchbook/sim/*`, `tools/queue_backtest.cpp`,
 `tools/latency_sweep.cpp`, `python/analysis/fill_comparison.py`, `docs/phase6-results.md`.
@@ -1963,14 +1970,35 @@ implementation of the same specification, and that is what breaks.
 |---|---|---|
 | 1 | hand-computed micro-scenarios, `tests/check.hpp` | per-message rules, the two arithmetic rules, sign errors |
 | 2 | `python/reference/queue_sim.py` + `tests/queue_differential.py`, byte-identical fill logs | logic divergence, the pre/post-mutation ordering trap |
-| 3 | per-event invariants inside the driver under `--verify` | containment, monotonicity, conservation |
-| 4 | golden `--json` / `--fills` in `tests/golden/`, diffed in CI | silent regressions |
+| 3 | ~~per-event invariants inside the driver under `--verify`~~ **NOT BUILT** | containment, monotonicity, conservation |
+| 4 | ~~golden `--json` / `--fills` in `tests/golden/`, diffed in CI~~ **NOT BUILT** | silent regressions |
 | 5 | **the delete-one-order oracle** (§9.3) | the fill rule itself, against ground truth |
+
+**Layers 3 and 4 were not implemented.** There is no `--verify` flag on any tool
+and no `tests/golden/` directory, so §9.1's "roughly 4.6M invariant checks on the
+MSFT day" never ran. What covers that ground instead:
+
+* Layer 3's containment/monotonicity/conservation properties are checked by
+  `tests/fuzz/fuzz_queue.cpp` over random sequences, and by the clamp and
+  priority-anomaly counters, which are reported on every run rather than
+  asserted — see `docs/phase6-results.md` §2. That is weaker per event and
+  broader per input than what was designed.
+* Layer 4's regression role is served by `tests/queue_differential.py`, which
+  requires byte-identical fill logs between the C++ and Python simulators. A
+  golden file pins one recorded output; a differential pins two independent
+  implementations against each other, which is the stronger of the two, but it
+  does not catch a regression that moves both.
+
+Recording the gap here rather than quietly dropping the rows, because a design
+document that lists five test layers and ships three is exactly the kind of
+claim this project is supposed to notice.
 
 ### 9.1 The invariants
 
-`--verify` checks these per order, per event — roughly 4.6M times on the MSFT day
-across four lanes, and free relative to the gzip decode and book reconstruction.
+**As designed** (not built — see the note above the table): `--verify` would
+check these per order, per event, roughly 4.6M times on the MSFT day across four
+lanes, and free relative to the gzip decode and book reconstruction. The list
+below is still the right list; it is the enforcement mechanism that is missing.
 
 | | invariant |
 |---|---|

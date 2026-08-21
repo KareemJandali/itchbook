@@ -256,3 +256,197 @@ def svg_lines(xs, series, title, subtitle, x_label, y_label, include_zero=False)
                  f'font-family="system-ui,sans-serif" font-size="11.5">{esc(name)}</text>')
     p.append("</svg>")
     return "\n".join(p)
+
+
+def svg_histogram(buckets, title, subtitle, markers=(), x_label="cycles per message",
+                  y_label="messages", compare=None, labels=("before", "after")):
+    """A distribution over log-spaced buckets: vertical bars, one colour.
+
+    `buckets` is a sequence of (lo, hi, count); `markers` a sequence of
+    (label, x) drawn as vertical rules.
+
+    Both axes are logarithmic, and that is a claim the chart has to make out
+    loud rather than let a reader assume linear — so both are labelled as log
+    and gridded at decades, where the spacing itself gives the scale away.
+    The reason for each:
+
+      * x, because per-message cycle costs here run from tens to millions. On
+        a linear axis the entire distribution is one bar hard against the
+        origin and the tail is six screens of white space.
+      * y, because the tail is the point. p99.9 lives in buckets holding a few
+        hundred samples next to a mode holding tens of thousands; on a linear
+        count axis those bars are under a pixel and the chart shows a single
+        spike, which is exactly the information the percentile table already
+        gave us.
+
+    One measure, so one colour — the bars are not four series. Identity comes
+    from the title, and the percentile markers are labelled directly rather
+    than through a legend.
+
+    With `compare` (a second bucket list), the form changes and so does the
+    colour rule. Two distributions are two series, colour becomes identity,
+    and both get a legend AND a direct end-label so identity is never colour
+    alone. They are drawn as stepped OUTLINES rather than filled bars: two
+    sets of filled bars on a shared log axis occlude each other exactly where
+    they differ most, which is the part the reader came for. `compare` is the
+    baseline, drawn first and underneath.
+    """
+    import math
+
+    def clean(bs):
+        return [(max(int(lo), 1), int(hi), int(c)) for lo, hi, c in bs if int(c) > 0]
+
+    buckets = clean(buckets)
+    if not buckets:
+        raise ValueError("no non-empty buckets to draw")
+    base = clean(compare) if compare else []
+    # Both series share one pair of axes. Scaling each to its own range would
+    # draw two distributions that look alike and are not comparable, which is
+    # the whole point of putting them together.
+    span_src = buckets + base
+
+    W, H = 720, 440
+
+    x_lo = math.log10(min(b[0] for b in span_src))
+    x_hi = math.log10(max(b[1] for b in span_src))
+    x_lo, x_hi = math.floor(x_lo), math.ceil(x_hi)
+    x_span = (x_hi - x_lo) or 1
+
+    y_hi = math.ceil(math.log10(max(b[2] for b in span_src)))
+    y_span = y_hi or 1          # y starts at 1 sample = log 0
+
+    # The left margin is whatever the widest y-axis label needs. A fixed 62
+    # fits "100,000" and clips "1,000,000", and which one appears depends on
+    # how many messages were benchmarked — so the gutter has to be measured,
+    # not guessed. 6.4px per glyph at 10.5px monospace, plus the 8px gap.
+    top_label = f"{10 ** y_span:,}"
+    left = int(22 + 6.4 * len(top_label))
+    right, top, bottom = 30, 112, 62
+    plot_w, plot_h = W - left - right, H - top - bottom
+
+    def X(cycles):
+        return left + (math.log10(max(cycles, 1)) - x_lo) / x_span * plot_w
+
+    def Y(count):
+        return top + plot_h - (math.log10(max(count, 1)) / y_span) * plot_h
+
+    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+         f'width="{W}" height="{H}" role="img" aria-label="{esc(title)}">',
+         f"<style>{STYLE}</style>",
+         f'<rect class="surface" width="{W}" height="{H}"/>',
+         f'<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" '
+         f'font-size="15" font-weight="600">{esc(title)}</text>',
+         f'<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" '
+         f'font-size="11.5">{esc(subtitle)}</text>']
+
+    # Recessive decade grid, y first so the bars sit over it.
+    for d in range(0, y_span + 1):
+        y = top + plot_h - (d / y_span) * plot_h
+        p.append(f'<line class="grid" x1="{left}" y1="{y:.1f}" x2="{W - right}" y2="{y:.1f}"/>')
+        p.append(f'<text class="muted" x="{left - 8}" y="{y + 4:.1f}" text-anchor="end" '
+                 f'font-family="ui-monospace,monospace" font-size="10.5">'
+                 f'{10 ** d:,}</text>')
+    # A decade label is ~7px per glyph, so past six decades the big ones on the
+    # right run into each other ("10,000,000" and "100,000,000" overprinted the
+    # first time this drew a before/after pair). Label every other decade once
+    # the axis is wider than that, keeping the first and last.
+    label_every = 1 if (x_hi - x_lo) <= 6 else 2
+    for d in range(x_lo, x_hi + 1):
+        x = X(10 ** d)
+        p.append(f'<line class="grid" x1="{x:.1f}" y1="{top}" x2="{x:.1f}" '
+                 f'y2="{top + plot_h}"/>')
+        if d != x_lo and d != x_hi and (d - x_lo) % label_every:
+            continue
+        # The end labels anchor inward. A centred "10,000,000" at the last
+        # decade hangs ~20px past the viewBox and is simply cut off, and how
+        # far it hangs depends on the data's magnitude — so anchoring, not a
+        # wider margin, is the fix that keeps working.
+        anchor = "start" if d == x_lo else "end" if d == x_hi else "middle"
+        p.append(f'<text class="muted" x="{x:.1f}" y="{top + plot_h + 18}" '
+                 f'text-anchor="{anchor}" font-family="ui-monospace,monospace" '
+                 f'font-size="10.5">{10 ** d:,}</text>')
+
+    baseline = top + plot_h
+
+    def step_points(bs):
+        """A stepped outline through the buckets: up the left edge, across the
+        top, and only then down — so the shape traces the distribution rather
+        than joining bucket midpoints, which would imply counts between them
+        that were never measured."""
+        pts = []
+        for lo, hi, count in bs:
+            y = Y(count)
+            pts.append((X(lo), baseline if not pts else pts[-1][1]))
+            pts.append((X(lo), y))
+            pts.append((X(hi), y))
+        if pts:
+            pts.append((pts[-1][0], baseline))
+        return pts
+
+    if base:
+        # Two series: outlines, colour as identity, both labelled.
+        for i, (bs, cls) in enumerate(((base, 'k2'), (buckets, 'k1'))):
+            pts = step_points(bs)
+            d = ' '.join(f'{x:.1f},{y:.1f}' for x, y in pts)
+            p.append(f'<polyline class="{cls}" stroke-width="2" points="{d}"/>')
+            # Direct label at the series' tallest point, so identity survives
+            # a greyscale print or a red-green reader. Two similar
+            # distributions peak in the SAME bucket — a before/after pair
+            # usually does, that is the point — so the two labels are stacked
+            # rather than both placed at the peak, where they overprinted each
+            # other into an unreadable smear on the first render.
+            peak = max(bs, key=lambda b: b[2])
+            lx = X(peak[0])
+            ly = Y(peak[2]) - 10 - (1 - i) * 15
+            p.append(f'<text class="ink" x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" '
+                     f'font-family="system-ui,sans-serif" font-size="11" '
+                     f'font-weight="600">{esc(labels[i])}</text>')
+    else:
+        # The bars. Each spans its own bucket bounds, less a 2px surface gap, so
+        # adjacent bars read as separate marks rather than one filled region.
+        for lo, hi, count in buckets:
+            x0, x1 = X(lo), X(hi)
+            w = max(x1 - x0 - 2, 1.2)
+            y = Y(count)
+            h = baseline - y
+            if h < 1.2:
+                h, y = 1.2, baseline - 1.2
+            p.append(f'<rect class="s1" x="{x0 + 1:.1f}" y="{y:.1f}" width="{w:.1f}" '
+                     f'height="{h:.1f}" rx="2"/>')
+
+    p.append(f'<line class="axis" x1="{left}" y1="{baseline}" x2="{W - right}" '
+             f'y2="{baseline}"/>')
+
+    # Percentile markers, labelled directly. These are the tie back to the
+    # percentile table: same numbers, shown against the shape they summarise.
+    for i, (label, xv) in enumerate(markers):
+        x = X(xv)
+        p.append(f'<line class="axis" x1="{x:.1f}" y1="{top - 6}" x2="{x:.1f}" '
+                 f'y2="{baseline}" stroke-dasharray="4 3"/>')
+        # Stagger so adjacent markers cannot overprint each other, in a band
+        # reserved for them below the subtitle and the y-axis label. The first
+        # version of this put them at top - 10 with top = 74, which printed
+        # "p99 512" straight through the subtitle.
+        ly = top - 14 - (i % 2) * 16
+        p.append(f'<text class="ink" x="{x:.1f}" y="{ly}" text-anchor="middle" '
+                 f'font-family="ui-monospace,monospace" font-size="10.5">'
+                 f'{esc(label)} {xv:,}</text>')
+
+    # A legend whenever there are two series, in addition to the direct labels.
+    if base:
+        lx = left + 4
+        for i, cls in enumerate(('s2', 's1')):
+            p.append(f'<rect class="{cls}" x="{lx}" y="{H - 22}" width="10" height="10" rx="2"/>')
+            p.append(f'<text class="muted" x="{lx + 15}" y="{H - 13}" '
+                     f'font-family="system-ui,sans-serif" font-size="11">'
+                     f'{esc(labels[i])}</text>')
+            lx += 22 + 7 * len(labels[i])
+
+    p.append(f'<text class="muted" x="{left + plot_w / 2:.0f}" y="{H - 26}" '
+             f'text-anchor="middle" font-family="system-ui,sans-serif" '
+             f'font-size="11">{esc(x_label)} — log scale</text>')
+    p.append(f'<text class="muted" x="16" y="66" '
+             f'font-family="system-ui,sans-serif" font-size="11">'
+             f'{esc(y_label)} — log</text>')
+    p.append("</svg>")
+    return "\n".join(p)
