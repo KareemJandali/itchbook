@@ -11,6 +11,7 @@
 #include <cstdint>
 
 #include "itchbook/book/book.hpp"
+#include "itchbook/book/book_set.hpp"
 #include "itchbook/itch/messages.hpp"
 
 namespace itchbook::book {
@@ -78,6 +79,50 @@ inline bool apply(Book& b, char type, const uint8_t* p) {
     }
 }
 
+// ---- the whole feed ----------------------------------------------------------
+//
+// The same seam, one symbol wider. It routes on the locate the message already
+// carries and then hands the message to the single-book apply() above, so there
+// is exactly one place in the project that knows what an 'E' does to a book. A
+// second copy of that switch would be a second thing to keep in step with
+// python/reference/book.py, and the case-for-case correspondence between those
+// two files is what makes a disagreement readable.
+//
+// Two types never reach a book:
+//
+//   'S'  is the market's session, not a symbol's. It carries stock locate 0, so
+//        routing it would file the whole session under whichever symbol owns
+//        that code and leave every other summary blank.
+//
+//   'R'  is the directory. Fields are pulled out here, because this is the file
+//        that is allowed to know a wire layout, and handed to the BookSet as
+//        values — book_set.hpp never sees a message.
+//
+// Unmodelled types stop here rather than at the book, and that matters more
+// than it looks: BookSet::at() creates a book on first use, so routing an 'I'
+// would conjure a book for a symbol that only ever published an auction
+// imbalance, and count a message against a directory entry that may not exist
+// yet. 1.58% of a real day is unmodelled, so this is thousands of phantom books
+// on a live file, not a corner case.
+inline bool apply(BookSet& set, char type, const uint8_t* p) {
+    namespace m = itchbook::itch;
+    switch (type) {
+        case 'S':
+            set.set_system_event(m::system_event::code(p));
+            return false;
+        case 'R':
+            set.set_directory(m::stock_locate(p),
+                              reinterpret_cast<const char*>(m::stock_directory::stock(p)), 8,
+                              m::stock_directory::market_category(p),
+                              m::stock_directory::financial_status(p),
+                              m::stock_directory::round_lot_size(p));
+            return false;
+        default:
+            if (!modelled(type)) return false;
+            return apply(set.at(m::stock_locate(p)), type, p);
+    }
+}
+
 // ---- pre-mutation state ------------------------------------------------------
 //
 // E, C, X, D and U carry only an order reference. The order's side, resting
@@ -118,6 +163,12 @@ inline uint64_t referenced_ref(char type, const uint8_t* p) {
 }
 
 // apply(), with the pre-mutation snapshot the simulator needs.
+//
+// No BookSet form, deliberately. The simulator trades one symbol: it needs the
+// resting price and side of the order a message names, and asking that question
+// of 8,700 books at once has no meaning until a strategy exists that quotes
+// more than one. Adding the overload now would be a second copy of the probe
+// with no caller to keep it honest.
 //
 // This probes the reference map once here and once inside the mutation, rather
 // than being fused into a single probe. That is a deliberate choice backed by

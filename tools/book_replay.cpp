@@ -8,6 +8,11 @@
 // Usage:
 //   book_replay <feed.gz> [--symbol SYM] [--snapshots out.csv]
 //               [--interval-ms N] [--levels N] [--limit N] [--tick N] [--quiet]
+//
+// --all-symbols replays every security in the file into a BookSet instead, and
+// writes one summary row per symbol. It is a separate handler on purpose: the
+// single-symbol path above carries a byte-identical regression gate, and the
+// safest way to keep that promise is to leave its code alone.
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +22,7 @@
 #include <vector>
 
 #include "itchbook/book/book.hpp"
+#include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
 #include "itchbook/itch/messages.hpp"
 #include "itchbook/itch/parser.hpp"
@@ -40,6 +46,9 @@ struct Options {
     uint64_t end_ns = 0;        // 0 = run to the end of the file
     int32_t tick = 100;         // a penny, in Price(4) units
     bool quiet = false;
+    bool all_symbols = false;
+    const char* per_symbol = nullptr;   // one row per security
+    size_t refs_capacity = size_t{1} << 22;
 };
 
 // 1,234,567 — matches Python's f"{n:,}" so the two summaries diff cleanly.
@@ -169,6 +178,115 @@ struct Replayer {
         if (itchbook::book::apply(book, type, p)) ++applied;
     }
 };
+
+// ---- every symbol at once ----------------------------------------------------
+//
+// The single-symbol Replayer above filters the feed down to one locate and
+// snapshots it through the session. This does neither: it routes every modelled
+// message to its own book and reports where each one ended up. Snapshotting
+// 8,700 books on a one-second grid would write more output than the input file.
+struct AllSymbols {
+    Options opt;
+    itchbook::book::BookSet set;
+    uint64_t read = 0;
+    uint64_t applied = 0;
+    bool stop = false;
+
+    explicit AllSymbols(const Options& o)
+        : opt(o), set(o.refs_capacity, o.tick) {}
+
+    void on_message(char type, const uint8_t* p, uint16_t) {
+        if (stop) return;
+        ++read;
+        if (opt.limit != 0 && read > opt.limit) {
+            --read;
+            stop = true;
+            return;
+        }
+        const uint64_t ts = itchbook::itch::timestamp(p);
+        if (opt.end_ns != 0 && ts >= opt.end_ns && ts > 0) {
+            --read;
+            stop = true;
+            return;
+        }
+        if (itchbook::book::apply(set, type, p)) ++applied;
+    }
+};
+
+// One row per security, with the fields a single-symbol run also reports, so
+// that a row can be diffed against `--symbol X` on the same feed. That
+// comparison is the only thing standing between "the routing works" and "the
+// routing appears to work": every book here runs the same code as before, so
+// if a symbol's numbers change, it is the routing that changed them.
+bool write_per_symbol(const AllSymbols& a, const char* path) {
+    std::FILE* f = std::fopen(path, "w");
+    if (f == nullptr) {
+        std::fprintf(stderr, "error: cannot write %s\n", path);
+        return false;
+    }
+    std::fputs("locate,symbol,directoried,resting_orders,resting_shares,volume,notional,"
+               "trades,hidden_volume,cross_volume,open,high,low,close,best_bid,best_ask,"
+               "unknown_refs,locate_mismatch,overflow_levels,trading_state,system_event\n", f);
+    a.set.for_each_book([&](uint16_t locate, const itchbook::book::Book& b,
+                            const itchbook::book::SymbolInfo& info) {
+        int32_t bid = 0;
+        int32_t ask = 0;
+        const bool have_bid = b.best_bid(&bid);
+        const bool have_ask = b.best_ask(&ask);
+        // Absent is empty, not a sentinel. The single-symbol summary learned
+        // this the hard way on a real day (see write_json): a -1 read as a
+        // price manufactures a disagreement out of two spellings of "there
+        // isn't one", and this file exists to be compared against that one.
+        auto opt_px = [](int32_t v) { return v < 0 ? std::string() : std::to_string(v); };
+        std::fprintf(f,
+                     "%u,%s,%s,%zu,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+                     ",%" PRIu64 ",%s,%s,%s,%s,%s,%s,%" PRIu64 ",%" PRIu64 ",%zu,%c,%c\n",
+                     locate, info.symbol, info.directoried ? "yes" : "no",
+                     b.resting_orders(), b.resting_shares(), b.volume(), b.notional(),
+                     b.trades(), b.hidden_volume(), b.cross_volume(),
+                     opt_px(b.open()).c_str(), opt_px(b.high()).c_str(),
+                     opt_px(b.low()).c_str(), opt_px(b.close()).c_str(),
+                     (have_bid ? std::to_string(bid) : std::string()).c_str(),
+                     (have_ask ? std::to_string(ask) : std::string()).c_str(),
+                     b.unknown_ref(), b.locate_mismatch(), b.overflow_levels(),
+                     b.trading_state() == 0 ? '-' : b.trading_state(),
+                     b.system_event() == 0 ? '-' : b.system_event());
+    });
+    const bool bad = std::ferror(f) != 0;
+    return std::fclose(f) == 0 && !bad;
+}
+
+void print_all_summary(const AllSymbols& a) {
+    uint64_t volume = 0;
+    uint64_t resting_shares = 0;
+    size_t quoted = 0;
+    size_t overflow_symbols = 0;
+    a.set.for_each_book([&](uint16_t, const itchbook::book::Book& b,
+                            const itchbook::book::SymbolInfo&) {
+        volume += b.volume();
+        resting_shares += b.resting_shares();
+        if (b.resting_orders() > 0) ++quoted;
+        if (b.overflow_levels() > 0) ++overflow_symbols;
+    });
+    std::printf("%-28s %16s\n", "messages read", comma(a.read).c_str());
+    std::printf("%-28s %16s\n", "messages applied", comma(a.applied).c_str());
+    std::printf("%-28s %16s\n", "books built", comma(a.set.books()).c_str());
+    std::printf("%-28s %16s\n", "directory entries", comma(a.set.directory_entries()).c_str());
+    std::printf("%-28s %16s\n", "symbols still quoting", comma(quoted).c_str());
+    std::printf("%-28s %16s\n", "executed volume (all symbols)", comma(volume).c_str());
+    std::printf("%-28s %16s\n", "resting shares", comma(resting_shares).c_str());
+    std::printf("%-28s %16s\n", "resting orders", comma(a.set.resting_orders()).c_str());
+    std::printf("%-28s %16s\n", "ref map slots", comma(a.set.storage().refs.capacity()).c_str());
+    std::printf("%-28s %16s\n", "pool capacity (orders)", comma(a.set.storage().pool.capacity()).c_str());
+    std::printf("%-28s %16s\n", "symbols using overflow", comma(overflow_symbols).c_str());
+    // The three that must be zero on a feed that is what it claims to be.
+    std::printf("%-28s %16s\n", "unknown references", comma(a.set.unknown_ref()).c_str());
+    std::printf("%-28s %16s\n", "locate mismatches", comma(a.set.locate_mismatch()).c_str());
+    std::printf("%-28s %16s\n", "undirectoried messages",
+                comma(a.set.undirectoried_messages()).c_str());
+    std::printf("%-28s %16c\n", "last system event",
+                a.set.system_event() == 0 ? '-' : a.set.system_event());
+}
 
 // The same fields the Python oracle writes, with the same names and the same
 // types, so the two can be compared key by key instead of eyeballed. The
@@ -315,7 +433,14 @@ bool parse_args(int argc, char** argv, Options* opt) {
             }
             return argv[++i];
         };
-        if (a == "--symbol") {
+        if (a == "--all-symbols") {
+            opt->all_symbols = true;
+        } else if (a == "--per-symbol") {
+            opt->per_symbol = next("--per-symbol");
+            opt->all_symbols = true;
+        } else if (a == "--refs-capacity") {
+            opt->refs_capacity = static_cast<size_t>(std::strtoull(next("--refs-capacity"), nullptr, 10));
+        } else if (a == "--symbol") {
             opt->symbol = next("--symbol");
         } else if (a == "--snapshots") {
             opt->snapshots = next("--snapshots");
@@ -359,9 +484,34 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <feed.gz> [--symbol SYM] [--snapshots out.csv]\n"
                      "           [--interval-ms N] [--levels N] [--limit N]\n"
-                     "           [--tick N] [--end-ns N] [--json out.json] [--quiet]\n",
-                     argv[0]);
+                     "           [--tick N] [--end-ns N] [--json out.json] [--quiet]\n"
+                     "       %s <feed.gz> --all-symbols [--per-symbol out.csv]\n"
+                     "           [--refs-capacity N] [--limit N] [--tick N] [--quiet]\n",
+                     argv[0], argv[0]);
         return 2;
+    }
+
+    if (opt.all_symbols) {
+        if (!opt.symbol.empty()) {
+            std::fprintf(stderr, "error: --symbol and --all-symbols ask different questions\n");
+            return 2;
+        }
+        if (opt.snapshots != nullptr) {
+            std::fprintf(stderr, "error: --snapshots is single-symbol; 8,700 books on a "
+                                 "one-second grid outweighs the feed\n");
+            return 2;
+        }
+        try {
+            AllSymbols a(opt);
+            itchbook::Reader reader(opt.feed);
+            itchbook::parse(reader, a);
+            if (!opt.quiet) print_all_summary(a);
+            if (opt.per_symbol != nullptr && !write_per_symbol(a, opt.per_symbol)) return 1;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "error: %s\n", e.what());
+            return 1;
+        }
+        return 0;
     }
 
     Replayer r(opt);

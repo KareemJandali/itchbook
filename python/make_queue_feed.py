@@ -416,6 +416,92 @@ def build(seed, n_messages, cancel_front_bias, tie_burst, gap_ns, drift_prob,
     return bytes(out)
 
 
+# ---- more than one symbol ----------------------------------------------------
+#
+# build() makes one security's day. A multi-symbol feed is N of those
+# interleaved, which is what phase 9 needs and what neither generator here could
+# produce: fuzz_feed.py emits a second locate to exercise the symbol filter, and
+# two symbols where one of them never trades does not test routing.
+#
+# Restamping rather than re-generating, for one reason worth stating: every
+# symbol then contains the same message MIX and the same rare paths — halts,
+# crosses, tie bursts — that build() spent this file's length getting right. A
+# generator written separately for the multi-symbol case would quietly drift
+# from it and the differential would stop meaning the same thing.
+#
+# Three things have to change per symbol, and missing any one produces a feed
+# that looks fine and tests nothing:
+#
+#   * the stock locate, at bytes 1..3 of every message.
+#   * the symbol in 'R', so a single-symbol run can be asked for it by name.
+#   * every order reference, offset by a per-symbol stride, because ITCH
+#     references are unique across the WHOLE day's feed. Reusing them would make
+#     the shared reference map correct only by accident, and would hide exactly
+#     the bug it exists to catch.
+#
+# Session events are the market's, not a symbol's, so only the first stream's
+# survive; the rest are dropped or the session would open and close N times.
+
+REF_STRIDE = 1 << 40      # far beyond any one stream's reference count
+
+# Where each type keeps its order reference(s), as byte offsets into the payload.
+REF_OFFSETS = {
+    b"A": (11,), b"F": (11,), b"E": (11,), b"C": (11,),
+    b"X": (11,), b"D": (11,), b"P": (11,), b"U": (11, 19),
+}
+
+
+def _restamp(payload: bytes, locate: int, symbol: bytes, ref_offset: int) -> bytes:
+    m = bytearray(payload)
+    t = payload[0:1]
+    m[1:3] = locate.to_bytes(2, "big")
+    if t == b"R":
+        m[11:19] = symbol.ljust(8)[:8]
+    for off in REF_OFFSETS.get(t, ()):
+        ref = int.from_bytes(m[off:off + 8], "big") + ref_offset
+        m[off:off + 8] = ref.to_bytes(8, "big")
+    return bytes(m)
+
+
+def _frames(data: bytes):
+    """Walk a built stream, yielding payloads. The length prefix is authoritative."""
+    i = 0
+    while i < len(data):
+        n = int.from_bytes(data[i:i + 2], "big")
+        yield data[i + 2:i + 2 + n]
+        i += 2 + n
+
+
+def build_multi(locates: int, seed: int, messages: int, front_bias: bool, ties: bool,
+                gap_ns: int, drift: float, halt: float) -> bytes:
+    streams = []
+    for i in range(locates):
+        # A different seed per symbol, so the symbols are not N copies of one
+        # order flow with different names on it.
+        data = build(seed + i * 977, max(messages // locates, 200), front_bias, ties,
+                     gap_ns, drift, halt)
+        symbol = f"SY{i:04d}"[:8].encode()
+        stamped = []
+        for payload in _frames(data):
+            if payload[0:1] == b"S" and i != 0:
+                continue                      # one session, not N
+            stamped.append(_restamp(payload, i + 1, symbol, i * REF_STRIDE))
+        streams.append(stamped)
+
+    # Merge by timestamp. Stable within a timestamp, so ties keep each symbol's
+    # own arrival order — which is the property the queue model is built on.
+    merged = []
+    for i, stamped in enumerate(streams):
+        for seq, payload in enumerate(stamped):
+            merged.append((int.from_bytes(payload[5:11], "big"), i, seq, payload))
+    merged.sort(key=lambda row: (row[0], row[1], row[2]))
+
+    out = bytearray()
+    for _, _, _, payload in merged:
+        out.extend(gen.frame(payload))
+    return bytes(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -436,15 +522,26 @@ def main():
     ap.add_argument("--gap-ns", type=int, default=200000,
                     help="typical inter-message gap in nanoseconds (default 200us, so "
                          "20k messages span a few seconds and markout horizons resolve)")
+    ap.add_argument("--locates", type=int, default=1,
+                    help="number of securities to interleave (default 1). Each gets its "
+                         "own seed, its own symbol, and a disjoint reference range, "
+                         "because ITCH references are unique across the whole feed")
     a = ap.parse_args()
 
-    data = build(a.seed, a.messages, a.cancel_front_bias, not a.no_tie_burst,
-                 a.gap_ns, a.drift_prob, a.halt_prob)
+    if a.locates < 1:
+        ap.error("--locates must be at least 1")
+    if a.locates == 1:
+        data = build(a.seed, a.messages, a.cancel_front_bias, not a.no_tie_burst,
+                     a.gap_ns, a.drift_prob, a.halt_prob)
+    else:
+        data = build_multi(a.locates, a.seed, a.messages, a.cancel_front_bias,
+                           not a.no_tie_burst, a.gap_ns, a.drift_prob, a.halt_prob)
     Path(a.path).parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(a.path, "wb", compresslevel=1) as f:
         f.write(data)
-    print(f"wrote {len(data):,} bytes (~{a.messages:,} messages, seed {a.seed}, "
-          f"front-bias {a.cancel_front_bias}, drift {a.drift_prob}) to {a.path}")
+    print(f"wrote {len(data):,} bytes (~{a.messages:,} messages, {a.locates} "
+          f"locate(s), seed {a.seed}, front-bias {a.cancel_front_bias}, "
+          f"drift {a.drift_prob}) to {a.path}")
 
 
 if __name__ == "__main__":
