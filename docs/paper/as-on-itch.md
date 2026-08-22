@@ -275,6 +275,10 @@ Across lanes k spans 171.3 to 225.4 — 1.32×. That factor is the §6.1 cost as
 Across all 4 symbols and their lanes, k spans 11.9 to 483.9. A single scalar over that range is not a parameter.
 
 
+![Observed vs fitted fill intensity, mbo lane](../figures/paper/intensity-mbo.svg)
+
+*Observed ln λ̂ per depth bucket against the fitted A·e^(−kδ), GOOG · 2019-08-30 · mbo lane. The touch bucket is the §6.2 misfit.*
+
 <!-- generated:calibration:end -->
 
 ## 7. Experimental design
@@ -568,11 +572,15 @@ whether or not they survive.
 ## 10. Reproducing
 
 ```
-scripts/paper-figures.sh          # every figure, from committed JSON
-python3 scripts/paper-report.py   # every results table, from the same
-python3 scripts/paper-html.py     # the page, from this Markdown
+scripts/paper-build.sh            # figures, then tables, then the page
 scripts/paper-pdf.sh              # the PDF, from that page
 ```
+
+`paper-build.sh` runs three generators in an order that is load-bearing:
+figures first, because the tables link whichever figures exist; then the tables;
+then the rendered page, which inlines them. Run in the wrong order the document
+is not visibly wrong, merely different from what the same inputs produce next
+time — which is precisely what `--check` is for, and how the ordering was found.
 
 CI runs the first three with `--check`, so no number and no chart in this
 document can drift from the artifact that produced it. Three properties are
