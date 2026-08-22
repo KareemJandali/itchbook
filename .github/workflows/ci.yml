@@ -561,6 +561,17 @@ jobs:
           "
           ./scripts/full-day-differential.sh data/raw/degenerate.gz 1000 10
 
+      # Phase 11.0. The closed-loop driver orchestrates the same components as
+      # backtest.hpp in the same order, and that similarity is the liability:
+      # two copies of one piece of logic either disagree on a trailing zero or
+      # agree while both being wrong. The invariant is that a strategy WITHOUT
+      # feedback is answering the same question in both drivers, so both must
+      # answer it identically, field for field, across all four fill models.
+      # It runs in ctest; this step is here to name it in the log, because a
+      # gate nobody can see in CI output is a gate people forget exists.
+      - name: Closed-loop driver agrees with the open-loop one without feedback
+        run: ./build/test_closed_loop
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.

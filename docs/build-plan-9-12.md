@@ -1201,6 +1201,64 @@ is a function of inventory `q`.
    not recovered state. A strategy with inventory that cannot survive a restart
    breaks a property phase 7 already established.
 
+### 11.0 — what actually happened
+
+`include/itchbook/sim/inventory_strategy.hpp`,
+`include/itchbook/sim/closed_loop.hpp`, `tests/test_closed_loop.cpp`. The old
+`Strategy` and `Backtest` are untouched, so every phase-6 result stands.
+
+**The wall comes down halfway, and the half that stays up is the interesting
+one.** A-S needs inventory, so fills and position cross. Queue position does
+not: `SimFill` carries `ahead_at_arrival` and `FillEvent` deliberately does not
+copy it, because it is the estimate whose error bars are the whole subject of
+phase 6 and a strategy conditioning on it would be conditioning on the thing
+being measured. That omission is enforced by a `static_assert`, not a comment —
+and the same assert checks the field still exists on `SimFill`, so it is testing
+an omission rather than a typo.
+
+**Position is the harness's, not the strategy's.** `PositionTracker` is fed from
+the same fills the strategy is told about, so "what is my position" has exactly
+one answer. A strategy that kept its own could be wrong in a way nothing would
+catch — the ledger saying one thing while the quotes were priced off another.
+
+**The band changes meaning, and this is the paragraph to get right in print.**
+Phase 6's band is four *gradings of one world*: one intent stream, scored four
+ways, with the difference attributable to the fill model structurally because no
+feedback path exists. That is impossible once a strategy sees its fills — the
+pessimistic lane carries different inventory, quotes differently, fills
+differently again, and there is no longer one stream to grade. So the band
+becomes four *closed-loop runs*: four worlds, each internally consistent, and
+wider for a reason that is not noise — it includes the strategy's own reaction
+to being filled differently. Both are legitimate and they answer different
+questions; reporting one while describing the other would be the most
+misleading thing this project could print, so they live in separate headers and
+produce differently-labelled output.
+
+**Two drivers that must not drift, held together by a test rather than a
+comment.** `closed_loop.hpp` orchestrates the same components in the same order
+as `backtest.hpp`, which is exactly the 10.6 situation: two copies of one piece
+of logic either disagree on a trailing zero or agree while both being wrong. The
+invariant is that a strategy *without* feedback is answering the same question in
+both drivers, so both must answer identically — field for field, across all four
+models. Verified to fail correctly: deleting one `markout_.observe` call makes it
+report `markout_resolved 60 vs 0; markout_shares 6000 vs 0; …` and name the
+model. (A first attempt at that check perturbed `event_index_` ordering and the
+test passed — correctly, because nothing in that feed trips, so the reordering
+changed no observable. Worth knowing that the invariant covers behaviour, not
+statement order.)
+
+`SessionClock` supplies A-S's (T − t) as progress in [0, 1], clamped rather than
+extrapolated: an ITCH file genuinely contains messages before the open and after
+the close, and a negative (T − t) makes the spread term imaginary. It is
+configuration, so it is never restored — the same rule `ledger.hpp` and
+`strategy_snapshot.hpp` follow, and it matters more here because γ, the
+volatility window and the quote clamps are all instructions rather than state.
+
+**Still open in 11.0:** the strategy-side `State`/`restore` pair exists for
+`PositionTracker` and is tested, but there is no restart test driving a full
+closed-loop run through a snapshot yet. That lands with the A-S strategy in 11.1,
+which is the first strategy with state worth restoring.
+
 ### 11.1 — The strategy
 
 `include/itchbook/sim/as_maker.hpp`, finite-horizon Avellaneda–Stoikov:
