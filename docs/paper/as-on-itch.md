@@ -220,15 +220,60 @@ about it.
 
 <!-- generated:calibration:begin -->
 
-> **Not measured.** No `validation/intensity*.json` is committed, so no fitted A or k appears here. One artifact per symbol, because k is fitted per symbol:
->
-> ```
-> build/calibrate_intensity data/sliced/SYM-DAY.gz \
->     --symbol SYM --day YYYY-MM-DD \
->     --json validation/intensity-SYM.json
-> ```
->
-> Until they exist, §5's spread formula is being fed the **default** k rather than a measured one, §6.1's per-lane decision has nothing to be per-lane about, and the experiment driver refuses to run without `--allow-assumed-k`.
+k is fitted **per symbol and per lane**, and both dimensions are load-bearing. Per lane because λ̂ is estimated *through* a queue model and is therefore conditional on it (§6.1). Per symbol because measured spreads on a single session ran from 1.0 ticks to 60.7 — a curve fitted on one of those describes nothing about the other.
+
+**AMD** · calibrated 2019-08-30 · `calibrated_per_lane`: `true`
+
+| lane | A | k (1/$) | R² | buckets fitted | exposure, no fills | maker fills | exposure (order-seconds) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **naive** | 0.1402 | 483.9 | 0.984 | 3 | 7 | 1,392 | 46,772 |
+| **optimistic** | — | — | — | 2 | 8 | 1,182 | 46,780 |
+| **mbo** | — | — | — | 2 | 8 | 1,000 | 46,794 |
+| **pessimistic** | — | — | — | 2 | 8 | 916 | 46,798 |
+
+Across lanes k spans 483.9 to 483.9 — 1.00×. That factor is the §6.1 cost as a number: one fit reused across four lanes hands three of them a curve from a market they do not live in.
+
+7 bucket(s) had exposure and no fills and are excluded from the fit. Reported because dropping them silently flattens the curve — the deep buckets are exactly the ones that fail to fill.
+
+**GOOG** · calibrated 2019-08-30 · `calibrated_per_lane`: `true`
+
+| lane | A | k (1/$) | R² | buckets fitted | exposure, no fills | maker fills | exposure (order-seconds) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **naive** | 0.3870 | 11.9 | 0.901 | 26 | 0 | 8,014 | 46,631 |
+| **optimistic** | 0.3773 | 12.3 | 0.904 | 26 | 0 | 7,645 | 46,504 |
+| **mbo** | 0.3773 | 12.3 | 0.904 | 26 | 0 | 7,645 | 46,504 |
+| **pessimistic** | 0.3773 | 12.3 | 0.904 | 26 | 0 | 7,645 | 46,504 |
+
+Across lanes k spans 11.9 to 12.3 — 1.04×. That factor is the §6.1 cost as a number: one fit reused across four lanes hands three of them a curve from a market they do not live in.
+
+**MSFT** · calibrated 2019-08-30 · `calibrated_per_lane`: `true`
+
+| lane | A | k (1/$) | R² | buckets fitted | exposure, no fills | maker fills | exposure (order-seconds) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **naive** | 0.6991 | 257.0 | 0.995 | 5 | 21 | 8,216 | 46,731 |
+| **optimistic** | 0.6038 | 319.0 | 0.981 | 5 | 21 | 6,404 | 46,748 |
+| **mbo** | 0.5094 | 335.5 | 0.962 | 5 | 21 | 5,287 | 46,772 |
+| **pessimistic** | 0.4769 | 341.9 | 0.955 | 5 | 21 | 4,955 | 46,781 |
+
+Across lanes k spans 257.0 to 341.9 — 1.33×. That factor is the §6.1 cost as a number: one fit reused across four lanes hands three of them a curve from a market they do not live in.
+
+84 bucket(s) had exposure and no fills and are excluded from the fit. Reported because dropping them silently flattens the curve — the deep buckets are exactly the ones that fail to fill.
+
+**STOR** · calibrated 2019-08-30 · `calibrated_per_lane`: `true`
+
+| lane | A | k (1/$) | R² | buckets fitted | exposure, no fills | maker fills | exposure (order-seconds) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **naive** | 0.0415 | 171.3 | 0.642 | 6 | 12 | 624 | 46,537 |
+| **optimistic** | 0.0366 | 225.4 | 0.768 | 5 | 13 | 530 | 46,563 |
+| **mbo** | 0.0326 | 206.9 | 0.687 | 5 | 13 | 460 | 46,607 |
+| **pessimistic** | 0.0302 | 200.1 | 0.685 | 5 | 13 | 475 | 46,636 |
+
+Across lanes k spans 171.3 to 225.4 — 1.32×. That factor is the §6.1 cost as a number: one fit reused across four lanes hands three of them a curve from a market they do not live in.
+
+51 bucket(s) had exposure and no fills and are excluded from the fit. Reported because dropping them silently flattens the curve — the deep buckets are exactly the ones that fail to fill.
+
+Across all 4 symbols and their lanes, k spans 11.9 to 483.9. A single scalar over that range is not a parameter.
+
 
 <!-- generated:calibration:end -->
 
@@ -261,32 +306,226 @@ invites exactly the claim the data cannot support. Calibration and evaluation
 
 <!-- generated:results:begin -->
 
-> **No results.** `validation/as-experiment.json` is not committed, so this
-> section is empty *by construction*, not by omission. `scripts/paper-report.py`
-> emits a results table only from a committed artifact, and there is no path by
-> which a number reaches this page without one.
->
-> The artifact needs, before it can back this section:
->
-> - **≥ 3 symbols** across the liquidity spectrum and **≥ 3 evaluation days**
-> - the **calibration day excluded** from evaluation — the harness exits
->   non-zero rather than warning if they overlap
-> - four closed-loop lanes per arm per symbol-day (§4: a band over *worlds*)
-> - **a calibration artifact per symbol**, fitted on the calibration day. k is
->   per symbol and per lane; the driver refuses to run without one unless
->   `--allow-assumed-k` is passed, which stamps the output `assumed-scalar`.
->
-> ```
-> bench/as-experiment.py --build build --out validation/as-experiment.json \
->     --feed SYM:YYYY-MM-DD:data/sliced/SYM-DAY.gz [--feed ...] \
->     --calibration SYM:validation/intensity-SYM.json [--calibration ...] \
->     --calibration-day YYYY-MM-DD
-> ```
->
-> **The seven predictions in `docs/build-plan-9-12.md` §11.3 are ungraded.**
-> They were committed before the harness was written, and they will be graded
-> here — kept or falsified — by computation against the bars in this script,
-> not by anyone's reading of the table.
+3 symbol(s) — GOOG, MSFT, STOR — over 3 evaluation day(s), with 2019-08-30 held out as the calibration day. Quote size 100, modelled latency 0 ns. γ is swept over 0.001, 0.005, 0.02, 0.1; the tables below fix γ = 0.02 and the sweep itself is the figure.
+
+k used, per symbol and lane — from the committed calibration artifacts, never from a flag typed by hand:
+
+| symbol | naive | optimistic | mbo | pessimistic | spread |
+|---|---:|---:|---:|---:|---:|
+| GOOG | 11.9 | 12.3 | 12.3 | 12.3 | 1.04× |
+| MSFT | 257.0 | 319.0 | 335.5 | 341.9 | 1.33× |
+| STOR | 171.3 | 225.4 | 206.9 | 200.1 | 1.32× |
+
+### 7.1 Headline band, per symbol-day
+
+**Edge, not equity, is the market-making result.** `equity = edge + drift − fees`: edge is half-spread captured against the mid at fill time, drift is what the mid did to inventory, including the residual position marked at the close. On the widest-spread symbol drift was 94% of equity and swung from −$0.15 to +$2.45 per share across days while edge held between $0.14 and $0.18 — one is a property of the strategy, the other of the stock. Equity is still shown, because the pre-registered predictions were written against it and are graded against it in §7.5.
+
+All figures µ$ per share. `mk 1s` is the 1-second markout — negative is adverse selection. Never pooled: each table is one symbol-day.
+
+**GOOG · 2019-10-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 142,677 | 55,176 | 22,067 | 197,098 | -34,683 | 19,159 | 5,352 | -77,612 |
+| optimistic | 148,966 | 54,608 | 12,831 | 470,329 | -36,153 | 2,185 | 5,162 | -86,203 |
+| mbo | 147,506 | 54,608 | 12,831 | 489,384 | -36,153 | 2,103 | 5,162 | -86,203 |
+| pessimistic | 146,518 | 54,609 | 14,354 | 370,438 | -35,193 | 2,172 | 5,144 | -83,855 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.04, A-S 0.68.
+
+**GOOG · 2019-12-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 139,804 | 62,445 | 71,447 | 99,681 | -48,144 | 19,470 | 1,213 | -21,875 |
+| optimistic | 151,016 | 62,062 | 65,823 | 950,454 | -62,202 | 2,970 | 1,212 | -31,049 |
+| mbo | 150,937 | 62,065 | 65,768 | 983,849 | -62,495 | 2,614 | 1,215 | -31,186 |
+| pessimistic | 148,137 | 62,064 | 65,785 | 1,047,199 | -63,873 | 2,398 | 1,215 | -31,230 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.07, A-S 0.09.
+
+**GOOG · 2020-01-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 173,617 | 48,322 | 47,963 | 5,573 | 45,753 | 16,144 | 2,943 | -14,977 |
+| optimistic | 172,843 | 48,089 | 41,434 | 2,611,597 | 47,141 | 2,824 | 2,887 | -17,766 |
+| mbo | 177,184 | 48,083 | 41,434 | 1,938,497 | 47,141 | 2,177 | 2,887 | -17,766 |
+| pessimistic | 174,050 | 48,083 | 41,498 | 1,994,683 | 46,780 | 2,170 | 2,887 | -17,476 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.02, A-S 0.16.
+
+**MSFT · 2019-10-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 5,239 | 3,305 | 3,651 | 31,615 | -1,137 | 38,070 | 7,350 | -1,872 |
+| optimistic | 3,712 | -379 | 280 | 26,626 | -3,676 | 24,688 | 6,278 | -3,279 |
+| mbo | 3,382 | -869 | -563 | 39,129 | -3,731 | 20,935 | 5,444 | -3,647 |
+| pessimistic | 3,356 | -1,266 | -1,238 | 60,155 | -4,063 | 23,503 | 4,987 | -3,791 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.53, A-S 5.43.
+
+**MSFT · 2019-12-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 4,172 | 3,361 | 974 | -17,339 | -7,154 | 19,662 | 12,039 | -4,046 |
+| optimistic | 3,531 | -456 | -8,643 | -11,554 | -6,534 | 10,744 | 3,841 | -11,830 |
+| mbo | 3,149 | -1,096 | -10,843 | -14,041 | -7,173 | 25,735 | 3,624 | -13,549 |
+| pessimistic | 3,144 | -1,724 | -12,561 | -16,562 | -8,762 | 20,726 | 6,043 | -14,573 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.31, A-S 1.39.
+
+**MSFT · 2020-01-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 6,680 | 3,676 | 3,001 | 43,150 | -3,190 | 195,406 | 11,237 | -5,679 |
+| optimistic | 4,749 | 559 | 103 | 40,560 | -5,838 | 49,606 | 10,793 | -7,351 |
+| mbo | 4,655 | 331 | -448 | 59,519 | -7,038 | 61,593 | 11,366 | -8,166 |
+| pessimistic | 4,700 | 188 | -440 | 72,701 | -7,156 | 72,948 | 11,308 | -8,067 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.43, A-S 7.77.
+
+**STOR · 2019-10-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 3,614 | 1,517 | 2,010 | -43,064 | -6,819 | 14,747 | 1,433 | -4,645 |
+| optimistic | 3,772 | -2,496 | -851 | -45,246 | -4,552 | 8,413 | 1,973 | -5,010 |
+| mbo | 3,380 | -2,996 | -1,316 | -53,364 | -5,433 | 8,871 | 1,209 | -5,170 |
+| pessimistic | 2,934 | -3,551 | -2,105 | -72,989 | -5,503 | 8,985 | 465 | -6,647 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.24, A-S 2.47.
+
+**STOR · 2019-12-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 3,746 | 2,270 | 1,633 | 1,643 | -7,892 | 5,136 | 1,244 | -4,390 |
+| optimistic | 3,743 | -1,728 | -472 | -8,194 | -3,058 | 3,340 | 887 | -4,592 |
+| mbo | 3,268 | -2,321 | -1,046 | -15,605 | -2,712 | 3,506 | 565 | -5,100 |
+| pessimistic | 3,039 | -2,974 | -1,838 | -12,123 | -4,906 | 1,921 | 428 | -5,994 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.20, A-S 2.59.
+
+**STOR · 2020-01-30**
+
+| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | eq A-S | max\|q\| touch | max\|q\| A-S | mk 1s A-S |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| naive | 4,325 | -3,263 | 1,180 | -3,051 | -3,466 | 3,256 | 555 | -3,921 |
+| optimistic | 3,840 | -3,700 | -329 | -13,569 | -8,923 | 2,988 | 1,690 | -4,950 |
+| mbo | 3,397 | -4,495 | -1,048 | -18,166 | -6,717 | 2,997 | 943 | -5,234 |
+| pessimistic | 3,321 | -4,869 | -2,131 | -25,228 | -6,598 | 3,291 | 450 | -6,060 |
+
+Edge band width (max − min over the four lanes, scaled by the median |edge|): touch-maker 0.28, A-S 2.97.
+
+### 7.2 Mechanism: which gap is which
+
+`touch → γ=0` is the **spread choice**; `γ=0 → A-S` is the **inventory skew**. A two-arm comparison bundles them, and the bundled number is what gets reported as "A-S wins". Δ is A-S-side minus baseline-side.
+
+**Decomposed on edge.** Differencing equity between arms differences their drift too, and the arms hold deliberately different amounts of inventory — the skew arm exists to hold less. Scoring the mechanism on a drift-carrying metric would credit or blame the treatment for the stock's direction.
+
+| symbol | day | lane | Δedge spread | Δedge skew | Δinv sd spread | Δinv sd skew |
+|---|---|---|---:|---:|---:|---:|
+| GOOG | 2019-10-30 | naive | -87,501 | -33,109 | -2,975.7 | -2,866.4 |
+| GOOG | 2019-10-30 | optimistic | -94,358 | -41,777 | 4,556.3 | -3,131.1 |
+| GOOG | 2019-10-30 | mbo | -92,898 | -41,777 | 4,576.6 | -3,131.1 |
+| GOOG | 2019-10-30 | pessimistic | -91,909 | -40,255 | 4,525.2 | -3,134.7 |
+| GOOG | 2019-12-30 | naive | -77,359 | 9,002 | 6,240.3 | -13,736.0 |
+| GOOG | 2019-12-30 | optimistic | -88,954 | 3,761 | 13,628.1 | -14,575.7 |
+| GOOG | 2019-12-30 | mbo | -88,872 | 3,703 | 13,773.5 | -14,582.1 |
+| GOOG | 2019-12-30 | pessimistic | -86,073 | 3,721 | 13,871.1 | -14,580.5 |
+| GOOG | 2020-01-30 | naive | -125,295 | -359 | 819.8 | -6,942.2 |
+| GOOG | 2020-01-30 | optimistic | -124,754 | -6,655 | 7,197.2 | -6,853.4 |
+| GOOG | 2020-01-30 | mbo | -129,101 | -6,649 | 7,355.7 | -6,831.9 |
+| GOOG | 2020-01-30 | pessimistic | -125,967 | -6,585 | 7,369.7 | -6,831.9 |
+| MSFT | 2019-10-30 | naive | -1,934 | 346 | 29,313.2 | -42,217.7 |
+| MSFT | 2019-10-30 | optimistic | -4,091 | 659 | 11,795.7 | -17,397.8 |
+| MSFT | 2019-10-30 | mbo | -4,251 | 306 | 14,672.1 | -20,934.2 |
+| MSFT | 2019-10-30 | pessimistic | -4,622 | 28 | 13,076.4 | -19,532.1 |
+| MSFT | 2019-12-30 | naive | -811 | -2,387 | 25,068.5 | -27,140.6 |
+| MSFT | 2019-12-30 | optimistic | -3,987 | -8,187 | 3,812.5 | -7,238.6 |
+| MSFT | 2019-12-30 | mbo | -4,245 | -9,747 | -4,990.6 | -5,030.2 |
+| MSFT | 2019-12-30 | pessimistic | -4,868 | -10,837 | -3,848.6 | -2,161.1 |
+| MSFT | 2020-01-30 | naive | -3,004 | -675 | 215,155.2 | -297,912.2 |
+| MSFT | 2020-01-30 | optimistic | -4,190 | -456 | 65,959.7 | -85,914.3 |
+| MSFT | 2020-01-30 | mbo | -4,324 | -779 | 64,490.7 | -89,319.8 |
+| MSFT | 2020-01-30 | pessimistic | -4,512 | -628 | 54,665.2 | -84,188.2 |
+| STOR | 2019-10-30 | naive | -2,097 | 493 | 3,982.0 | -9,578.4 |
+| STOR | 2019-10-30 | optimistic | -6,268 | 1,645 | 9,543.1 | -12,126.0 |
+| STOR | 2019-10-30 | mbo | -6,376 | 1,680 | 9,033.3 | -12,018.6 |
+| STOR | 2019-10-30 | pessimistic | -6,485 | 1,446 | 8,865.4 | -12,260.7 |
+| STOR | 2019-12-30 | naive | -1,476 | -637 | -449.1 | -704.0 |
+| STOR | 2019-12-30 | optimistic | -5,471 | 1,256 | 238.1 | -1,378.2 |
+| STOR | 2019-12-30 | mbo | -5,589 | 1,275 | 47.7 | -1,249.8 |
+| STOR | 2019-12-30 | pessimistic | -6,013 | 1,136 | 854.7 | -1,556.4 |
+| STOR | 2020-01-30 | naive | -7,588 | 4,443 | 570.4 | -1,424.5 |
+| STOR | 2020-01-30 | optimistic | -7,540 | 3,371 | -323.3 | -364.5 |
+| STOR | 2020-01-30 | mbo | -7,892 | 3,447 | -314.7 | -606.4 |
+| STOR | 2020-01-30 | pessimistic | -8,190 | 2,738 | -486.1 | -783.3 |
+
+### 7.3 Day-level spread
+
+The spread across days **is** the result. No mean is taken: with this many symbol-days a mean invites a claim the data cannot support. Edge and equity side by side, because the difference between their ranges is the point — the day-to-day range of equity is mostly the day-to-day range of the stock.
+
+| symbol | lane | arm | days | min edge | max edge | min eq | max eq |
+|---|---|---|---:|---:|---:|---:|---:|
+| GOOG | naive | symmetric-touch | 3 | 139,804 | 173,617 | 5,573 | 197,098 |
+| GOOG | naive | as | 3 | 22,067 | 71,447 | -48,144 | 45,753 |
+| GOOG | optimistic | symmetric-touch | 3 | 148,966 | 172,843 | 470,329 | 2,611,597 |
+| GOOG | optimistic | as | 3 | 12,831 | 65,823 | -62,202 | 47,141 |
+| GOOG | mbo | symmetric-touch | 3 | 147,506 | 177,184 | 489,384 | 1,938,497 |
+| GOOG | mbo | as | 3 | 12,831 | 65,768 | -62,495 | 47,141 |
+| GOOG | pessimistic | symmetric-touch | 3 | 146,518 | 174,050 | 370,438 | 1,994,683 |
+| GOOG | pessimistic | as | 3 | 14,354 | 65,785 | -63,873 | 46,780 |
+| MSFT | naive | symmetric-touch | 3 | 4,172 | 6,680 | -17,339 | 43,150 |
+| MSFT | naive | as | 3 | 974 | 3,651 | -7,154 | -1,137 |
+| MSFT | optimistic | symmetric-touch | 3 | 3,531 | 4,749 | -11,554 | 40,560 |
+| MSFT | optimistic | as | 3 | -8,643 | 280 | -6,534 | -3,676 |
+| MSFT | mbo | symmetric-touch | 3 | 3,149 | 4,655 | -14,041 | 59,519 |
+| MSFT | mbo | as | 3 | -10,843 | -448 | -7,173 | -3,731 |
+| MSFT | pessimistic | symmetric-touch | 3 | 3,144 | 4,700 | -16,562 | 72,701 |
+| MSFT | pessimistic | as | 3 | -12,561 | -440 | -8,762 | -4,063 |
+| STOR | naive | symmetric-touch | 3 | 3,614 | 4,325 | -43,064 | 1,643 |
+| STOR | naive | as | 3 | 1,180 | 2,010 | -7,892 | -3,466 |
+| STOR | optimistic | symmetric-touch | 3 | 3,743 | 3,840 | -45,246 | -8,194 |
+| STOR | optimistic | as | 3 | -851 | -329 | -8,923 | -3,058 |
+| STOR | mbo | symmetric-touch | 3 | 3,268 | 3,397 | -53,364 | -15,605 |
+| STOR | mbo | as | 3 | -1,316 | -1,046 | -6,717 | -2,712 |
+| STOR | pessimistic | symmetric-touch | 3 | 2,934 | 3,321 | -72,989 | -12,123 |
+| STOR | pessimistic | as | 3 | -2,131 | -1,838 | -6,598 | -4,906 |
+
+### 7.4 The γ sweep
+
+γ is swept and plotted rather than chosen. Inventory is log-log because it spans decades; P&L is linear **with zero in range**, because P&L is read by its sign and an axis that crops zero makes a small positive number look large.
+
+![γ against inventory, log-log, one line per lane](../figures/paper/gamma-inventory.svg)
+
+*γ against inventory, log-log, one line per lane — GOOG · 2019-10-30. One symbol-day: the sweep is not pooled either.*
+
+![γ against equity per share, linear with zero in range](../figures/paper/gamma-pnl.svg)
+
+*γ against equity per share, linear with zero in range — GOOG · 2019-10-30. One symbol-day: the sweep is not pooled either.*
+
+### 7.5 The predictions, graded
+
+Committed in `docs/build-plan-9-12.md` §11.3 before the harness existed. Each verdict below is **computed** from the bar stated beside it, not written by hand — a report script that prints "kept" from a string literal has already happened once here.
+
+| # | claim | bar | cells meeting it | verdict |
+|---|---|---|---:|---|
+| P1 | A-S carries smaller inventory excursions | max\|q\| lower by ≥ 30% | 30/36 (83%) | **kept** |
+| P2 | the gain is inventory variance, **not** markout | 1s markout within 10% of baseline | 0/36 (0%) | **falsified** |
+| P3 | A-S loses money after fees | equity/share < 0 in ≥ 3 of 4 lanes | 8/9 symbol-days (89%) | **kept** |
+| P4 | A-S degrades faster with latency | fractional equity loss larger than baseline's | one latency only (0 ns) | **not evaluated** |
+| P5 | the band over *worlds* is wider than the band over *gradings* | closed-loop band > phase-6 band (0.40) | 5/9 (56%) | **kept** |
+| P6 | γ moves inventory a lot and P&L little | max\|q\| monotone ↓ in γ **and** P&L sweep band < lane band | 25/36 monotone, 13/36 flat | **mixed** |
+| P7 | if A-S and baseline are the same on every axis, *that* is the finding | P1 and P6 falsified while P2 holds | P1 kept, P2 falsified, P6 mixed | **not triggered** |
+
+> The phase-6 artifact (`docs/figures/touch-maker.json`) does not record which symbol-day it was produced on, so P5 compares band *widths* and not the same feed twice. The comparison is scaled (max − min over the median |equity|) precisely so that it survives a change of symbol, but a reader should treat P5 as the weakest row in this table until phase 6 is re-run on a feed this paper also evaluates.
+
+Across all seven: 3 kept, 1 falsified, 1 mixed, 1 not evaluated (P1 kept, P2 falsified, P3 kept, P4 not evaluated, P5 kept, P6 mixed, P7 not triggered). Falsified predictions stay on the page — the plan committed to grading them in print whichever way they went, and phase 10.8's falsified P1 is still the most useful thing in that section.
 
 <!-- generated:results:end -->
 

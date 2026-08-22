@@ -1,0 +1,25 @@
+{
+ "figures": [
+  {
+   "figure": "gamma-inventory.svg",
+   "artifact": "validation/as-experiment.json",
+   "artifact_sha256": "04a259224eff4704aa3b5500647f8e3e4cc4206ba3a5daa5986aa6a90647c7da",
+   "subject": "GOOG \u00b7 2019-10-30",
+   "command": "python3 python/analysis/gamma_sweep.py validation/as-experiment.json --symbol GOOG --day 2019-10-30 --svg-inventory docs/figures/paper/gamma-inventory.svg --svg-pnl docs/figures/paper/gamma-pnl.svg"
+  },
+  {
+   "figure": "gamma-pnl.svg",
+   "artifact": "validation/as-experiment.json",
+   "artifact_sha256": "04a259224eff4704aa3b5500647f8e3e4cc4206ba3a5daa5986aa6a90647c7da",
+   "subject": "GOOG \u00b7 2019-10-30",
+   "command": "python3 python/analysis/gamma_sweep.py validation/as-experiment.json --symbol GOOG --day 2019-10-30 --svg-inventory docs/figures/paper/gamma-inventory.svg --svg-pnl docs/figures/paper/gamma-pnl.svg"
+  },
+  {
+   "figure": "intensity-mbo.svg",
+   "artifact": "validation/intensity-GOOG.json",
+   "artifact_sha256": "8e94add0a25372384abfe25a57ea78fd9a0264314c08c443f7fa2ecc05be5bd4",
+   "subject": "GOOG \u00b7 2019-08-30 \u00b7 mbo lane",
+   "command": "python3 python/analysis/intensity_fit.py validation/intensity-GOOG.json --svg docs/figures/paper/intensity-mbo.svg --lane mbo"
+  }
+ ]
+}
