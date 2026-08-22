@@ -670,6 +670,104 @@ jobs:
           grep -q "must not share a day" /tmp/bad.txt
           echo "refused, as it must"
 
+      # Phase 11.4. The paper's results sections are GENERATED -- standing rule 7
+      # applied to the paper itself -- and this checks both halves of that claim.
+      #
+      # First half: the committed paper matches its committed artifacts. There
+      # are no evaluation artifacts yet, so what that currently asserts is the
+      # REFUSAL: the generator must have written "no results" rather than left a
+      # hole, and there must be no graded table on a page nothing backs.
+      - name: The paper matches its artifacts, and refuses to invent them
+        run: |
+          python3 scripts/paper-report.py --check
+          ./scripts/paper-figures.sh --check
+          python3 scripts/paper-html.py --check
+          grep -q "No results" docs/paper/as-on-itch.md
+          if grep -q "The predictions, graded" docs/paper/as-on-itch.md; then
+            echo "FAIL: a graded prediction table with no artifact behind it"
+            exit 1
+          fi
+
+      # Second half, and the one that will matter later: the generator has to
+      # WORK when the artifacts exist. Today --check only ever walks the refusal
+      # branch. The branch that emits the tables and grades seven pre-registered
+      # predictions would sit unrun until the day real data arrives -- which is
+      # the worst possible day to discover it throws on a key it never had.
+      #
+      # The artifacts here are the ones the two steps above generated from
+      # synthetic feeds. NO NUMBER IS ASSERTED: they are generated feeds, so any
+      # P&L is a property of the generator. What is asserted is that the paper
+      # gets a graded table, that the grader reached all seven predictions, that
+      # a run below the pre-registered scope SAYS so, and that the whole chain
+      # is idempotent.
+      - name: ...and generates them when the artifacts do exist
+        run: |
+          work=$(mktemp -d)
+          git ls-files -z | while IFS= read -r -d '' f; do
+            mkdir -p "$work/$(dirname "$f")"; cp "$f" "$work/$f"
+          done
+          mkdir -p "$work/validation"
+          cp /tmp/asexp.json "$work/validation/as-experiment.json"
+          cp /tmp/calib.json "$work/validation/intensity.json"
+          cd "$work"
+          ./scripts/paper-figures.sh
+          python3 scripts/paper-report.py
+          python3 scripts/paper-html.py
+          python3 - <<'PY'
+          import json, re, sys
+          md = open('docs/paper/as-on-itch.md').read()
+          block = md.split('<!-- generated:results:begin -->')[1] \
+                    .split('<!-- generated:results:end -->')[0]
+          assert '7.5 The predictions, graded' in block, 'no graded table'
+          got = re.findall(r'^\| (P[1-7]) \|', block, re.M)
+          assert got == [f'P{i}' for i in range(1, 8)], got
+          # One symbol and one evaluation day is below the plan's bar, and the
+          # paper has to say so rather than reading like a finished result.
+          assert 'Below the pre-registered scope' in block, \
+              'a one-symbol run did not announce that it is one symbol'
+          # Every verdict is computed; none may be the empty string.
+          verdicts = re.findall(r'\*\*(kept|falsified|mixed|not evaluated|'
+                                r'TRIGGERED|not triggered)\*\* \|', block)
+          assert len(verdicts) == 7, verdicts
+          cal = md.split('<!-- generated:calibration:begin -->')[1] \
+                  .split('<!-- generated:calibration:end -->')[0]
+          assert 'calibrated_per_lane' in cal, 'the per-lane decision vanished'
+          man = json.load(open('docs/figures/paper/manifest.json'))
+          assert len(man['figures']) == 3, man
+          for f in man['figures']:
+              assert f['artifact_sha256'] and f['subject'], f
+          h = open('docs/paper/as-on-itch.html').read()
+          assert h.count('<svg') == 3, 'figures did not inline into the page'
+          assert '<!--img' not in h, 'an image reference survived rendering'
+          print('paper generated:', len(got), 'predictions graded,',
+                len(man['figures']), 'figures with provenance')
+          PY
+          # Idempotent: running the generators again must change nothing.
+          python3 scripts/paper-report.py --check
+          ./scripts/paper-figures.sh --check
+          python3 scripts/paper-html.py --check
+
+      # A figure with no artifact behind it is a picture nothing can reproduce
+      # or refute, so paper-figures.sh treats it as a failure rather than a
+      # skip. That guard is the only thing standing between this paper and a
+      # stale chart outliving the data that made it.
+      - name: A figure whose artifact is gone is a failure, not a skip
+        run: |
+          work=$(mktemp -d)
+          git ls-files -z | while IFS= read -r -d '' f; do
+            mkdir -p "$work/$(dirname "$f")"; cp "$f" "$work/$f"
+          done
+          mkdir -p "$work/docs/figures/paper"
+          echo '<svg></svg>' > "$work/docs/figures/paper/gamma-pnl.svg"
+          cd "$work"
+          if ./scripts/paper-figures.sh --check > /tmp/orphan.txt 2>&1; then
+            cat /tmp/orphan.txt
+            echo "FAIL: an orphaned figure passed the check"
+            exit 1
+          fi
+          grep -q "a figure nothing can reproduce" /tmp/orphan.txt
+          echo "orphan caught, as it must be"
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.
