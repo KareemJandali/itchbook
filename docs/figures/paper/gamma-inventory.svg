@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 460" width="820" height="460" role="img" aria-label="Inventory against risk aversion">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="820" height="460"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Inventory against risk aversion</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">GOOG · 2019-10-30 · k = 200 · quote size 100</text>
+<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">both axes logarithmic; gridlines at decades</text>
+<line class="grid" x1="82" y1="393.5" x2="680" y2="393.5"/>
+<text class="muted" x="72" y="397.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1.0k</text>
+<line class="grid" x1="104.1" y1="92" x2="104.1" y2="394"/>
+<text class="muted" x="104.1" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">0</text>
+<line class="grid" x1="381.0" y1="92" x2="381.0" y2="394"/>
+<text class="muted" x="381.0" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">0</text>
+<line class="grid" x1="657.9" y1="92" x2="657.9" y2="394"/>
+<text class="muted" x="657.9" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">0</text>
+<text class="muted" x="381" y="438" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">γ (per dollar)</text>
+<text class="muted" transform="translate(20,243) rotate(-90)" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">time-weighted inventory σ (shares)</text>
+<polyline class="k1" stroke-width="2" stroke-linejoin="round" points="104.1,167.7 297.7,184.6 464.3,216.3 657.9,303.3"/>
+<circle class="s1" cx="104.1" cy="167.7" r="3.5"/>
+<circle class="s1" cx="297.7" cy="184.6" r="3.5"/>
+<circle class="s1" cx="464.3" cy="216.3" r="3.5"/>
+<circle class="s1" cx="657.9" cy="303.3" r="3.5"/>
+<polyline class="k2" stroke-width="2" stroke-linejoin="round" points="104.1,170.1 297.7,183.8 464.3,224.7 657.9,318.3"/>
+<circle class="s2" cx="104.1" cy="170.1" r="3.5"/>
+<circle class="s2" cx="297.7" cy="183.8" r="3.5"/>
+<circle class="s2" cx="464.3" cy="224.7" r="3.5"/>
+<circle class="s2" cx="657.9" cy="318.3" r="3.5"/>
+<polyline class="k3" stroke-width="2" stroke-linejoin="round" points="104.1,170.1 297.7,183.8 464.3,224.7 657.9,318.3"/>
+<circle class="s3" cx="104.1" cy="170.1" r="3.5"/>
+<circle class="s3" cx="297.7" cy="183.8" r="3.5"/>
+<circle class="s3" cx="464.3" cy="224.7" r="3.5"/>
+<circle class="s3" cx="657.9" cy="318.3" r="3.5"/>
+<polyline class="k4" stroke-width="2" stroke-linejoin="round" points="104.1,170.1 297.7,182.5 464.3,225.5 657.9,316.9"/>
+<circle class="s4" cx="104.1" cy="170.1" r="3.5"/>
+<circle class="s4" cx="297.7" cy="182.5" r="3.5"/>
+<circle class="s4" cx="464.3" cy="225.5" r="3.5"/>
+<circle class="s4" cx="657.9" cy="316.9" r="3.5"/>
+<circle class="s1" cx="692" cy="299.3" r="4"/>
+<text class="ink" x="702" y="303.3" font-family="system-ui,sans-serif" font-size="11.5">naive</text>
+<circle class="s4" cx="692" cy="314.3" r="4"/>
+<text class="ink" x="702" y="318.3" font-family="system-ui,sans-serif" font-size="11.5">pessimistic</text>
+<circle class="s3" cx="692" cy="329.3" r="4"/>
+<text class="ink" x="702" y="333.3" font-family="system-ui,sans-serif" font-size="11.5">mbo</text>
+<circle class="s2" cx="692" cy="344.3" r="4"/>
+<text class="ink" x="702" y="348.3" font-family="system-ui,sans-serif" font-size="11.5">optimistic</text>
+</svg>
