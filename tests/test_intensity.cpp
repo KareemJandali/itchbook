@@ -103,6 +103,49 @@ void test_a_fit_needs_at_least_two_points() {
     CHECK(!fit_intensity({}, 100).ok);
 }
 
+// TWO POINTS IS NOT A FIT, and the number it produces is the most flattering
+// one in the table. A line has two parameters, so two points determine it
+// exactly: the residuals are zero and R^2 comes back 1.0000. The first real
+// calibration did exactly this on AMD in three of four lanes -- the symbol
+// whose spread is pinned at one tick, so every fill lands at depth 0 or 1 and
+// there is no third depth to fit.
+void test_two_points_are_refused_because_they_cannot_fail() {
+    std::vector<DepthBucket> two = synth(1.0, 150.0, 100, 2);
+    const IntensityFit f = fit_intensity(two, 100);
+    CHECK(!f.ok);
+    CHECK_EQ(f.points, 2u);
+    CHECK_EQ(f.dof, 0u);
+
+    // Three points fit, and carry one degree of freedom the model had to
+    // survive rather than absorb.
+    const IntensityFit g = fit_intensity(synth(1.0, 150.0, 100, 3), 100);
+    CHECK(g.ok);
+    CHECK_EQ(g.dof, 1u);
+}
+
+// The section 6.2 touch test is circular unless the touch is left OUT of the
+// fit. lambda-hat is Poisson-weighted, so the touch bucket -- which holds most
+// of the fills on every symbol measured -- drags the line onto itself and its
+// own residual comes back near zero whatever the truth is. Fitting the deep
+// buckets alone and asking where the touch lands is the test that can fail.
+void test_the_touch_is_judged_against_a_fit_it_did_not_influence() {
+    std::vector<DepthBucket> b = synth(1.0, 150.0, 100, 10);
+    // A touch that fills at a THIRD of the exponential's rate, and carries a
+    // crushing weight while doing it: this is the shape the real data has.
+    b[0].fills /= 3;
+    b[0].fills *= 20;
+    b[0].exposure_seconds *= 60.0;
+    const IntensityFit f = fit_intensity(b, 100);
+    CHECK(f.ok);
+    CHECK(f.touch_excluded_ok);
+    // The deep-only fit must not have been moved by the touch...
+    CHECK(close_to(f.k_ex_touch, 150.0, 1.0));
+    // ...and against it, the starved touch sits BELOW the curve.
+    CHECK(f.touch_residual_ex < 0.0);
+    // The all-points fit, which the touch dominates, hides that.
+    CHECK(std::fabs(f.k_ex_touch - f.k) > 1.0);
+}
+
 // THE FINDING THE PLAN PREDICTS: the exponential fits badly at the touch,
 // because at delta = 0 queue position dominates and an order at the front of a
 // long queue does not fill at the rate an exponential extrapolated from deeper
@@ -353,6 +396,8 @@ int main() {
     test_empty_buckets_are_dropped_and_counted();
     test_the_fit_is_weighted_by_fill_count();
     test_a_fit_needs_at_least_two_points();
+    test_two_points_are_refused_because_they_cannot_fail();
+    test_the_touch_is_judged_against_a_fit_it_did_not_influence();
     test_the_touch_misfit_shows_up_as_a_residual();
     test_exposure_is_per_order_second();
     test_untradable_time_is_excluded();

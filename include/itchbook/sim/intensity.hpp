@@ -90,7 +90,31 @@ struct IntensityFit {
     double r_squared = 0.0;
     size_t points = 0;        // buckets that could be fitted
     size_t dropped_no_fills = 0;   // buckets with exposure but zero fills
+    // Residual degrees of freedom: points - 2, because a line has two
+    // parameters. This is reported because R^2 does not carry it, and a
+    // two-point "fit" of a two-parameter model returns R^2 = 1.0000 exactly --
+    // not a perfect description of the data, an interpolation through it with
+    // no residual left over to describe. The first real calibration produced
+    // exactly that on AMD, in three of four lanes, and it read as the best fit
+    // in the table.
+    size_t dof = 0;
     bool ok = false;
+
+    // The same fit with the TOUCH BUCKET EXCLUDED, which is the only way the
+    // section 6.2 misfit claim can be tested at all.
+    //
+    // lambda-hat is Poisson-weighted, so the weight of a bucket is its fill
+    // count -- and the touch bucket holds most of the fills on every symbol
+    // measured (55% on GOOG, 83% on MSFT, 98% on AMD). It therefore DRAGS THE
+    // LINE ONTO ITSELF, and its own residual comes back near zero by
+    // construction. Asking whether the touch sits off a curve it determined is
+    // circular. Fitting the deep buckets alone and then asking where the touch
+    // lands is not.
+    bool touch_excluded_ok = false;
+    double k_ex_touch = 0.0;
+    double A_ex_touch = 0.0;
+    size_t points_ex_touch = 0;
+    double touch_residual_ex = 0.0;   // observed ln lambda at delta=0, minus predicted
 };
 
 // The residual at each fitted point, which is where the touch misfit shows up.
@@ -224,7 +248,21 @@ inline IntensityFit fit_intensity(const std::vector<DepthBucket>& buckets,
         swxy += w * x * y;
     }
     out.points = pts.size();
-    if (pts.size() < 2) return out;
+    out.dof = pts.size() >= 2 ? pts.size() - 2 : 0;
+
+    // THREE POINTS, NOT TWO. A line has two parameters, so two points determine
+    // it exactly: the residuals are zero, R^2 comes out 1.0000, and the number
+    // that looks like the strongest fit in the table is the one with no
+    // evidence behind it. Requiring dof >= 1 means every fit reported here has
+    // at least one observation the model had to survive rather than absorb.
+    //
+    // This is not a formality on this data. On a symbol whose spread is pinned
+    // at one tick, EVERY fill lands at depth 0 or 1 -- delta is measured from
+    // the mid, so the identifiable range of delta IS the half-spread. A-S's
+    // fill-intensity curve is therefore not estimable on a tick-constrained
+    // name, and saying so is a result. Silently interpolating two points and
+    // calling it k is not.
+    if (pts.size() < 3) return out;
     const double denom = sw * swxx - swx * swx;
     if (std::fabs(denom) < 1e-30) return out;
     const double slope = (sw * swxy - swx * swy) / denom;
@@ -245,6 +283,31 @@ inline IntensityFit fit_intensity(const std::vector<DepthBucket>& buckets,
         }
     }
     out.r_squared = ss_tot > 0.0 ? 1.0 - ss_res / ss_tot : 0.0;
+
+    // ---- the same fit without the touch, so section 6.2 becomes testable ----
+    double ew = 0.0, ewx = 0.0, ewy = 0.0, ewxx = 0.0, ewxy = 0.0;
+    size_t en = 0;
+    const Point* touch = nullptr;
+    for (const Point& p : pts) {
+        if (p.depth == 0) { touch = &p; continue; }
+        ++en;
+        ew += p.w; ewx += p.w * p.x; ewy += p.w * p.y;
+        ewxx += p.w * p.x * p.x; ewxy += p.w * p.x * p.y;
+    }
+    out.points_ex_touch = en;
+    if (en >= 3) {
+        const double d2 = ew * ewxx - ewx * ewx;
+        if (std::fabs(d2) >= 1e-30) {
+            const double slope2 = (ew * ewxy - ewx * ewy) / d2;
+            const double inter2 = (ewy - slope2 * ewx) / ew;
+            out.k_ex_touch = -slope2;
+            out.A_ex_touch = std::exp(inter2);
+            out.touch_excluded_ok = true;
+            if (touch != nullptr) {
+                out.touch_residual_ex = touch->y - (inter2 + slope2 * touch->x);
+            }
+        }
+    }
     return out;
 }
 
