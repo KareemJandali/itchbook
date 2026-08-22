@@ -32,13 +32,28 @@ check=0
 [[ "${1:-}" == "--check" ]] && check=1
 
 FIG=docs/figures/paper
-# One calibration artifact per symbol now, so the figure is drawn from the
-# first one and the manifest records WHICH -- an intensity curve is per symbol
-# and a caption that does not say which symbol is a caption that is wrong.
-CALIB=$(ls validation/intensity*.json 2>/dev/null | head -1)
-CALIB=${CALIB:-validation/intensity.json}
-EXPT=validation/as-experiment.json
 LANE=mbo
+# One calibration artifact per symbol now, so the figure is drawn from one of
+# them and the manifest records WHICH -- an intensity curve is per symbol, and a
+# caption that does not say which symbol is a caption that is wrong.
+#
+# The choice is the first artifact whose lane ACTUALLY FITTED, not the first
+# alphabetically. Those differ: the first run of this picked intensity-AMD.json
+# because A sorts first, and AMD is the one symbol whose lambda(delta) is not
+# estimable -- its spread is pinned at one tick, so every fill lands at depth 0
+# or 1 and there is no curve to draw. The figure script died on the symbol whose
+# whole role in the paper is to have no figure.
+CALIB=""
+for c in validation/intensity*.json; do
+    [[ -f $c ]] || continue
+    if python3 - "$c" "$LANE" <<'PICK'
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("lanes", {}).get(sys.argv[2], {}).get("fit_ok") else 1)
+PICK
+    then CALIB=$c; break; fi
+done
+EXPT=validation/as-experiment.json
 
 fail=0
 tmp=$(mktemp -d)
@@ -99,7 +114,11 @@ if [[ -f "$CALIB" ]]; then
         bad "intensity_fit.py failed on $CALIB"
     fi
 else
-    orphan_guard "$CALIB" "intensity-$LANE.svg"
+    # Either no calibration is committed at all, or none of them has a usable
+    # fit in this lane. Both mean the same thing for a figure: there is no curve
+    # to draw, and a committed SVG would be one nothing can reproduce.
+    orphan_guard "${CALIB:-any validation/intensity*.json with a fitted $LANE lane}" \
+                 "intensity-$LANE.svg"
 fi
 
 printf '=== the gamma sweep (§7.4)\n'
