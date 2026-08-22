@@ -97,13 +97,25 @@ git ls-files -z | while IFS= read -r -d '' f; do
 done
 (
     cd "$tracked" || exit 1
-    for s in census-report phase9-report phase10-report phase10-8-report; do
+    for s in census-report phase9-report phase10-report phase10-8-report paper-report; do
         if ! python3 "scripts/$s.py" --check; then
             echo "  FAILED: $s --check against tracked files only"
             echo "  (it may pass in your working tree off an untracked artifact)"
             exit 1
         fi
     done
+    # The paper's figures and its HTML build are generated too, and they decay
+    # the same way. paper-figures.sh also refuses an ORPHAN -- a committed
+    # figure whose artifact is not committed -- which is the figure-shaped
+    # version of the bug that took CI red four times in phase 11.
+    if ! ./scripts/paper-figures.sh --check; then
+        echo "  FAILED: paper figures against tracked files only"
+        exit 1
+    fi
+    if ! python3 scripts/paper-html.py --check; then
+        echo "  FAILED: paper HTML is stale (run scripts/paper-html.py)"
+        exit 1
+    fi
 ) || fail=1
 
 step "the regression gate"
