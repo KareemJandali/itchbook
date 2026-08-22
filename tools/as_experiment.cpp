@@ -159,13 +159,26 @@ std::vector<double> parse_gammas(const std::string& csv) {
     return out;
 }
 
+// EDGE AND DRIFT SEPARATELY, because their sum is the number that misleads.
+//
+// equity = edge + drift - fees. Edge is half-spread captured against the mid at
+// fill time -- the market making. Drift is what the mid did to inventory the
+// strategy was still holding, including the residual position marked at the
+// last mid of the day. A maker that ends holding thousands of shares of a
+// $1,400 name reports a spectacular equity per share that is a statement about
+// which way the stock went, not about whether the strategy makes markets.
+//
+// The first real run showed exactly that: a touch maker on the widest-spread
+// symbol returning four times its own spread per share. The ledger has always
+// computed the split; this table used to print only the sum.
 void print_row(const ArmResult& r) {
-    std::printf("%-16s %8.4f %-12s %10" PRId64 " %8" PRIu64 " %10.1f %8" PRId64
-                " %10" PRId64 " %10" PRId64 "\n",
+    const int64_t sh = static_cast<int64_t>(r.lane.shares);
+    std::printf("%-16s %8.4f %-12s %10" PRId64 " %10" PRId64 " %10" PRId64
+                " %8" PRIu64 " %10.1f %8" PRId64 " %10" PRId64 "\n",
                 r.arm.c_str(), r.gamma, to_string(r.model), r.lane.equity_per_share,
+                sh > 0 ? r.lane.edge / sh : 0, sh > 0 ? r.lane.drift / sh : 0,
                 r.lane.fills, r.inv_stdev, r.inv_max_abs,
-                r.lane.markouts[1].markout_per_share,
-                r.lane.markouts[2].markout_per_share);
+                r.lane.markouts[1].markout_per_share);
 }
 
 bool write_json(const char* path, const std::vector<ArmResult>& rows,
@@ -193,6 +206,9 @@ bool write_json(const char* path, const std::vector<ArmResult>& rows,
             "%s\n    {\"arm\": \"%s\", \"gamma\": %.6f, \"model\": \"%s\","
             " \"k\": %.4f,"
             " \"equity_per_share_micros\": %" PRId64 ", \"equity_micros\": %" PRId64 ","
+            " \"edge_micros\": %" PRId64 ", \"drift_micros\": %" PRId64 ","
+            " \"edge_per_share_micros\": %" PRId64 ","
+            " \"drift_per_share_micros\": %" PRId64 ","
             " \"fills\": %" PRIu64 ", \"shares\": %" PRIu64 ","
             " \"fees_micros\": %" PRId64 ", \"residual_position\": %" PRId64 ","
             " \"inv_mean\": %.4f, \"inv_stdev\": %.4f, \"inv_max_abs\": %" PRId64 ","
@@ -201,7 +217,10 @@ bool write_json(const char* path, const std::vector<ArmResult>& rows,
             " \"markout_10s\": %" PRId64 ", \"unresolved_10s\": %" PRIu64 ","
             " \"suppressed_quotes\": %" PRIu64 ", \"trip\": \"%s\"}",
             first ? "" : ",", r.arm.c_str(), r.gamma, to_string(r.model), r.k,
-            r.lane.equity_per_share, r.lane.equity, r.lane.fills, r.lane.shares,
+            r.lane.equity_per_share, r.lane.equity, r.lane.edge, r.lane.drift,
+            r.lane.shares > 0 ? r.lane.edge / static_cast<int64_t>(r.lane.shares) : 0,
+            r.lane.shares > 0 ? r.lane.drift / static_cast<int64_t>(r.lane.shares) : 0,
+            r.lane.fills, r.lane.shares,
             r.lane.fees, r.lane.residual_position, r.inv_mean, r.inv_stdev,
             r.inv_max_abs, r.inv_max_long, r.inv_max_short,
             r.lane.markouts[0].markout_per_share, r.lane.markouts[1].markout_per_share,
@@ -288,8 +307,9 @@ int main(int argc, char** argv) {
                     "the section 6.1 per-lane conditioning is NOT in force here.\n\n",
                     base.k);
     }
-    std::printf("%-16s %8s %-12s %10s %8s %10s %8s %10s %10s\n", "arm", "gamma",
-                "model", "eq/share", "fills", "inv sd", "inv max", "mk 1s", "mk 10s");
+    std::printf("%-16s %8s %-12s %10s %10s %10s %8s %10s %8s %10s\n", "arm", "gamma",
+                "model", "eq/share", "edge/sh", "drift/sh", "fills", "inv sd",
+                "inv max", "mk 1s");
 
     std::vector<ArmResult> rows;
     try {
