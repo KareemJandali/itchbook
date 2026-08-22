@@ -315,8 +315,15 @@ def build_results(d, extra):
 
     # --- 7.1 headline, per symbol-day ------------------------------------
     L += ["### 7.1 Headline band, per symbol-day", "",
-          "Equity is µ$ per share after fees. `max |q|` is the largest absolute "
-          "position held. `mk 1s` is the 1-second markout per share — negative is "
+          "**Edge, not equity, is the market-making result.** `equity = edge + drift − "
+          "fees`: edge is half-spread captured against the mid at fill time, drift is "
+          "what the mid did to inventory, including the residual position marked at "
+          "the close. On the widest-spread symbol drift was 94% of equity and swung "
+          "from −$0.15 to +$2.45 per share across days while edge held between $0.14 "
+          "and $0.18 — one is a property of the strategy, the other of the stock. "
+          "Equity is still shown, because the pre-registered predictions were written "
+          "against it and are graded against it in §7.5.", "",
+          "All figures µ$ per share. `mk 1s` is the 1-second markout — negative is "
           "adverse selection. Never pooled: each table is one symbol-day.", ""]
     for sym in symbols:
         for day in eval_days:
@@ -331,20 +338,22 @@ def build_results(d, extra):
             if not rows:
                 continue
             L += [f"**{sym} · {day}**", "",
-                  "| lane | eq touch | eq γ=0 | eq A-S | max\\|q\\| touch | max\\|q\\| A-S | "
-                  "mk 1s touch | mk 1s A-S |",
-                  "|---|---:|---:|---:|---:|---:|---:|---:|"]
+                  "| lane | **edge touch** | **edge γ=0** | **edge A-S** | eq touch | "
+                  "eq A-S | max\\|q\\| touch | max\\|q\\| A-S | mk 1s A-S |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
             for m, t, z, s in rows:
-                L.append(f"| {m} | {t['equity_per_share_micros']:,} | "
-                         f"{z['equity_per_share_micros']:,} | "
+                L.append(f"| {m} | {t.get('edge_per_share_micros', 0):,} | "
+                         f"{z.get('edge_per_share_micros', 0):,} | "
+                         f"{s.get('edge_per_share_micros', 0):,} | "
+                         f"{t['equity_per_share_micros']:,} | "
                          f"{s['equity_per_share_micros']:,} | "
                          f"{t['inv_max_abs']:,} | {s['inv_max_abs']:,} | "
-                         f"{t['markout_1s']:,} | {s['markout_1s']:,} |")
-            band_t = rel_band([t["equity_per_share_micros"] for _, t, _, _ in rows])
-            band_s = rel_band([s["equity_per_share_micros"] for _, _, _, s in rows])
+                         f"{s['markout_1s']:,} |")
+            band_t = rel_band([t.get("edge_per_share_micros", 0) for _, t, _, _ in rows])
+            band_s = rel_band([s.get("edge_per_share_micros", 0) for _, _, _, s in rows])
             if band_t is not None and band_s is not None:
-                L += ["", f"Band width (max − min over the four lanes, scaled by the median "
-                          f"|equity|): touch-maker {band_t:.2f}, A-S {band_s:.2f}."]
+                L += ["", f"Edge band width (max − min over the four lanes, scaled by the "
+                          f"median |edge|): touch-maker {band_t:.2f}, A-S {band_s:.2f}."]
             L.append("")
 
     # --- 7.2 mechanism ----------------------------------------------------
@@ -352,7 +361,11 @@ def build_results(d, extra):
           "`touch → γ=0` is the **spread choice**; `γ=0 → A-S` is the **inventory "
           "skew**. A two-arm comparison bundles them, and the bundled number is what "
           "gets reported as \"A-S wins\". Δ is A-S-side minus baseline-side.", "",
-          "| symbol | day | lane | Δeq spread | Δeq skew | Δinv sd spread | Δinv sd skew |",
+          "**Decomposed on edge.** Differencing equity between arms differences their "
+          "drift too, and the arms hold deliberately different amounts of inventory — "
+          "the skew arm exists to hold less. Scoring the mechanism on a drift-carrying "
+          "metric would credit or blame the treatment for the stock's direction.", "",
+          "| symbol | day | lane | Δedge spread | Δedge skew | Δinv sd spread | Δinv sd skew |",
           "|---|---|---|---:|---:|---:|---:|"]
     for sym in symbols:
         for day in eval_days:
@@ -362,9 +375,10 @@ def build_results(d, extra):
                 s = pick(runs, sym, day, "as", m, gsel)
                 if not (t and z and s):
                     continue
-                L.append(f"| {sym} | {day} | {m} | "
-                         f"{z['equity_per_share_micros'] - t['equity_per_share_micros']:,} | "
-                         f"{s['equity_per_share_micros'] - z['equity_per_share_micros']:,} | "
+                et = t.get("edge_per_share_micros", 0)
+                ez = z.get("edge_per_share_micros", 0)
+                es = s.get("edge_per_share_micros", 0)
+                L.append(f"| {sym} | {day} | {m} | {ez - et:,} | {es - ez:,} | "
                          f"{z['inv_stdev'] - t['inv_stdev']:,.1f} | "
                          f"{s['inv_stdev'] - z['inv_stdev']:,.1f} |")
     L.append("")
@@ -372,19 +386,24 @@ def build_results(d, extra):
     # --- 7.3 day-level spread --------------------------------------------
     L += ["### 7.3 Day-level spread", "",
           "The spread across days **is** the result. No mean is taken: with this many "
-          "symbol-days a mean invites a claim the data cannot support.", "",
-          "| symbol | lane | arm | days | min eq/share | max eq/share |",
-          "|---|---|---|---:|---:|---:|"]
+          "symbol-days a mean invites a claim the data cannot support. Edge and equity "
+          "side by side, because the difference between their ranges is the point — "
+          "the day-to-day range of equity is mostly the day-to-day range of the "
+          "stock.", "",
+          "| symbol | lane | arm | days | min edge | max edge | min eq | max eq |",
+          "|---|---|---|---:|---:|---:|---:|---:|"]
     for sym in symbols:
         for m in MODELS:
             for arm, g in (("symmetric-touch", 0.0), ("as", gsel)):
-                vals = [r["equity_per_share_micros"] for r in runs
-                        if r["symbol"] == sym and r["model"] == m and r["arm"] == arm
-                        and not r["is_calibration_day"] and abs(r["gamma"] - g) < 1e-12]
-                if not vals:
+                sel = [r for r in runs
+                       if r["symbol"] == sym and r["model"] == m and r["arm"] == arm
+                       and not r["is_calibration_day"] and abs(r["gamma"] - g) < 1e-12]
+                if not sel:
                     continue
-                L.append(f"| {sym} | {m} | {arm} | {len(vals)} | {min(vals):,} | "
-                         f"{max(vals):,} |")
+                ed = [r.get("edge_per_share_micros", 0) for r in sel]
+                eq = [r["equity_per_share_micros"] for r in sel]
+                L.append(f"| {sym} | {m} | {arm} | {len(sel)} | {min(ed):,} | "
+                         f"{max(ed):,} | {min(eq):,} | {max(eq):,} |")
     L.append("")
 
     # --- 7.4 the sweep figures -------------------------------------------

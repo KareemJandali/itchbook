@@ -230,8 +230,14 @@ def main():
     # ---- the mechanism decomposition, which is the phase's actual question --
     print("\n=== mechanism: which gap is which ===")
     print("touch -> gamma0 is the SPREAD choice; gamma0 -> as is the SKEW.")
-    print(f"{'symbol':<8} {'day':<12} {'model':<12} {'d(eq) spread':>13} "
-          f"{'d(eq) skew':>11} {'d(inv sd) spread':>17} {'d(inv sd) skew':>15}")
+    print()
+    print("DECOMPOSED ON EDGE, NOT EQUITY. Equity carries drift -- inventory P&L and")
+    print("the residual position marked at the close -- which on the wide-spread name")
+    print("was 94% of it. Differencing equity between arms differences the drift too,")
+    print("so 'which gap is which' would be answered by which way the stock moved")
+    print("between two arms that held different amounts of it.")
+    print(f"{'symbol':<8} {'day':<12} {'model':<12} {'d(edge) spread':>15} "
+          f"{'d(edge) skew':>13} {'d(inv sd) spread':>17} {'d(inv sd) skew':>15}")
     for sym in result["symbols"]:
         for day in eval_days:
             for model in MODELS:
@@ -240,27 +246,33 @@ def main():
                 s = pick(sym, day, "as", model, best_gamma)
                 if not (t and z and s):
                     continue
+                et = t.get("edge_per_share_micros", 0)
+                ez = z.get("edge_per_share_micros", 0)
+                es = s.get("edge_per_share_micros", 0)
                 print(f"{sym:<8} {day:<12} {model:<12} "
-                      f"{z['equity_per_share_micros'] - t['equity_per_share_micros']:>13} "
-                      f"{s['equity_per_share_micros'] - z['equity_per_share_micros']:>11} "
+                      f"{ez - et:>15} {es - ez:>13} "
                       f"{z['inv_stdev'] - t['inv_stdev']:>17.1f} "
                       f"{s['inv_stdev'] - z['inv_stdev']:>15.1f}")
 
     # ---- day-level sensitivity, spread shown rather than averaged ----------
     print("\n=== day-level sensitivity (the spread IS the result; N is small) ===")
-    print(f"{'symbol':<8} {'model':<12} {'arm':<16} {'days':>5} {'min eq/share':>13} "
-          f"{'max eq/share':>13}")
+    print("Edge, for the same reason: the day-to-day range of EQUITY is mostly the")
+    print("day-to-day range of the stock.")
+    print(f"{'symbol':<8} {'model':<12} {'arm':<16} {'days':>5} {'min edge/sh':>12} "
+          f"{'max edge/sh':>12} {'min eq/sh':>12} {'max eq/sh':>12}")
     for sym in result["symbols"]:
         for model in MODELS:
             for arm, g in (("symmetric-touch", 0.0), ("as", best_gamma)):
-                vals = [r["equity_per_share_micros"] for r in runs
-                        if r["symbol"] == sym and r["model"] == model
-                        and r["arm"] == arm and not r["is_calibration_day"]
-                        and abs(r["gamma"] - g) < 1e-12]
-                if not vals:
+                sel = [r for r in runs
+                       if r["symbol"] == sym and r["model"] == model
+                       and r["arm"] == arm and not r["is_calibration_day"]
+                       and abs(r["gamma"] - g) < 1e-12]
+                if not sel:
                     continue
-                print(f"{sym:<8} {model:<12} {arm:<16} {len(vals):>5} "
-                      f"{min(vals):>13} {max(vals):>13}")
+                ed = [r.get("edge_per_share_micros", 0) for r in sel]
+                eq = [r["equity_per_share_micros"] for r in sel]
+                print(f"{sym:<8} {model:<12} {arm:<16} {len(sel):>5} "
+                      f"{min(ed):>12} {max(ed):>12} {min(eq):>12} {max(eq):>12}")
     print("\nNo mean, and no significance claimed. With this many symbol-days the")
     print("spread between them is the honest summary and a mean would invite a")
     print("claim the data cannot support.")
