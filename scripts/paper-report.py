@@ -643,6 +643,19 @@ def main():
         if e is not None and "runs" in e:
             extra[int(e.get("latency_ns", 0))] = e
 
+    # RUN ORDER. This script links whichever figures exist, so running it before
+    # scripts/paper-figures.sh writes a paper that omits figures which are about
+    # to appear -- a document that is not visibly wrong, merely different from
+    # what the same inputs produce next time. That happened once and --check
+    # caught it. Use scripts/paper-build.sh, which runs the three in order; this
+    # warning is the backstop for anyone who does not.
+    if load(EXPT) is not None and load(MANIFEST) is None:
+        print("WARNING: an evaluation artifact exists but no figure manifest does.\n"
+              "         Run scripts/paper-figures.sh FIRST -- this paper will omit\n"
+              "         figures that regenerating it later would include.\n"
+              "         scripts/paper-build.sh runs all three in the right order.",
+              file=sys.stderr)
+
     text = PAPER.read_text()
     cals = load_calibrations()
     out = splice(text, "calibration", build_calibration(cals))

@@ -111,6 +111,143 @@ figcaption { font-size: .85rem; color: var(--mute); margin-top: .5rem; font-styl
 <p>Across lanes k spans 171.3 to 225.4 — 1.32×. That factor is the §6.1 cost as a number: one fit reused across four lanes hands three of them a curve from a market they do not live in.</p>
 <p>51 bucket(s) had exposure and no fills and are excluded from the fit. Reported because dropping them silently flattens the curve — the deep buckets are exactly the ones that fail to fill.</p>
 <p>Across all 4 symbols and their lanes, k spans 11.9 to 483.9. A single scalar over that range is not a parameter.</p>
+<figure role="img" aria-label="Observed vs fitted fill intensity, mbo lane"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 430" width="780" height="430" role="img" aria-label="Fill intensity against depth, measured not assumed">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  /* Text drawn ON a filled mark, so it needs the surface colour, not ink. */
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  /* Stroke-only twins. A class that sets `fill` beats a fill="none"
+     presentation attribute in the cascade, which silently turns every
+     polyline into a filled blob. */
+  .k1 { fill: none; stroke: #2a78d6; }
+  .k2 { fill: none; stroke: #eb6834; }
+  .k3 { fill: none; stroke: #1baf7a; }
+  .k4 { fill: none; stroke: #eda100; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #c98500; stroke: #c98500; }
+    .k1 { stroke: #3987e5; }
+    .k2 { stroke: #d95926; }
+    .k3 { stroke: #199e70; }
+    .k4 { stroke: #c98500; }
+  }
+</style>
+<rect class="surface" width="780" height="430"/>
+<text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Fill intensity against depth, measured not assumed</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">mbo lane · A = 0.377 fills/order-second · k = 12 per dollar · weighted R² = 0.904 · 7,645 maker fills over 46,504 order-seconds</text>
+<text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">ln λ (fills per order-second) (axis excludes zero)</text>
+<line class="grid" x1="78" y1="368.0" x2="648" y2="368.0"/>
+<text class="muted" x="68" y="372.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">-4.831</text>
+<line class="grid" x1="78" y1="295.5" x2="648" y2="295.5"/>
+<text class="muted" x="68" y="299.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">-3.742</text>
+<line class="grid" x1="78" y1="223.0" x2="648" y2="223.0"/>
+<text class="muted" x="68" y="227.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">-2.654</text>
+<line class="grid" x1="78" y1="150.5" x2="648" y2="150.5"/>
+<text class="muted" x="68" y="154.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">-1.565</text>
+<line class="grid" x1="78" y1="78.0" x2="648" y2="78.0"/>
+<text class="muted" x="68" y="82.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">-0.476</text>
+<text class="muted" x="78.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">0</text>
+<text class="muted" x="100.8" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1</text>
+<text class="muted" x="123.6" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">2</text>
+<text class="muted" x="146.4" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">3</text>
+<text class="muted" x="169.2" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">4</text>
+<text class="muted" x="192.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">5</text>
+<text class="muted" x="214.8" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">6</text>
+<text class="muted" x="237.6" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">7</text>
+<text class="muted" x="260.4" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">8</text>
+<text class="muted" x="283.2" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">9</text>
+<text class="muted" x="306.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10</text>
+<text class="muted" x="328.8" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">11</text>
+<text class="muted" x="351.6" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">12</text>
+<text class="muted" x="374.4" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">13</text>
+<text class="muted" x="397.2" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">14</text>
+<text class="muted" x="420.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">15</text>
+<text class="muted" x="442.8" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">16</text>
+<text class="muted" x="465.6" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">17</text>
+<text class="muted" x="488.4" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">18</text>
+<text class="muted" x="511.2" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">19</text>
+<text class="muted" x="534.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">20</text>
+<text class="muted" x="556.8" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">21</text>
+<text class="muted" x="579.6" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">22</text>
+<text class="muted" x="602.4" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">23</text>
+<text class="muted" x="625.2" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">24</text>
+<text class="muted" x="648.0" y="388" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">25</text>
+<text class="muted" x="363" y="412" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">depth from mid (ticks)</text>
+<polyline class="k1" stroke-width="2" stroke-linejoin="round" points="78.0,106.1 100.8,115.1 123.6,144.7 146.4,157.6 169.2,165.7 192.0,169.7 214.8,178.3 237.6,188.0 260.4,214.0 283.2,203.6 306.0,213.1 328.8,204.1 351.6,192.2 374.4,180.1 397.2,201.3 420.0,196.4 442.8,244.6 465.6,213.4 488.4,239.6 511.2,244.6 534.0,247.0 556.8,311.1 579.6,240.2 602.4,222.9 625.2,276.9 648.0,339.9"/>
+<circle class="s1" cx="78.0" cy="106.1" r="4"/>
+<circle class="s1" cx="100.8" cy="115.1" r="4"/>
+<circle class="s1" cx="123.6" cy="144.7" r="4"/>
+<circle class="s1" cx="146.4" cy="157.6" r="4"/>
+<circle class="s1" cx="169.2" cy="165.7" r="4"/>
+<circle class="s1" cx="192.0" cy="169.7" r="4"/>
+<circle class="s1" cx="214.8" cy="178.3" r="4"/>
+<circle class="s1" cx="237.6" cy="188.0" r="4"/>
+<circle class="s1" cx="260.4" cy="214.0" r="4"/>
+<circle class="s1" cx="283.2" cy="203.6" r="4"/>
+<circle class="s1" cx="306.0" cy="213.1" r="4"/>
+<circle class="s1" cx="328.8" cy="204.1" r="4"/>
+<circle class="s1" cx="351.6" cy="192.2" r="4"/>
+<circle class="s1" cx="374.4" cy="180.1" r="4"/>
+<circle class="s1" cx="397.2" cy="201.3" r="4"/>
+<circle class="s1" cx="420.0" cy="196.4" r="4"/>
+<circle class="s1" cx="442.8" cy="244.6" r="4"/>
+<circle class="s1" cx="465.6" cy="213.4" r="4"/>
+<circle class="s1" cx="488.4" cy="239.6" r="4"/>
+<circle class="s1" cx="511.2" cy="244.6" r="4"/>
+<circle class="s1" cx="534.0" cy="247.0" r="4"/>
+<circle class="s1" cx="556.8" cy="311.1" r="4"/>
+<circle class="s1" cx="579.6" cy="240.2" r="4"/>
+<circle class="s1" cx="602.4" cy="222.9" r="4"/>
+<circle class="s1" cx="625.2" cy="276.9" r="4"/>
+<circle class="s1" cx="648.0" cy="339.9" r="4"/>
+<polyline class="k2" stroke-width="2" stroke-linejoin="round" points="78.0,111.2 100.8,119.4 123.6,127.6 146.4,135.8 169.2,144.0 192.0,152.2 214.8,160.4 237.6,168.5 260.4,176.7 283.2,184.9 306.0,193.1 328.8,201.3 351.6,209.5 374.4,217.7 397.2,225.9 420.0,234.1 442.8,242.3 465.6,250.5 488.4,258.6 511.2,266.8 534.0,275.0 556.8,283.2 579.6,291.4 602.4,299.6 625.2,307.8 648.0,316.0"/>
+<circle class="s2" cx="78.0" cy="111.2" r="4"/>
+<circle class="s2" cx="100.8" cy="119.4" r="4"/>
+<circle class="s2" cx="123.6" cy="127.6" r="4"/>
+<circle class="s2" cx="146.4" cy="135.8" r="4"/>
+<circle class="s2" cx="169.2" cy="144.0" r="4"/>
+<circle class="s2" cx="192.0" cy="152.2" r="4"/>
+<circle class="s2" cx="214.8" cy="160.4" r="4"/>
+<circle class="s2" cx="237.6" cy="168.5" r="4"/>
+<circle class="s2" cx="260.4" cy="176.7" r="4"/>
+<circle class="s2" cx="283.2" cy="184.9" r="4"/>
+<circle class="s2" cx="306.0" cy="193.1" r="4"/>
+<circle class="s2" cx="328.8" cy="201.3" r="4"/>
+<circle class="s2" cx="351.6" cy="209.5" r="4"/>
+<circle class="s2" cx="374.4" cy="217.7" r="4"/>
+<circle class="s2" cx="397.2" cy="225.9" r="4"/>
+<circle class="s2" cx="420.0" cy="234.1" r="4"/>
+<circle class="s2" cx="442.8" cy="242.3" r="4"/>
+<circle class="s2" cx="465.6" cy="250.5" r="4"/>
+<circle class="s2" cx="488.4" cy="258.6" r="4"/>
+<circle class="s2" cx="511.2" cy="266.8" r="4"/>
+<circle class="s2" cx="534.0" cy="275.0" r="4"/>
+<circle class="s2" cx="556.8" cy="283.2" r="4"/>
+<circle class="s2" cx="579.6" cy="291.4" r="4"/>
+<circle class="s2" cx="602.4" cy="299.6" r="4"/>
+<circle class="s2" cx="625.2" cy="307.8" r="4"/>
+<circle class="s2" cx="648.0" cy="316.0" r="4"/>
+<circle class="s2" cx="660" cy="312.0" r="4"/>
+<text class="ink" x="670" y="316.0" font-family="system-ui,sans-serif" font-size="11.5">fitted A·e^(−kδ)</text>
+<circle class="s1" cx="660" cy="335.9" r="4"/>
+<text class="ink" x="670" y="339.9" font-family="system-ui,sans-serif" font-size="11.5">observed</text>
+</svg><figcaption>Observed ln λ̂ per depth bucket against the fitted A·e^(−kδ), GOOG · 2019-08-30 · mbo lane. The touch bucket is the §6.2 misfit.</figcaption></figure>
 <h2>7. Experimental design</h2>
 <p><strong>Three arms</strong>, because two cannot answer the question:</p>
 <table><thead><tr><th class="">arm</th><th class="">what it is</th></tr></thead><tbody><tr><td class=""><code>symmetric-touch</code></td><td class="">quote the touch, both sides, ignore inventory — the naive baseline</td></tr><tr><td class=""><code>as-gamma0</code></td><td class="">A-S with the inventory skew <strong>off</strong>: same spread formula, same re-quote discipline, same size</td></tr><tr><td class=""><code>as</code></td><td class="">A-S proper, at each swept γ</td></tr></tbody></table>
@@ -339,10 +476,9 @@ figcaption { font-size: .85rem; color: var(--mute); margin-top: .5rem; font-styl
 <p>1. <strong>Data.</strong> At least three symbols across the liquidity spectrum (a large-cap, a mid-cap, an ETF) and at least three trading days, with the calibration day excluded from evaluation. 2. <strong>The outside reader.</strong> The plan requires §4 to be reviewed by someone who did not write it. That has not happened, and it is the section most likely to be wrong in a way its author cannot see. 3. <strong>Latency sensitivity</strong>, via the existing sweep, against the pre-registered prediction that A-S degrades faster than the baseline because it re-quotes more.</p>
 <p>Predictions for all of the above were committed <strong>before</strong> the harness was written; they are in <code>docs/build-plan-9-12.md</code> §11.3 and will be graded in print whether or not they survive.</p>
 <h2>10. Reproducing</h2>
-<pre><code>scripts/paper-figures.sh          # every figure, from committed JSON
-python3 scripts/paper-report.py   # every results table, from the same
-python3 scripts/paper-html.py     # the page, from this Markdown
+<pre><code>scripts/paper-build.sh            # figures, then tables, then the page
 scripts/paper-pdf.sh              # the PDF, from that page</code></pre>
+<p><code>paper-build.sh</code> runs three generators in an order that is load-bearing: figures first, because the tables link whichever figures exist; then the tables; then the rendered page, which inlines them. Run in the wrong order the document is not visibly wrong, merely different from what the same inputs produce next time — which is precisely what <code>--check</code> is for, and how the ordering was found.</p>
 <p>CI runs the first three with <code>--check</code>, so no number and no chart in this document can drift from the artifact that produced it. Three properties are enforced rather than intended:</p>
 <ul><li><strong>The results tables are generated, never typed.</strong> The block in §7 is written by <code>paper-report.py</code> between markers, and the seven verdicts in §7.5 are <em>computed</em> against bars transcribed once from the plan. An earlier report script in this repository printed "kept" from a string literal after the numbers had moved outside the predicted range; that is the failure this rules out by construction.</li><li><strong>A figure whose artifact is missing is an error, not a skip.</strong> If a chart is committed and the JSON behind it is not, <code>paper-figures.sh</code> fails. Provenance — artifact path, its SHA-256, the exact command — lives in <code>docs/figures/paper/manifest.json</code> next to the figures.</li><li><strong>The generator is exercised with data, in CI, on every push.</strong> The no-artifact path is what runs today, so CI also builds synthetic feeds, runs the full experiment through them, and asserts that the paper comes back with a graded table. A results generator first executed on the day the real data arrives is a results generator nobody has tested.</li></ul>
 <p>The PDF is a build output and is not committed: its bytes depend on a font cache, and a diff cannot referee that. Every <em>input</em> to it is committed and checked.</p>

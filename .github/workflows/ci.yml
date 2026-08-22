@@ -822,9 +822,7 @@ jobs:
       # hole, and there must be no graded table on a page nothing backs.
       - name: The paper matches its artifacts, and refuses to invent them
         run: |
-          python3 scripts/paper-report.py --check
-          ./scripts/paper-figures.sh --check
-          python3 scripts/paper-html.py --check
+          ./scripts/paper-build.sh --check
           grep -q "No results" docs/paper/as-on-itch.md
           if grep -q "The predictions, graded" docs/paper/as-on-itch.md; then
             echo "FAIL: a graded prediction table with no artifact behind it"
@@ -853,9 +851,10 @@ jobs:
           cp /tmp/asexp.json "$work/validation/as-experiment.json"
           cp /tmp/calib.json "$work/validation/intensity.json"
           cd "$work"
-          ./scripts/paper-figures.sh
-          python3 scripts/paper-report.py
-          python3 scripts/paper-html.py
+          # Through the one entry point, in the one correct order. Running the
+          # report before the figures writes a paper that omits figures about to
+          # appear, which --check then calls stale.
+          ./scripts/paper-build.sh
           python3 - <<'PY'
           import json, re, sys
           md = open('docs/paper/as-on-itch.md').read()
@@ -885,10 +884,8 @@ jobs:
           print('paper generated:', len(got), 'predictions graded,',
                 len(man['figures']), 'figures with provenance')
           PY
-          # Idempotent: running the generators again must change nothing.
-          python3 scripts/paper-report.py --check
-          ./scripts/paper-figures.sh --check
-          python3 scripts/paper-html.py --check
+          # Idempotent: running the build again must change nothing.
+          ./scripts/paper-build.sh --check
 
       # A figure with no artifact behind it is a picture nothing can reproduce
       # or refute, so paper-figures.sh treats it as a failure rather than a
