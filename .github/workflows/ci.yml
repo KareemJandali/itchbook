@@ -34,6 +34,58 @@ jobs:
       - name: Unit tests (C++)
         run: ctest --test-dir build-gcc --output-on-failure
 
+  # A fourth job, because two compilers on one platform is not two platforms.
+  #
+  # This exists because of a specific failure, and the failure is instructive
+  # about what the gcc job above can and cannot prove. On Linux x86-64 `size_t`
+  # and `uint64_t` are BOTH `unsigned long` -- the same type -- so
+  #
+  #     std::printf("%" PRIu64, some.size());
+  #
+  # is not merely accepted by gcc and clang, it is CORRECT there, and -Wformat
+  # has nothing to say. On macOS `uint64_t` is `unsigned long long` while
+  # `size_t` stays `unsigned long`; the same line is a -Werror=format build
+  # failure. tools/wire_to_book.cpp carried exactly that line from phase 10.6
+  # until it was found by running the local gate on a Mac -- through every
+  # green CI run in between, because no amount of Linux compilers can see it.
+  #
+  # Two compilers catch warnings that differ by front end. Two PLATFORMS catch
+  # assumptions that differ by data model, and a repository whose README says
+  # "C++20" rather than "C++20 on Linux" needs the second kind too.
+  #
+  # Build and unit tests only. The soaks, the analysis and the UDP work stay on
+  # Linux rather than being paid for twice; what is bought here is the front
+  # end over a different data model.
+  macos-build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: brew install ninja || true
+
+      - name: Configure (Debug + sanitizers)
+        run: cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-macos
+
+      - name: Unit tests (C++)
+        run: ctest --test-dir build-macos --output-on-failure
+
+      # The regression this job was added for, pinned so it cannot come back
+      # quietly. A size_t formatted with PRIu64 compiles clean on Linux and
+      # fails here, so the grep is a belt to the -Werror braces: it names the
+      # mistake rather than leaving the next person to decode a format warning.
+      - name: No size_t formatted as PRIu64
+        run: |
+          if grep -rn 'PRIu64[^;]*\.\(size\|books\|capacity\|length\)()' \
+               tools/ include/ tests/ 2>/dev/null | grep -v static_cast; then
+            echo "FAIL: a size_t is being formatted with PRIu64. Use %zu."
+            exit 1
+          fi
+          echo "no size_t/PRIu64 pairs"
+
   # A third job, because ThreadSanitizer and AddressSanitizer cannot share a
   # binary. Phase 10 is the first code here with two threads in it, and a
   # lock-free structure that has never been under a race detector is an

@@ -779,7 +779,11 @@ int run(const Options& opt) {
         std::printf("%-32s %14" PRIu64 "\n", "messages applied to books", applied);
         std::printf("%-32s %14zu\n", "peak ring occupancy",
                     static_cast<size_t>(shared.max_occupancy.load()));
-        std::printf("%-32s %14" PRIu64 "\n", "books built", books.books());
+        // %zu, not PRIu64: books() returns size_t. On Linux x86-64 those are
+        // the same type and -Wformat says nothing; on macOS uint64_t is
+        // `unsigned long long` and size_t is `unsigned long`, and this line was
+        // a -Werror=format build failure there for the whole of phase 10.
+        std::printf("%-32s %14zu\n", "books built", books.books());
 
         // The two kinds of loss, never added together. One is the ring
         // refusing work it cannot hold; the other is the kernel discarding
