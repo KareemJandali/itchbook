@@ -69,6 +69,7 @@ add_executable(book_replay tools/book_replay.cpp)
 # the sanitiser, not the book.
 add_executable(queue_sim tools/queue_sim.cpp)
 add_executable(queue_backtest tools/queue_backtest.cpp)
+add_executable(calibrate_intensity tools/calibrate_intensity.cpp)
 add_executable(latency_sweep tools/latency_sweep.cpp)
 add_executable(mold_wrap   tools/mold_wrap.cpp)
 add_executable(mold_replay tools/mold_replay.cpp)
@@ -102,6 +103,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
+          calibrate_intensity
           tsc_offset mold_replay_udp wire_to_book
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
   target_link_libraries(${t} PRIVATE itchbook)
@@ -111,7 +113,7 @@ endforeach()
 enable_testing()
 foreach(t test_parser test_book test_book_set test_live_orders test_spsc_ring test_reader_thread
           test_matcher test_fees test_queue test_ledger
-          test_sim test_kill_switch test_mold test_recover test_restart test_closed_loop test_as_maker)
+          test_sim test_kill_switch test_mold test_recover test_restart test_closed_loop test_as_maker test_intensity)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
   # tests include "tests/check.hpp"
