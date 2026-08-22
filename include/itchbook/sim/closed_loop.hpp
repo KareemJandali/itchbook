@@ -54,6 +54,7 @@
 #include "itchbook/itch/messages.hpp"
 #include "itchbook/risk/kill_switch.hpp"
 #include "itchbook/sim/backtest.hpp"
+#include "itchbook/sim/intensity.hpp"
 #include "itchbook/sim/inventory_strategy.hpp"
 
 namespace itchbook::sim {
@@ -83,9 +84,11 @@ class ClosedLoopBacktest {
 public:
     ClosedLoopBacktest(Strategy strategy, Model model, FeeSchedule fees,
                        LatencyModel latency = {}, RiskLimits risk = {},
-                       risk::KillSwitchConfig kill = {}, SessionClock clock = {})
+                       risk::KillSwitchConfig kill = {}, SessionClock clock = {},
+                       IntensityConfig intensity = {})
         : strategy_(strategy), model_(model), latency_(latency), risk_(risk),
-          clock_(clock), queue_(make_config(model)), ledger_(fees), kill_(kill) {}
+          clock_(clock), queue_(make_config(model)), ledger_(fees), kill_(kill),
+          intensity_(intensity) {}
 
     void on_message(char type, const uint8_t* p, uint16_t) {
         if (type == 'H') {
@@ -120,6 +123,7 @@ public:
             if (f.trigger == Trigger::Through) ++through_fills_;
             const Price4 mk = mid.ok() ? static_cast<Price4>(mid.two_mid / 2) : 0;
             kill_.on_fill(f.ts, ledger_.position(), ledger_.equity(mk), mk);
+            intensity_.on_fill(f, mid);
             // THE FEEDBACK PATH. Delivered here, before the strategy sees the
             // market below, so a fill on this message is known to the decision
             // this message provokes. Delivering it after would give the strategy
@@ -128,6 +132,10 @@ public:
             deliver(f);
         }
         markout_.observe(ts, mid);
+        // Exposure is integrated AFTER this message's fills are applied, so an
+        // order that just filled does not also accrue exposure for the interval
+        // in which it left. The queue model has already removed it.
+        intensity_.observe(ts, mid, queue_.entries(), tradable);
         if (mid.ok()) {
             kill_.observe(ts, ledger_.position(),
                           ledger_.equity(static_cast<Price4>(mid.two_mid / 2)),
@@ -212,6 +220,7 @@ public:
     const book::Book& book() const { return book_; }
     Mid last_mid() const { return last_good_mid_; }
     int64_t position() const { return tracker_.position(); }
+    const IntensityRecorder& intensity() const { return intensity_; }
     const Strategy& strategy() const { return strategy_; }
 
 private:
@@ -271,6 +280,10 @@ private:
                 f.liquidity = Liquidity::Removed;
                 ledger_.on_fill(f, mid);
                 markout_.on_fill(f, mid);
+                // Taker fills are NOT intensity observations: lambda(delta) is
+                // about a resting order being hit, and crossing the spread is a
+                // decision rather than an arrival. Counting them would put fills
+                // in the numerator that had no exposure in the denominator.
                 {
                     const Price4 mk = mid.ok() ? static_cast<Price4>(mid.two_mid / 2) : 0;
                     kill_.on_fill(f.ts, ledger_.position(), ledger_.equity(mk), mk);
@@ -292,6 +305,7 @@ private:
     Ledger ledger_;
     MarkoutEngine markout_;
     risk::KillSwitch kill_;
+    IntensityRecorder intensity_;
     PositionTracker tracker_;
     Ctx ctx_;
 

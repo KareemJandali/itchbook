@@ -542,7 +542,9 @@ include/itchbook/   public headers (this is a library, not an app)
 tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
                     queue_sim, queue_backtest, latency_sweep, restart_check,
                     mold_wrap, mold_replay, mold_damage,
-                    tsc_offset, mold_replay_udp, wire_to_book
+                    tsc_offset, mold_replay_udp, wire_to_book,
+                    calibrate_intensity — measures lambda(delta) from our own
+                    fills instead of assuming A and k
 python/
   make_sample.py       synthetic spec-shaped feed, so you can run without a download
   make_queue_feed.py   feed with real queue structure, halts and a moving price

@@ -1369,6 +1369,95 @@ queue-position-aware exposure.
    band means something cleaner — or calibrate once and state the conditioning.
    Decide in writing; do not leave it implicit.
 
+### 11.2 — what actually happened
+
+`include/itchbook/sim/intensity.hpp`, `tools/calibrate_intensity.cpp`,
+`python/analysis/intensity_fit.py`, `tests/test_intensity.cpp` (16 tests).
+
+**λ̂(δ) = fills(δ) / exposure(δ), and the denominator is the hard part.**
+Exposure is integrated per ORDER over time — two orders resting one second at
+the same depth is two order-seconds — because λ is the intensity for a *single*
+order. Dividing by order-seconds recovers λ rather than something proportional
+to how much we happened to be quoting.
+
+Four things are excluded, and each would bias k in a stated direction if it were
+not: time when the symbol is **not tradable** (an order resting through a halt
+is not being offered a fill), time when the **mid is unusable** (depth from a
+mid that does not exist is not a depth), **hidden** iceberg size (in no queue,
+cannot be hit), and dead entries. Each has its own test.
+
+**Depth is integrated, not assigned at placement.** The mid moves while an order
+rests, so one order migrates between buckets during its life. An estimator that
+bucketed by depth-at-arrival would attribute all of an order's exposure — and
+any fill — to a depth it left seconds earlier.
+
+**Taker fills are not intensity observations.** λ(δ) is about a resting order
+being hit; crossing the spread is a decision, not an arrival. Counting them
+would put fills in the numerator with no exposure behind them.
+
+**The fit is Poisson-weighted.** A bucket's fill count is a count, so
+var(ln λ̂) ≈ 1/fills and the natural weight is fills. Unweighted least squares
+would let a bucket holding three fills pull the slope as hard as one holding
+three thousand — and the sparse buckets are always the deep ones, so the bias
+has a direction. Buckets with exposure but **zero** fills cannot be logged, are
+excluded, and are **counted**: dropping them silently biases the curve flat,
+because the deep buckets are exactly the ones that fail to fill.
+
+k comes out **per dollar**, matching `AsConfig::k`, so the measured value drops
+straight into the strategy with no conversion anyone has to remember. Verified
+by fitting the same curve generated at two different tick sizes.
+
+**First measurement, on a generated feed** (`make_queue_feed`, 400k messages —
+so these are properties of the generator, not of a market):
+
+| model | A | k | R² | maker fills | order-seconds |
+|---|---:|---:|---:|---:|---:|
+| naive | 3371.6 | 38.1 | 0.532 | 5,757 | 2.4 |
+| optimistic | 2930.6 | 136.9 | 0.974 | 3,081 | 30.4 |
+| mbo | 2909.5 | 138.3 | 0.976 | 3,022 | 30.5 |
+| pessimistic | 2883.1 | 139.6 | 0.975 | 2,988 | 30.5 |
+
+Two things worth saying about that table. **Naive is an outlier and its own R²
+says so** — 0.53 against 0.97, off the back of 2.4 order-seconds of exposure,
+because a model that fills instantly leaves nothing resting to be exposed. The
+estimator flags its own unreliable case without being told to. And **the
+measured k ≈ 138 against the k = 200 derived from first principles in 11.1** —
+same order, from two independent routes, which is the closest thing to
+corroboration available before real data.
+
+**11.2.4, the conditioning decision, decided in writing: CALIBRATE PER LANE.**
+
+λ̂ is measured *through* a queue model, so A and k are properties of (this feed,
+this strategy, *that model*). The plan offered two options: re-calibrate per
+lane, or calibrate once and state the conditioning. Per lane, for a reason that
+follows from 11.0 rather than from taste — once the strategy sees its fills the
+four lanes are four different worlds with four different intent streams and four
+genuinely different exposure denominators. Calibrating once and running four
+would leave three lanes using a fill curve fitted in a world they do not live
+in, which is exactly the cross-contamination the closed-loop design was built to
+remove. `calibrate_intensity` therefore makes four passes over the feed and
+reports four curves, and the JSON records `calibrated_per_lane: true` so a
+reader never has to infer it.
+
+The cost is honest and worth stating: four passes instead of one, and the band
+now carries variation from two sources — different fills *and* different fitted
+parameters. That is the price of each world being internally consistent.
+
+**The touch misfit, which the plan predicted.** A-S assumes fill intensity
+depends only on depth. At δ = 0 it depends mostly on **queue position**, which
+the exponential has no way to express, so the touch bucket sits below the fitted
+curve. `test_the_touch_misfit_shows_up_as_a_residual` requires a synthetic
+queue-position effect to appear as a negative residual, and the tool names it in
+prose when it exceeds 0.3 log-units rather than leaving it in a column.
+`intensity_fit.py` draws observed against fitted rather than residuals alone —
+the gap is the residual, and showing what the model believed beside what
+happened is an argument where a residual plot is only a diagnostic.
+
+**Still open:** the real calibration. These numbers come from a generated feed;
+11.2.3 requires calibrating on 2019-12-30, freezing, and testing elsewhere, and
+that needs the day you have plus the days you do not. The tool and the artifact
+format are ready for it.
+
 ### 11.3 — Experimental design
 
 1. **Symbols:** ≥3 across the liquidity spectrum (MSFT plus a mid-cap plus an

@@ -579,6 +579,43 @@ jobs:
       - name: Avellaneda-Stoikov model and its units
         run: ./build/test_as_maker
 
+      # Phase 11.2. The estimator is checked by generating data from a known A
+      # and k and requiring them back; the recorder is checked one exclusion at
+      # a time, because each thing it refuses to count would bias k in a stated
+      # direction if it were counted.
+      - name: Fill-intensity estimator recovers a known curve
+        run: ./build/test_intensity
+
+      # ...and the calibration runs end to end and renders. No number is
+      # asserted: this feed is generated, and lambda(delta) measured on a
+      # synthetic book is a property of the generator. The real calibration is
+      # one trading day and is committed as an artifact.
+      - name: Intensity calibration runs and the figure renders
+        run: |
+          python3 python/make_queue_feed.py data/raw/calib.gz --messages 200000 \
+            --seed 7 --gap-ns 20000
+          ./build/calibrate_intensity data/raw/calib.gz --json /tmp/calib.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/calib.json'))
+          assert d['calibrated_per_lane'] is True
+          # Four separate runs, because once the strategy sees its fills the
+          # lanes are four different worlds with four different denominators.
+          assert set(d['lanes']) == {'naive', 'optimistic', 'mbo', 'pessimistic'}, d['lanes']
+          for name, lane in d['lanes'].items():
+              for key in ('fit_ok', 'A', 'k', 'r_squared', 'buckets_fitted',
+                          'buckets_no_fills', 'maker_fills',
+                          'exposure_order_seconds', 'buckets', 'residuals'):
+                  assert key in lane, (name, key)
+          fitted = [n for n, l in d['lanes'].items() if l['fit_ok']]
+          assert fitted, 'no lane produced a usable fit'
+          print('fitted lanes:', ', '.join(sorted(fitted)))
+          PY
+          python3 python/analysis/intensity_fit.py /tmp/calib.json \
+            --svg /tmp/intensity.svg --lane mbo
+          test -s /tmp/intensity.svg
+          grep -q '</svg>' /tmp/intensity.svg
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.
