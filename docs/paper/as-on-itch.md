@@ -189,6 +189,25 @@ stated: four passes instead of one, and a band that now carries variation from
 two sources — different fills *and* different fitted parameters — which is the
 price of each world being internally consistent.
 
+**And per symbol**, which was not obvious until the spreads were measured. On a
+single real session the mean touch spread ran from 1.0 ticks on a $31 name —
+pinned at one tick 99.2% of the session, behind a 3,600-share queue — to 60.7
+ticks on a $1,189 name with 50 shares at the touch. Those are 61× apart in
+spread and 62× apart in queue depth, in opposite directions. A fill-intensity
+curve fitted on one of them describes nothing about the other, so k is fitted
+once per symbol on the calibration day and frozen.
+
+Both dimensions were being silently collapsed until then. The experiment tool
+took `k` as a single scalar and applied it to every lane and every symbol, and
+its own banner printed *"assumed k"* — honest about what it was doing, but never
+connected to the calibrator, because until there was real data every synthetic
+symbol looked alike. k now reaches the experiment **from the committed
+calibration artifact and never from a flag typed by hand**: the driver refuses a
+symbol with no calibration, a calibration whose recorded day is a day being
+evaluated, and a lane whose intensity could not be fitted. Running with the
+placeholder is still possible for smoke tests, and stamps every artifact it
+produces `k_source: assumed-scalar`.
+
 ### 6.2 The touch misfit
 
 A-S assumes fill intensity depends only on depth. At δ = 0 it depends mostly on
@@ -201,14 +220,15 @@ about it.
 
 <!-- generated:calibration:begin -->
 
-> **Not measured.** `validation/intensity.json` is not committed, so no fitted A or k appears here. The calibration runs with:
+> **Not measured.** No `validation/intensity*.json` is committed, so no fitted A or k appears here. One artifact per symbol, because k is fitted per symbol:
 >
 > ```
 > build/calibrate_intensity data/sliced/SYM-DAY.gz \
->     --json validation/intensity.json
+>     --symbol SYM --day YYYY-MM-DD \
+>     --json validation/intensity-SYM.json
 > ```
 >
-> Until it does, §5's spread formula is being fed the **default** k rather than a measured one — the paper says so rather than printing a number it does not have, and §6.1's per-lane decision has nothing to be per-lane about yet.
+> Until they exist, §5's spread formula is being fed the **default** k rather than a measured one, §6.1's per-lane decision has nothing to be per-lane about, and the experiment driver refuses to run without `--allow-assumed-k`.
 
 <!-- generated:calibration:end -->
 
@@ -252,11 +272,15 @@ invites exactly the claim the data cannot support. Calibration and evaluation
 > - the **calibration day excluded** from evaluation — the harness exits
 >   non-zero rather than warning if they overlap
 > - four closed-loop lanes per arm per symbol-day (§4: a band over *worlds*)
+> - **a calibration artifact per symbol**, fitted on the calibration day. k is
+>   per symbol and per lane; the driver refuses to run without one unless
+>   `--allow-assumed-k` is passed, which stamps the output `assumed-scalar`.
 >
 > ```
 > bench/as-experiment.py --build build --out validation/as-experiment.json \
 >     --feed SYM:YYYY-MM-DD:data/sliced/SYM-DAY.gz [--feed ...] \
->     --calibration-day YYYY-MM-DD --k <the measured k, not the assumed one>
+>     --calibration SYM:validation/intensity-SYM.json [--calibration ...] \
+>     --calibration-day YYYY-MM-DD
 > ```
 >
 > **The seven predictions in `docs/build-plan-9-12.md` §11.3 are ungraded.**

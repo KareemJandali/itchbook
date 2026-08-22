@@ -32,7 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PAPER = ROOT / "docs" / "paper" / "as-on-itch.md"
-CALIB = ROOT / "validation" / "intensity.json"
+CALIB_GLOB = str(ROOT / "validation" / "intensity*.json")
 EXPT = ROOT / "validation" / "as-experiment.json"
 EXPT_GLOB = str(ROOT / "validation" / "as-experiment*.json")
 PHASE6 = ROOT / "docs" / "figures" / "touch-maker.json"
@@ -101,59 +101,91 @@ def load(path):
 
 # ---------------------------------------------------------------- calibration
 
-def build_calibration(d):
+def load_calibrations():
+    """Every committed calibration, keyed by the symbol the artifact names.
+
+    One file per symbol, because k is fitted per symbol: measured spreads on a
+    single real session ran from 1.0 ticks to 60.7, and a curve fitted on one
+    of those describes nothing about the other."""
+    out = {}
+    for path in sorted(glob.glob(CALIB_GLOB)):
+        d = load(path)
+        if d is None or "lanes" not in d:
+            continue
+        out[d.get("symbol", Path(path).stem)] = d
+    return out
+
+
+def build_calibration(cals):
     L = ["<!-- generated:calibration:begin -->", ""]
-    if d is None:
-        L += ["> **Not measured.** `validation/intensity.json` is not committed, so "
-              "no fitted A or k appears here. The calibration runs with:",
+    if not cals:
+        L += ["> **Not measured.** No `validation/intensity*.json` is committed, so no "
+              "fitted A or k appears here. One artifact per symbol, because k is fitted "
+              "per symbol:",
               ">",
               "> ```",
               "> build/calibrate_intensity data/sliced/SYM-DAY.gz \\",
-              ">     --json validation/intensity.json",
+              ">     --symbol SYM --day YYYY-MM-DD \\",
+              ">     --json validation/intensity-SYM.json",
               "> ```",
               ">",
-              "> Until it does, §5's spread formula is being fed the **default** k "
-              "rather than a measured one — the paper says so rather than printing "
-              "a number it does not have, and §6.1's per-lane decision has nothing "
-              "to be per-lane about yet.", "",
+              "> Until they exist, §5's spread formula is being fed the **default** k "
+              "rather than a measured one, §6.1's per-lane decision has nothing to be "
+              "per-lane about, and the experiment driver refuses to run without "
+              "`--allow-assumed-k`.", "",
               "<!-- generated:calibration:end -->"]
         return "\n".join(L)
 
-    lanes = d.get("lanes", {})
-    L += [f"Fitted per lane (`calibrated_per_lane`: "
-          f"`{str(d.get('calibrated_per_lane', False)).lower()}`), which is the §6.1 "
-          f"decision made visible in the artifact rather than in prose.", "",
-          "| lane | A | k (1/$) | R² | buckets fitted | buckets with exposure, no fills | "
-          "maker fills | exposure (order-seconds) |",
-          "|---|---:|---:|---:|---:|---:|---:|---:|"]
-    for m in MODELS:
-        c = lanes.get(m)
-        if c is None:
-            continue
-        if not c.get("fit_ok"):
-            L.append(f"| **{m}** | — | — | — | {c['buckets_fitted']} | "
-                     f"{c['buckets_no_fills']} | {c['maker_fills']:,} | "
-                     f"{c['exposure_order_seconds']:,.0f} |")
-            continue
-        L.append(f"| **{m}** | {c['A']:.4f} | {c['k']:.1f} | {c['r_squared']:.3f} | "
-                 f"{c['buckets_fitted']} | {c['buckets_no_fills']} | "
-                 f"{c['maker_fills']:,} | {c['exposure_order_seconds']:,.0f} |")
+    L += ["k is fitted **per symbol and per lane**, and both dimensions are "
+          "load-bearing. Per lane because λ̂ is estimated *through* a queue model and "
+          "is therefore conditional on it (§6.1). Per symbol because measured spreads "
+          "on a single session ran from 1.0 ticks to 60.7 — a curve fitted on one of "
+          "those describes nothing about the other.", ""]
 
-    fitted = {m: lanes[m] for m in MODELS if m in lanes and lanes[m].get("fit_ok")}
-    if fitted:
-        ks = {m: c["k"] for m, c in fitted.items()}
-        lo, hi = min(ks.values()), max(ks.values())
-        L += ["", f"k ranges from {lo:.1f} to {hi:.1f} across the four lanes — a spread of "
-                  f"{(hi / lo if lo else float('nan')):.2f}× on the parameter that sets the "
-                  f"spread. That spread is the §6.1 cost stated as a number: calibrating once "
-                  f"and evaluating four times would have handed three lanes a k that is wrong "
-                  f"by up to that factor."]
-        drops = sum(c["buckets_no_fills"] for c in fitted.values())
-        if drops:
-            L += ["", f"{drops} bucket(s) across the four lanes had exposure and no fills. "
-                      f"They cannot be logged and are excluded from the fit; they are "
-                      f"reported because dropping them silently flattens the curve — the deep "
-                      f"buckets are exactly the ones that fail to fill."]
+    for sym, d in cals.items():
+        lanes = d.get("lanes", {})
+        L += [f"**{sym}** · calibrated {d.get('day', 'day not recorded')} · "
+              f"`calibrated_per_lane`: "
+              f"`{str(d.get('calibrated_per_lane', False)).lower()}`", "",
+              "| lane | A | k (1/$) | R² | buckets fitted | exposure, no fills | "
+              "maker fills | exposure (order-seconds) |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|"]
+        for m in MODELS:
+            c = lanes.get(m)
+            if c is None:
+                continue
+            if not c.get("fit_ok"):
+                L.append(f"| **{m}** | — | — | — | {c['buckets_fitted']} | "
+                         f"{c['buckets_no_fills']} | {c['maker_fills']:,} | "
+                         f"{c['exposure_order_seconds']:,.0f} |")
+                continue
+            L.append(f"| **{m}** | {c['A']:.4f} | {c['k']:.1f} | {c['r_squared']:.3f} | "
+                     f"{c['buckets_fitted']} | {c['buckets_no_fills']} | "
+                     f"{c['maker_fills']:,} | {c['exposure_order_seconds']:,.0f} |")
+        fitted = [lanes[m] for m in MODELS if m in lanes and lanes[m].get("fit_ok")]
+        if fitted:
+            ks = [c["k"] for c in fitted]
+            lo, hi = min(ks), max(ks)
+            L += ["", f"Across lanes k spans {lo:.1f} to {hi:.1f}"
+                      f"{f' — {hi / lo:.2f}×' if lo else ''}. That factor is the §6.1 "
+                      f"cost as a number: one fit reused across four lanes hands three "
+                      f"of them a curve from a market they do not live in."]
+            drops = sum(c["buckets_no_fills"] for c in fitted)
+            if drops:
+                L += ["", f"{drops} bucket(s) had exposure and no fills and are "
+                          f"excluded from the fit. Reported because dropping them "
+                          f"silently flattens the curve — the deep buckets are exactly "
+                          f"the ones that fail to fill."]
+        L.append("")
+
+    allk = [c["k"] for d in cals.values() for c in d.get("lanes", {}).values()
+            if c.get("fit_ok")]
+    if len(cals) > 1 and allk:
+        L += [f"Across all {len(cals)} symbols and their lanes, k spans {min(allk):.1f} "
+              f"to {max(allk):.1f}. A single scalar over that range is not a parameter.",
+              ""]
+
+    lanes = next(iter(cals.values())).get("lanes", {})
 
     fig = FIGDIR / "intensity-mbo.svg"
     if fig.exists():
@@ -204,11 +236,15 @@ def no_results_block():
         "> - the **calibration day excluded** from evaluation — the harness exits",
         ">   non-zero rather than warning if they overlap",
         "> - four closed-loop lanes per arm per symbol-day (§4: a band over *worlds*)",
+        "> - **a calibration artifact per symbol**, fitted on the calibration day. k is",
+        ">   per symbol and per lane; the driver refuses to run without one unless",
+        ">   `--allow-assumed-k` is passed, which stamps the output `assumed-scalar`.",
         ">",
         "> ```",
         "> bench/as-experiment.py --build build --out validation/as-experiment.json \\",
         ">     --feed SYM:YYYY-MM-DD:data/sliced/SYM-DAY.gz [--feed ...] \\",
-        ">     --calibration-day YYYY-MM-DD --k <the measured k, not the assumed one>",
+        ">     --calibration SYM:validation/intensity-SYM.json [--calibration ...] \\",
+        ">     --calibration-day YYYY-MM-DD",
         "> ```",
         ">",
         "> **The seven predictions in `docs/build-plan-9-12.md` §11.3 are ungraded.**",
@@ -235,12 +271,40 @@ def build_results(d, extra):
 
     # --- scope, checked against the pre-registered bar --------------------
     ok_scope = len(symbols) >= MIN_SYMBOLS and len(eval_days) >= MIN_EVAL_DAYS
+    k_source = d.get("k_source", "assumed-scalar")
+    k_by_symbol = d.get("k_by_symbol", {})
     L += [f"{len(symbols)} symbol(s) — {', '.join(symbols)} — over "
           f"{len(eval_days)} evaluation day(s), with {d['calibration_day']} held out as "
-          f"the calibration day. k = {d['k_measured']:.1f}, quote size "
-          f"{d['quote_size']}, modelled latency {d['latency_ns']:,} ns. "
-          f"γ is swept over {', '.join(f'{g:g}' for g in gammas)}; the tables below "
-          f"fix γ = {gsel:g} and the sweep itself is the figure.", ""]
+          f"the calibration day. Quote size {d['quote_size']}, modelled latency "
+          f"{d['latency_ns']:,} ns. γ is swept over "
+          f"{', '.join(f'{g:g}' for g in gammas)}; the tables below fix γ = {gsel:g} "
+          f"and the sweep itself is the figure.", ""]
+
+    if k_source != "measured-per-lane":
+        L += [f"> **k was not measured for every symbol** (`k_source`: "
+              f"`{k_source}`). Where no calibration artifact was supplied the runs used "
+              f"the placeholder k = {d['k_measured']:g} in all four lanes, which means "
+              f"§6.1's per-lane conditioning is **not in force** for them and the "
+              f"corresponding rows below describe a strategy fed a fill curve from a "
+              f"market it does not live in. This is a smoke-run configuration, not a "
+              f"result.", ""]
+    if k_by_symbol:
+        L += ["k used, per symbol and lane — from the committed calibration artifacts, "
+              "never from a flag typed by hand:", "",
+              "| symbol | " + " | ".join(MODELS) + " | spread |",
+              "|---|" + "---:|" * (len(MODELS) + 1)]
+        for sym in symbols:
+            ks = k_by_symbol.get(sym)
+            if not ks:
+                L.append(f"| {sym} | " + " | ".join("assumed" for _ in MODELS) +
+                         f" | — |")
+                continue
+            vals = [ks[m] for m in MODELS if m in ks]
+            span = f"{max(vals) / min(vals):.2f}×" if vals and min(vals) else "—"
+            L.append(f"| {sym} | " +
+                     " | ".join(f"{ks[m]:.1f}" if m in ks else "—" for m in MODELS) +
+                     f" | {span} |")
+        L.append("")
     if not ok_scope:
         L += [f"> **Below the pre-registered scope.** The plan's done-list requires "
               f"≥ {MIN_SYMBOLS} symbols × ≥ {MIN_EVAL_DAYS} evaluation days; this "
@@ -561,7 +625,8 @@ def main():
             extra[int(e.get("latency_ns", 0))] = e
 
     text = PAPER.read_text()
-    out = splice(text, "calibration", build_calibration(load(CALIB)))
+    cals = load_calibrations()
+    out = splice(text, "calibration", build_calibration(cals))
     out = splice(out, "results", build_results(load(EXPT), extra))
 
     if a.check:

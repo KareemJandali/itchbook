@@ -681,10 +681,13 @@ jobs:
             --seed 11 --gap-ns 20000
           python3 python/make_queue_feed.py data/raw/d2.gz --messages 120000 \
             --seed 12 --gap-ns 20000
+          ./build/calibrate_intensity data/raw/d1.gz --symbol TEST --day 2019-12-30 \
+            --json /tmp/cal-TEST.json
           python3 bench/as-experiment.py --build build --out /tmp/asexp.json \
             --feed TEST:2019-12-30:data/raw/d1.gz \
             --feed TEST:2020-01-30:data/raw/d2.gz \
-            --calibration-day 2019-12-30 --k 138 --gammas 0.001,0.005,0.02,0.1
+            --calibration TEST:/tmp/cal-TEST.json \
+            --calibration-day 2019-12-30 --gammas 0.001,0.005,0.02,0.1
           python3 - <<'PY'
           import json
           d = json.load(open('/tmp/asexp.json'))
@@ -699,13 +702,101 @@ jobs:
               assert r['symbol'] and r['day'] and 'is_calibration_day' in r
           models = {r['model'] for r in d['runs']}
           assert models == {'naive', 'optimistic', 'mbo', 'pessimistic'}, models
-          print(len(d['runs']), 'runs across', len(d['symbols']), 'symbol(s)')
+          # k reached the experiment from the calibration artifact, per lane.
+          # It used to be one scalar for every lane and every symbol, which
+          # silently discarded the section 6.1 conditioning the paper claims.
+          assert d['k_source'] == 'measured-per-lane', d['k_source']
+          ks = d['k_by_symbol']['TEST']
+          assert set(ks) == {'naive', 'optimistic', 'mbo', 'pessimistic'}, ks
+          assert len(set(round(v, 6) for v in ks.values())) > 1, \
+              f'all four lanes got the same k: {ks}'
+          for r in d['runs']:
+              if r['arm'] == 'symmetric-touch':
+                  # A touch maker never evaluates the spread formula, so no
+                  # intensity curve enters the row. 0 is a statement, not a gap.
+                  assert r['k'] == 0, r
+              else:
+                  assert abs(r['k'] - ks[r['model']]) < 1e-6, r
+          assert d['calibration_artifacts']['TEST']['sha256']
+          print(len(d['runs']), 'runs across', len(d['symbols']), 'symbol(s);',
+                'k per lane:', {m: round(v, 1) for m, v in ks.items()})
           PY
           python3 python/analysis/gamma_sweep.py /tmp/asexp.json \
             --svg-inventory /tmp/g_inv.svg --svg-pnl /tmp/g_pnl.svg
           for f in /tmp/g_inv.svg /tmp/g_pnl.svg; do
             test -s "$f"; grep -q '</svg>' "$f"
           done
+
+      # k is per symbol AND per lane, and the driver refuses every way of
+      # quietly collapsing that. Each of these produced a silently-wrong
+      # experiment before the refusals existed: one k across four lanes throws
+      # away the section 6.1 conditioning the paper claims to perform, and one
+      # k across symbols is indefensible once you measure that spreads on a
+      # real session run from 1.0 ticks to 60.7.
+      - name: The driver refuses every way of collapsing k
+        run: |
+          ./build/calibrate_intensity data/raw/d1.gz --symbol TEST --day 2019-12-30 \
+            --json /tmp/cal-TEST.json
+          fail() { echo "FAIL: $1"; exit 1; }
+
+          # 1. No calibration at all, and no explicit opt-out.
+          if python3 bench/as-experiment.py --build build --out /tmp/k1.json \
+               --feed TEST:2019-12-30:data/raw/d1.gz \
+               --feed TEST:2020-01-30:data/raw/d2.gz \
+               --calibration-day 2019-12-30 --gammas 0.005 > /tmp/k1.txt 2>&1; then
+            cat /tmp/k1.txt; fail "ran with no calibration"
+          fi
+          grep -q "no calibration for TEST" /tmp/k1.txt
+
+          # 2. A calibration fitted on a day that is then evaluated.
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/cal-TEST.json')); d['day'] = '2020-01-30'
+          json.dump(d, open('/tmp/cal-wrongday.json', 'w'))"
+          if python3 bench/as-experiment.py --build build --out /tmp/k2.json \
+               --feed TEST:2019-12-30:data/raw/d1.gz \
+               --feed TEST:2020-01-30:data/raw/d2.gz \
+               --calibration TEST:/tmp/cal-wrongday.json \
+               --calibration-day 2019-12-30 --gammas 0.005 > /tmp/k2.txt 2>&1; then
+            cat /tmp/k2.txt; fail "accepted a calibration from an evaluation day"
+          fi
+          grep -q "calibrated on 2020-01-30" /tmp/k2.txt
+
+          # 3. A lane whose intensity could not be fitted. Borrowing another
+          #    lane's k here is the collapse, so it must not be silent.
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/cal-TEST.json')); d['lanes']['mbo']['fit_ok'] = False
+          json.dump(d, open('/tmp/cal-nofit.json', 'w'))"
+          if python3 bench/as-experiment.py --build build --out /tmp/k3.json \
+               --feed TEST:2019-12-30:data/raw/d1.gz \
+               --feed TEST:2020-01-30:data/raw/d2.gz \
+               --calibration TEST:/tmp/cal-nofit.json \
+               --calibration-day 2019-12-30 --gammas 0.005 > /tmp/k3.txt 2>&1; then
+            cat /tmp/k3.txt; fail "accepted a lane with no usable fit"
+          fi
+          grep -q "no usable fit for mbo" /tmp/k3.txt
+
+          # 4. The escape hatch works, and stamps what it did.
+          python3 bench/as-experiment.py --build build --out /tmp/k4.json \
+            --feed TEST:2019-12-30:data/raw/d1.gz \
+            --feed TEST:2020-01-30:data/raw/d2.gz \
+            --calibration-day 2019-12-30 --gammas 0.005 --k 138 --allow-assumed-k \
+            > /dev/null
+          python3 -c "
+          import json, sys
+          d = json.load(open('/tmp/k4.json'))
+          assert d['k_source'] == 'assumed-scalar', d['k_source']
+          assert all(r['k'] in (0.0, 138.0) for r in d['runs']), 'assumed k not applied'
+          print('escape hatch stamps itself:', d['k_source'])"
+
+          # 5. The tool itself rejects a partial lane set rather than filling in.
+          if ./build/as_experiment data/raw/d1.gz --symbol TEST --day 2019-12-30 \
+               --k-per-lane naive=90,mbo=200 --gammas 0.005 > /tmp/k5.txt 2>&1; then
+            cat /tmp/k5.txt; fail "accepted two lanes out of four"
+          fi
+          grep -q "all four lanes" /tmp/k5.txt
+          echo "every collapse refused"
 
       # ...and the split has to be enforced, not documented. Evaluating on the
       # calibration day is the most comfortable mistake available here.
