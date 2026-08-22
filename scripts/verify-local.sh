@@ -48,12 +48,41 @@ check() {
     return 1
 }
 
+# What the compiler SAYS IT IS, not what it is spelled. On macOS /usr/bin/g++
+# is a shim for Apple clang, so a script that runs `g++` and then `clang++` and
+# prints two headings has run one front end twice while claiming two. That is a
+# gate asserting coverage it does not have, which is the failure this whole
+# script exists to prevent -- so it reports the identity and says so.
+#
+# The identity comes from the PREDEFINED MACROS, not from `--version`. A first
+# attempt compared version strings and did not fire, because gcc prints the name
+# it was invoked as -- `clang++ (Ubuntu 13.3.0)` when reached through a symlink
+# -- so two spellings of one compiler produced two different strings. The macros
+# describe the front end itself and cannot be fooled by the path. Apple clang
+# also defines __GNUC__ (as 4.2.1), so __clang__ has to be tested first.
+cxx_ident=""
+identify() {
+    local out
+    out=$(echo | "$1" -E -dM -x c++ - 2>/dev/null) || { echo "unknown"; return; }
+    if grep -q '__clang__' <<<"$out"; then
+        printf 'clang %s' "$(grep '__clang_version__' <<<"$out" | cut -d'"' -f2)"
+    else
+        printf 'gcc %s.%s.%s' \
+            "$(awk '/define __GNUC__ /{print $3}' <<<"$out")" \
+            "$(awk '/define __GNUC_MINOR__ /{print $3}' <<<"$out")" \
+            "$(awk '/define __GNUC_PATCHLEVEL__ /{print $3}' <<<"$out")"
+    fi
+}
+
 build_with() {   # $1 dir, $2 cc, $3 cxx, $4 build type
     local dir=$1 cc=$2 cxx=$3 type=$4
     if ! command -v "$cxx" >/dev/null 2>&1; then
         echo "  SKIP: $cxx not installed"
+        cxx_ident=""
         return 0
     fi
+    cxx_ident=$(identify "$cxx")
+    echo "  $cxx is: $cxx_ident"
     CC=$cc CXX=$cxx cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE="$type" >/dev/null 2>&1
     local out
     out=$(cmake --build "$dir" -j 2>&1)
@@ -84,7 +113,18 @@ build_with build-verify-gcc gcc g++ Debug
 # box. Release still exercises the whole front end, which is what the second
 # compiler is here for.
 step "clang, Release (front end; sanitizer runtime not required)"
+gcc_ident=$cxx_ident
 build_with build-verify-clang clang clang++ Release
+
+if [[ -n $cxx_ident && $cxx_ident == "$gcc_ident" ]]; then
+    echo
+    echo "  NOTE: both invocations resolved to the SAME compiler:"
+    echo "    $cxx_ident"
+    echo "  This run exercised ONE front end, not two -- on macOS /usr/bin/g++"
+    echo "  is a shim for Apple clang. Two build types is still worth having,"
+    echo "  but real gcc is only covered by CI's gcc job. Install it with"
+    echo "  \`brew install gcc\` and re-run with CXX=g++-14 for the second front end."
+fi
 
 # A GENERATED DOCUMENT MUST BE REPRODUCIBLE FROM TRACKED FILES ALONE, and that
 # is checked in a copy containing only tracked files rather than in the working
