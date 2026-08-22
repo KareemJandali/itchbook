@@ -32,7 +32,11 @@ check=0
 [[ "${1:-}" == "--check" ]] && check=1
 
 FIG=docs/figures/paper
-CALIB=validation/intensity.json
+# One calibration artifact per symbol now, so the figure is drawn from the
+# first one and the manifest records WHICH -- an intensity curve is per symbol
+# and a caption that does not say which symbol is a caption that is wrong.
+CALIB=$(ls validation/intensity*.json 2>/dev/null | head -1)
+CALIB=${CALIB:-validation/intensity.json}
 EXPT=validation/as-experiment.json
 LANE=mbo
 
@@ -88,7 +92,9 @@ if [[ -f "$CALIB" ]]; then
     if python3 python/analysis/intensity_fit.py "$CALIB" \
             --svg "$tmp/out/intensity-$LANE.svg" --lane "$LANE" >/dev/null; then
         settle "intensity-$LANE.svg"
-        entries+=("intensity-$LANE.svg	$CALIB	$cmd	the $LANE lane")
+        csym=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('symbol','?'))" "$CALIB")
+        cday=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('day','?'))" "$CALIB")
+        entries+=("intensity-$LANE.svg	$CALIB	$cmd	$csym · $cday · $LANE lane")
     else
         bad "intensity_fit.py failed on $CALIB"
     fi

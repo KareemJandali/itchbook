@@ -120,10 +120,16 @@ void print_lane(const LaneCalibration& c) {
 }
 
 bool write_json(const char* path, const std::vector<LaneCalibration>& lanes,
-                const AsConfig& cfg, const char* feed) {
+                const AsConfig& cfg, const char* feed, const char* symbol,
+                const char* day) {
     std::FILE* f = std::fopen(path, "w");
     if (f == nullptr) return false;
     std::fprintf(f, "{\n  \"feed\": \"%s\",\n", feed);
+    // What this calibration IS, so a consumer can check it rather than trust a
+    // filename. The experiment driver refuses a calibration whose day is not
+    // the day it was told to hold out, and it cannot make that check unless the
+    // artifact says which day it came from.
+    std::fprintf(f, "  \"symbol\": \"%s\",\n  \"day\": \"%s\",\n", symbol, day);
     std::fprintf(f, "  \"strategy\": \"avellaneda-stoikov\",\n");
     std::fprintf(f, "  \"gamma\": %.6f,\n  \"k_assumed\": %.3f,\n", cfg.gamma, cfg.k);
     std::fprintf(f, "  \"quote_size\": %u,\n", cfg.quote_size);
@@ -178,6 +184,8 @@ bool write_json(const char* path, const std::vector<LaneCalibration>& lanes,
 int main(int argc, char** argv) {
     const char* feed = nullptr;
     const char* json = nullptr;
+    std::string symbol = "UNKNOWN";
+    std::string day = "UNKNOWN";
     AsConfig cfg;
     IntensityConfig icfg;
     for (int i = 1; i < argc; ++i) {
@@ -189,7 +197,9 @@ int main(int argc, char** argv) {
             }
             return argv[++i];
         };
-        if (a == "--gamma") cfg.gamma = std::atof(next("--gamma"));
+        if (a == "--symbol") symbol = next("--symbol");
+        else if (a == "--day") day = next("--day");
+        else if (a == "--gamma") cfg.gamma = std::atof(next("--gamma"));
         else if (a == "--k") cfg.k = std::atof(next("--k"));
         else if (a == "--quote-size")
             cfg.quote_size = static_cast<uint32_t>(std::atoi(next("--quote-size")));
@@ -199,8 +209,9 @@ int main(int argc, char** argv) {
         else if (feed == nullptr) feed = argv[i];
         else {
             std::fprintf(stderr,
-                "usage: %s <feed.gz> [--gamma X] [--k X] [--quote-size N]\n"
-                "       [--max-depth-ticks N] [--json out.json]\n", argv[0]);
+                "usage: %s <feed.gz> [--symbol S] [--day D] [--gamma X] [--k X]\n"
+                "       [--quote-size N] [--max-depth-ticks N] [--json out.json]\n",
+                argv[0]);
             return 2;
         }
     }
@@ -246,7 +257,8 @@ int main(int argc, char** argv) {
                 "strategy calibrated in one world and run in another is using a fill\n"
                 "curve from a market it does not live in.\n");
 
-    if (json != nullptr && !write_json(json, lanes, cfg, feed)) {
+    if (json != nullptr && !write_json(json, lanes, cfg, feed, symbol.c_str(),
+                                       day.c_str())) {
         std::fprintf(stderr, "error: cannot write %s\n", json);
         return 1;
     }
