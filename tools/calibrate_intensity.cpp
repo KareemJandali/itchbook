@@ -22,6 +22,7 @@
 // Usage:
 //   calibrate_intensity <feed.gz> [--gamma X] [--k X] [--quote-size N]
 //                       [--max-depth-ticks N] [--json out.json]
+#include <cmath>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -145,8 +146,18 @@ bool write_json(const char* path, const std::vector<LaneCalibration>& lanes,
                         "      \"r_squared\": %.6f,\n",
                      c.fit.A, c.fit.k, c.fit.r_squared);
         std::fprintf(f, "      \"buckets_fitted\": %zu,\n"
-                        "      \"buckets_no_fills\": %zu,\n",
-                     c.fit.points, c.fit.dropped_no_fills);
+                        "      \"buckets_no_fills\": %zu,\n"
+                        "      \"dof\": %zu,\n",
+                     c.fit.points, c.fit.dropped_no_fills, c.fit.dof);
+        // The touch judged against a fit it did not influence. Without this the
+        // section 6.2 claim cannot be tested: the touch bucket carries most of
+        // the Poisson weight and drags the line onto itself.
+        std::fprintf(f, "      \"touch_excluded_ok\": %s,\n"
+                        "      \"k_ex_touch\": %.4f,\n"
+                        "      \"points_ex_touch\": %zu,\n"
+                        "      \"touch_residual_ex\": %.6f,\n",
+                     c.fit.touch_excluded_ok ? "true" : "false", c.fit.k_ex_touch,
+                     c.fit.points_ex_touch, c.fit.touch_residual_ex);
         std::fprintf(f, "      \"maker_fills\": %" PRIu64 ",\n"
                         "      \"total_fills\": %" PRIu64 ",\n"
                         "      \"exposure_order_seconds\": %.3f,\n"
@@ -241,17 +252,37 @@ int main(int argc, char** argv) {
     for (const LaneCalibration& c : lanes) print_lane(c);
 
     std::printf("\n=== the four worlds, side by side ===\n");
-    std::printf("%-14s %10s %10s %8s %10s %12s\n", "model", "A", "k", "R^2",
-                "fills", "order-sec");
+    // dof is printed beside R^2 and not behind it. R^2 = 1.0000 on two points
+    // is not a perfect fit, it is a line through two dots, and reporting the
+    // one without the other is how that gets mistaken for the best row here.
+    std::printf("%-14s %10s %10s %8s %5s %8s %10s %12s\n", "model", "A", "k", "R^2",
+                "dof", "k noTch", "fills", "order-sec");
     for (const LaneCalibration& c : lanes) {
         if (!c.fit.ok) {
-            std::printf("%-14s %10s %10s %8s %10" PRIu64 " %12.1f\n", to_string(c.model),
-                        "-", "-", "-", c.maker_fills, c.total_exposure);
+            std::printf("%-14s %10s %10s %8s %5zu %8s %10" PRIu64 " %12.1f   "
+                        "NOT FITTED (%zu point(s))\n",
+                        to_string(c.model), "-", "-", "-", c.fit.dof, "-",
+                        c.maker_fills, c.total_exposure, c.fit.points);
             continue;
         }
-        std::printf("%-14s %10.4f %10.1f %8.4f %10" PRIu64 " %12.1f\n",
-                    to_string(c.model), c.fit.A, c.fit.k, c.fit.r_squared,
-                    c.maker_fills, c.total_exposure);
+        char notch[16];
+        if (c.fit.touch_excluded_ok) {
+            std::snprintf(notch, sizeof notch, "%.1f", c.fit.k_ex_touch);
+        } else {
+            std::snprintf(notch, sizeof notch, "%s", "-");
+        }
+        std::printf("%-14s %10.4f %10.1f %8.4f %5zu %8s %10" PRIu64 " %12.1f\n",
+                    to_string(c.model), c.fit.A, c.fit.k, c.fit.r_squared, c.fit.dof,
+                    notch, c.maker_fills, c.total_exposure);
+    }
+    // The section 6.2 test, run only where it is not circular.
+    for (const LaneCalibration& c : lanes) {
+        if (!c.fit.touch_excluded_ok) continue;
+        std::printf("\n%s: against a curve fitted WITHOUT it (%zu deep buckets, "
+                    "k = %.1f),\n  the touch sits %.2f in ln lambda %s it.\n",
+                    to_string(c.model), c.fit.points_ex_touch, c.fit.k_ex_touch,
+                    std::fabs(c.fit.touch_residual_ex),
+                    c.fit.touch_residual_ex < 0 ? "BELOW" : "ABOVE");
     }
     std::printf("\nThe spread between these k values is the cost of assuming one. A\n"
                 "strategy calibrated in one world and run in another is using a fill\n"
