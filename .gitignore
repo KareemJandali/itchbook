@@ -37,6 +37,3 @@ __pycache__/
 venv/
 build-verify-gcc/
 build-verify-clang/
-# Machine-specific: scripts/pinned-run.sh writes this on the measurement
-# host, and this container's copy describes hardware nobody will quote.
-validation/tsc-offset.json

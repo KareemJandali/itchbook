@@ -72,11 +72,39 @@ build_with build-verify-gcc gcc g++ Debug
 step "clang, Release (front end; sanitizer runtime not required)"
 build_with build-verify-clang clang clang++ Release
 
-step "generated documents still match their artifacts"
-check python3 scripts/census-report.py --check
-check python3 scripts/phase9-report.py --check
-check python3 scripts/phase10-report.py --check
-check python3 scripts/phase10-8-report.py --check
+# A GENERATED DOCUMENT MUST BE REPRODUCIBLE FROM TRACKED FILES ALONE, and that
+# is checked in a copy containing only tracked files rather than in the working
+# tree.
+#
+# Running the --check scripts here would pass on a document backed by a file
+# that is untracked or ignored, because the file is sitting right there. That is
+# not hypothetical: docs/phase10-results.md was made to read
+# validation/tsc-offset.json, which was then gitignored as machine-specific. The
+# check passed locally four times running and CI failed every one of them,
+# because CI had no such file. Standing rule 7 says numbers reach a document
+# from committed artifacts; an artifact nobody commits cannot back a committed
+# document.
+#
+# `git ls-files` is the right set rather than HEAD: it is what a commit would
+# contain, including edits not yet committed, so this tests what pushing would
+# actually produce.
+step "generated documents reproduce from TRACKED FILES ONLY"
+tracked=$(mktemp -d)
+trap 'rm -rf "$tracked"' EXIT
+git ls-files -z | while IFS= read -r -d '' f; do
+    mkdir -p "$tracked/$(dirname "$f")"
+    cp "$f" "$tracked/$f"
+done
+(
+    cd "$tracked" || exit 1
+    for s in census-report phase9-report phase10-report phase10-8-report; do
+        if ! python3 "scripts/$s.py" --check; then
+            echo "  FAILED: $s --check against tracked files only"
+            echo "  (it may pass in your working tree off an untracked artifact)"
+            exit 1
+        fi
+    done
+) || fail=1
 
 step "the regression gate"
 check ./scripts/regression-gate.sh >/dev/null
