@@ -267,9 +267,19 @@ inline AsQuote as_quote(const AsConfig& cfg, double mid, double q_units, double 
                         double sigma2) {
     AsQuote out;
     out.reservation = mid - q_units * cfg.gamma * sigma2 * tau;
-    const double total = cfg.gamma * sigma2 * tau +
-                         (2.0 / cfg.gamma) * std::log1p(cfg.gamma / cfg.k);
-    out.half_spread = total / 2.0;
+    // gamma = 0 is not a degenerate input, it is the CONTROL: no inventory
+    // skew, and a spread set purely by the fill intensity. It is how the
+    // experiment isolates inventory-awareness from the choice of spread, which
+    // a touch-maker comparison confounds.
+    //
+    // The formula is 0/0 there and the limit is finite: as gamma -> 0,
+    // (2/gamma)*ln(1 + gamma/k) -> (2/gamma)*(gamma/k) = 2/k. Taking the limit
+    // rather than refusing the input keeps the control inside the same code
+    // path as the treatment, which is the only way the two are comparable.
+    const double intensity = cfg.gamma > 1e-12
+                                 ? (2.0 / cfg.gamma) * std::log1p(cfg.gamma / cfg.k)
+                                 : 2.0 / cfg.k;
+    out.half_spread = (cfg.gamma * sigma2 * tau + intensity) / 2.0;
     return out;
 }
 

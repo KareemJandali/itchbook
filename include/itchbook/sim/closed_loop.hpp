@@ -55,6 +55,7 @@
 #include "itchbook/risk/kill_switch.hpp"
 #include "itchbook/sim/backtest.hpp"
 #include "itchbook/sim/intensity.hpp"
+#include "itchbook/sim/inventory_strategies.hpp"
 #include "itchbook/sim/inventory_strategy.hpp"
 
 namespace itchbook::sim {
@@ -136,6 +137,7 @@ public:
         // order that just filled does not also accrue exposure for the interval
         // in which it left. The queue model has already removed it.
         intensity_.observe(ts, mid, queue_.entries(), tradable);
+        inventory_.observe(ts, tracker_.position());
         if (mid.ok()) {
             kill_.observe(ts, ledger_.position(),
                           ledger_.equity(static_cast<Price4>(mid.two_mid / 2)),
@@ -221,6 +223,7 @@ public:
     Mid last_mid() const { return last_good_mid_; }
     int64_t position() const { return tracker_.position(); }
     const IntensityRecorder& intensity() const { return intensity_; }
+    const InventoryPath& inventory() const { return inventory_; }
     const Strategy& strategy() const { return strategy_; }
 
 private:
@@ -306,6 +309,7 @@ private:
     MarkoutEngine markout_;
     risk::KillSwitch kill_;
     IntensityRecorder intensity_;
+    InventoryPath inventory_;
     PositionTracker tracker_;
     Ctx ctx_;
 

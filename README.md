@@ -545,6 +545,8 @@ tools/              itch_dump, itch_census, itch_slice, book_replay, book_bench,
                     tsc_offset, mold_replay_udp, wire_to_book,
                     calibrate_intensity — measures lambda(delta) from our own
                     fills instead of assuming A and k
+                    as_experiment — one symbol-day, three arms (naive maker,
+                    A-S with the skew off, A-S), four fill models
 python/
   make_sample.py       synthetic spec-shaped feed, so you can run without a download
   make_queue_feed.py   feed with real queue structure, halts and a moving price

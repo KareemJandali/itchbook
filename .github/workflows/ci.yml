@@ -616,6 +616,60 @@ jobs:
           test -s /tmp/intensity.svg
           grep -q '</svg>' /tmp/intensity.svg
 
+      # Phase 11.3. The experiment harness end to end: three arms x four lanes x
+      # a gamma sweep, over two generated "days", with the calibration day
+      # excluded from evaluation. No number is asserted -- these feeds are
+      # generated, so any P&L is a property of the generator. What IS asserted
+      # is the experimental design: three arms present, calibration and
+      # evaluation never sharing a day, per-symbol rows preserved, and both
+      # sweep figures rendering.
+      - name: A-S experiment harness, three arms and the gamma sweep
+        run: |
+          python3 python/make_queue_feed.py data/raw/d1.gz --messages 120000 \
+            --seed 11 --gap-ns 20000
+          python3 python/make_queue_feed.py data/raw/d2.gz --messages 120000 \
+            --seed 12 --gap-ns 20000
+          python3 bench/as-experiment.py --build build --out /tmp/asexp.json \
+            --feed TEST:2019-12-30:data/raw/d1.gz \
+            --feed TEST:2020-01-30:data/raw/d2.gz \
+            --calibration-day 2019-12-30 --k 138 --gammas 0.001,0.005,0.02,0.1
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/asexp.json'))
+          arms = {r['arm'] for r in d['runs']}
+          assert arms == {'symmetric-touch', 'as-gamma0', 'as'}, arms
+          # The control arm is the whole reason this is a three-way comparison.
+          assert 'as-gamma0' in arms, 'the gamma=0 control is missing'
+          assert d['calibration_day'] not in d['evaluation_days'], \
+              'calibration and evaluation share a day'
+          # Rows keep their symbol and day: no pooling.
+          for r in d['runs']:
+              assert r['symbol'] and r['day'] and 'is_calibration_day' in r
+          models = {r['model'] for r in d['runs']}
+          assert models == {'naive', 'optimistic', 'mbo', 'pessimistic'}, models
+          print(len(d['runs']), 'runs across', len(d['symbols']), 'symbol(s)')
+          PY
+          python3 python/analysis/gamma_sweep.py /tmp/asexp.json \
+            --svg-inventory /tmp/g_inv.svg --svg-pnl /tmp/g_pnl.svg
+          for f in /tmp/g_inv.svg /tmp/g_pnl.svg; do
+            test -s "$f"; grep -q '</svg>' "$f"
+          done
+
+      # ...and the split has to be enforced, not documented. Evaluating on the
+      # calibration day is the most comfortable mistake available here.
+      - name: Calibration and evaluation must not share a day
+        run: |
+          if python3 bench/as-experiment.py --build build --out /tmp/bad.json \
+               --feed TEST:2019-12-30:data/raw/d1.gz \
+               --calibration-day 2019-12-30 --k 138 --gammas 0.005 \
+               > /tmp/bad.txt 2>&1; then
+            cat /tmp/bad.txt
+            echo "FAIL: it evaluated on the day it calibrated on"
+            exit 1
+          fi
+          grep -q "must not share a day" /tmp/bad.txt
+          echo "refused, as it must"
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.

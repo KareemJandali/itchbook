@@ -1527,6 +1527,72 @@ latency sensitivity — then the closed-loop machinery is not doing what 11.0
 claims and the finding is that inventory-aware quoting does not matter at this
 scale. That is a publishable result and it must not be quietly reframed.
 
+### 11.3 — what actually happened (the harness; the data is still missing)
+
+`tools/as_experiment.cpp`, `bench/as-experiment.py`,
+`python/analysis/gamma_sweep.py`, `include/itchbook/sim/inventory_strategies.hpp`.
+The predictions above were committed before any of it existed.
+
+**THREE ARMS, BECAUSE TWO CANNOT ANSWER THE QUESTION.** The plan names one
+baseline — phase 6's symmetric touch-maker — and comparing A-S against it alone
+controls for almost nothing: the two differ in inventory awareness *and* in
+where they quote *and* in how often they re-quote. So there is a third arm:
+**A-S with γ = 0**, which is the same code, the same spread formula, the same
+re-quote discipline and the same quote size, with the inventory skew turned off
+and nothing else changed.
+
+`as_quote` handles γ = 0 by taking the limit rather than refusing the input —
+`(2/γ)·ln(1 + γ/k) → 2/k` — so the control stays inside the same code path as
+the treatment, which is the only way the two are comparable.
+
+The decomposition that buys is the point:
+
+> **touch → γ=0 is the SPREAD choice. γ=0 → A-S is the SKEW.**
+
+On a generated feed (so: a property of the generator, not a market), the mbo
+lane at γ = 0.005 gave equity per share −18,401 → +3,210 → +8,810 across the
+three arms, with inventory σ 12,082 → **72,983** → **220.6**. The spread choice
+alone made inventory *worse*; the skew is what fixed it, cutting σ by 331×. A
+two-arm comparison would have shown "A-S has better inventory" and attributed
+the whole thing to inventory awareness. With the measured k = 138 instead of the
+assumed 200 the P&L signs move, and the skew *costs* about 7,000 µ$/share while
+removing ~28,000 shares of inventory σ — a risk/return trade rather than a free
+lunch, which is exactly the mechanism the paper has to describe.
+
+**Per symbol-day, never pooled.** The C++ tool does one symbol-day and records
+which. The Python driver keeps every row and emits three tables — evaluation
+days only, the mechanism decomposition, and a day-level sensitivity table that
+shows the **spread** across days rather than a mean. No mean anywhere: with a
+handful of symbol-days there is no significance to claim, and an average invites
+exactly the claim the data cannot support.
+
+**Calibration and evaluation cannot share a day, and it is enforced rather than
+documented.** `--calibration-day` is excluded from the evaluation tables, and a
+run whose every feed is on the calibration day **exits non-zero** rather than
+warning. CI checks that refusal, because evaluating on the day you fitted k on
+is the most comfortable mistake available here.
+
+**The γ sweep is a figure with two panels and two different axes.** Inventory is
+log–log — it spans decades across the sweep, which is the model working, and on
+a linear axis everything but the smallest γ is a flat line on the floor. P&L is
+linear **with zero in range**, because P&L is read by its sign and an axis that
+crops zero makes a small profit look like a large one. One line per fill model,
+because since 11.0 every headline number is a band and a single line would be
+picking a world.
+
+**A caveat found by running it.** The γ = 0 control's spread is `2/k`, so it
+depends on the k it is given. With the assumed k = 200 that is half a cent — the
+control quotes *inside* the touch and fills 58,684 times, which makes it a
+liquidity taker in disguise rather than a control. The experiment must therefore
+be run with the k **measured** in 11.2 for that symbol-day and lane, not with a
+placeholder. `--k` exists for that and the driver's help says so.
+
+**What is still missing is the data, and it is the whole of 11.3's substance.**
+The harness runs, the design is enforced, the figures render — on generated
+feeds. Every prediction P1–P7 remains ungraded because grading them needs ≥3
+symbols across the liquidity spectrum and ≥3 days with calibration excluded. One
+`wget` per day from `emi.nasdaq.com/ITCH/` unblocks it.
+
 ### 11.4 — The paper
 
 `docs/paper/as-on-itch.md` → PDF. Abstract / Data & venue / Fill models

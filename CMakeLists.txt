@@ -70,6 +70,7 @@ add_executable(book_replay tools/book_replay.cpp)
 add_executable(queue_sim tools/queue_sim.cpp)
 add_executable(queue_backtest tools/queue_backtest.cpp)
 add_executable(calibrate_intensity tools/calibrate_intensity.cpp)
+add_executable(as_experiment tools/as_experiment.cpp)
 add_executable(latency_sweep tools/latency_sweep.cpp)
 add_executable(mold_wrap   tools/mold_wrap.cpp)
 add_executable(mold_replay tools/mold_replay.cpp)
@@ -103,7 +104,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
-          calibrate_intensity
+          calibrate_intensity as_experiment
           tsc_offset mold_replay_udp wire_to_book
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
   target_link_libraries(${t} PRIVATE itchbook)
