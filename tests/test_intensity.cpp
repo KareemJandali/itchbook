@@ -128,6 +128,25 @@ void test_two_points_are_refused_because_they_cannot_fail() {
 // of the fills on every symbol measured -- drags the line onto itself and its
 // own residual comes back near zero whatever the truth is. Fitting the deep
 // buckets alone and asking where the touch lands is the test that can fail.
+// A fill curve that runs backwards is not a fill curve. Deep buckets that are a
+// handful of single fills with almost no exposure can return a NEGATIVE slope,
+// which says orders further from the mid fill faster. The thin name did exactly
+// this in all four lanes on the first real calibration. The number must not be
+// reported.
+void test_a_backwards_fill_curve_is_refused() {
+    std::vector<DepthBucket> b = synth(1.0, 150.0, 100, 6);
+    // Starve the near buckets and inflate the far ones: intensity now RISES
+    // with depth, which no book does.
+    for (size_t i = 1; i < b.size(); ++i) {
+        b[i].fills = static_cast<uint64_t>(i) * 4;
+        b[i].exposure_seconds = 100.0;
+    }
+    const IntensityFit f = fit_intensity(b, 100);
+    CHECK(f.ok);                      // the all-points fit still returns
+    CHECK(f.k_ex_touch <= 0.0);       // ...and the deep-only slope is backwards
+    CHECK(!f.touch_excluded_ok);      // so it is refused rather than printed
+}
+
 void test_the_touch_is_judged_against_a_fit_it_did_not_influence() {
     std::vector<DepthBucket> b = synth(1.0, 150.0, 100, 10);
     // A touch that fills at a THIRD of the exponential's rate, and carries a
@@ -397,6 +416,7 @@ int main() {
     test_the_fit_is_weighted_by_fill_count();
     test_a_fit_needs_at_least_two_points();
     test_two_points_are_refused_because_they_cannot_fail();
+    test_a_backwards_fill_curve_is_refused();
     test_the_touch_is_judged_against_a_fit_it_did_not_influence();
     test_the_touch_misfit_shows_up_as_a_residual();
     test_exposure_is_per_order_second();
