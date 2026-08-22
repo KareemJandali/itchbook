@@ -94,7 +94,7 @@ as zero — "no drops" and "this platform cannot tell you" are different claims.
 | one times real time | 4,196 msg/s |
 | ring | 65,536 slots |
 | clock | rdtsc / rdtscp (per-core counter) |
-| cross-core clock offset | **bounded under 131 ns**, not measured — the estimate is smaller than the method can resolve (rdtsc / rdtscp (per-core counter)) |
+| cross-core clock offset | not measured — run tools/tsc_offset on the measurement host |
 | threads pinned | **no** |
 | runs per rate | 2 (best of) |
 | rates on the ladder | 9 |
