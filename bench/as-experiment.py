@@ -203,8 +203,15 @@ def main():
     best_gamma = result["gammas"][len(result["gammas"]) // 2]
     print(f"\n=== evaluation days only (calibration day {a.calibration_day} "
           f"excluded), gamma = {best_gamma:g} ===")
+    print("equity = edge + drift - fees. EDGE is the market making: half-spread")
+    print("captured against the mid at fill time. DRIFT is what the mid did to")
+    print("inventory, including the residual position marked at the close. Their")
+    print("sum is the number that flatters a strategy which simply ended the day")
+    print("holding stock that went up.")
+    print()
     print(f"{'symbol':<8} {'day':<12} {'model':<12} {'arm':<16} "
-          f"{'eq/share':>10} {'inv sd':>10} {'inv max':>9} {'mk 1s':>9}")
+          f"{'eq/share':>10} {'edge/sh':>10} {'drift/sh':>10} {'resid':>8} "
+          f"{'inv max':>9} {'mk 1s':>9}")
     for sym in result["symbols"]:
         for day in eval_days:
             for model in MODELS:
@@ -215,7 +222,9 @@ def main():
                         continue
                     print(f"{sym:<8} {day:<12} {model:<12} {arm:<16} "
                           f"{r['equity_per_share_micros']:>10} "
-                          f"{r['inv_stdev']:>10.1f} {r['inv_max_abs']:>9} "
+                          f"{r.get('edge_per_share_micros', 0):>10} "
+                          f"{r.get('drift_per_share_micros', 0):>10} "
+                          f"{r['residual_position']:>8} {r['inv_max_abs']:>9} "
                           f"{r['markout_1s']:>9}")
 
     # ---- the mechanism decomposition, which is the phase's actual question --
