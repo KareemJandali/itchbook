@@ -1479,6 +1479,54 @@ format are ready for it.
    sensitivity table, and say in Limitations that N is small. Overclaiming here
    would undo the repo's whole brand.
 
+### 11.3 — predictions, written before the experiment exists
+
+Standing rule 2, and committed before the harness was written so the timestamps
+are not a matter of trust. Phase 10.8's P1 was falsified in the most useful
+possible way; these are written in the same spirit — specific enough to be wrong.
+
+**P1 — inventory.** A-S at moderate γ carries **smaller inventory excursions**
+than the symmetric touch-maker baseline: max |position| lower by **at least
+30%**. This is the model's entire purpose, so a failure here means the
+implementation is wrong however well the algebra tests pass.
+
+**P2 — the mechanism, which is the actual question.** The improvement will come
+from **inventory variance reduction, not from markout improvement**. A-S skews
+quotes by inventory, which mechanically shortens excursions; it does *not*
+select against informed flow, and nothing in the model looks at who is trading.
+So markouts at 100 ms / 1 s / 10 s should be **statistically indistinguishable**
+between A-S and the baseline. If markouts improve as well, that is a real
+finding that needs a mechanism, not a victory lap.
+
+**P3 — the headline.** A-S **loses money** on a public displayed feed after
+fees, in most lanes, on most symbol-days. Predicted equity per share negative in
+≥ 3 of 4 lanes. A paper showing *why*, mechanically, is worth more than a fake
+win — and this repo already argued that in `what-synthetic-data-hides.md`.
+
+**P4 — latency, the plan's own prediction.** A-S re-quotes on every threshold
+move of the reservation price, so it sends far more messages than a touch-maker
+that only follows the touch. It should therefore **degrade faster with latency**:
+across the `latency_sweep` range, A-S's equity per share should fall by a larger
+fraction than the baseline's.
+
+**P5 — the band.** The four-lane band is now over *worlds*, not over gradings of
+one world (see 11.0), so it should be **wider** than the equivalent phase-6 band
+for the same feed — it now includes the strategy's own reaction to being filled
+differently, on top of the models' disagreement.
+
+**P6 — the γ sweep, predicted SHAPE rather than value.** γ will move **inventory
+a great deal and P&L very little** over a wide interior range: max |position|
+monotonically decreasing in γ, while equity per share stays inside a band
+narrower than the four-model band. If P&L turns out sharply peaked in γ, this
+becomes a parameter-fitting exercise rather than a mechanism study, and the
+paper has to say so.
+
+**P7 — the falsification condition for the whole phase.** If A-S and the
+baseline are indistinguishable on *every* axis — inventory, markouts, P&L,
+latency sensitivity — then the closed-loop machinery is not doing what 11.0
+claims and the finding is that inventory-aware quoting does not matter at this
+scale. That is a publishable result and it must not be quietly reframed.
+
 ### 11.4 — The paper
 
 `docs/paper/as-on-itch.md` → PDF. Abstract / Data & venue / Fill models
