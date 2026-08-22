@@ -1821,6 +1821,32 @@ whose disagreements mean something. Write the choice into
 `docs/phase12-design.md` before writing the gateway — it determines what the
 gateway is for.
 
+**Written.** [`docs/phase12-design.md`](phase12-design.md) settles it, and
+settles three consequences the paragraph above does not reach:
+
+- **Adds are state, executions are events.** "Historical flow replays as book
+  state" taken literally makes strategy orders *unfillable* — the aggressor that
+  would have hit your maker appears in the feed only as its consequence on
+  someone else's order. So `A`/`F`/`U`/`X`/`D` are applied, while `E`/`C`/`P` are
+  replayed as synthesised aggressors through the matcher, which walk the queue
+  and may take your shares first. An add is a fact about the book; an execution
+  is a fact about a trade, and only the second is a crossing event you are
+  entitled to replay as one.
+- **One book, reference space partitioned.** Historical and strategy orders rest
+  in one queue or queue position means nothing. Strategy references take the high
+  half of the 64-bit space and the replayer *asserts* no historical reference
+  enters it — a collision is a silent book corruption, phase 12's version of the
+  locate trap.
+- **Two clocks.** The market runs in replay time (drives message timestamps and
+  the strategy's `T − t`); tick-to-trade is wall clock. Feeding wall clock to an
+  A-S horizon during a 50× replay changes the strategy rather than the load.
+
+Five predictions are written there before any code. **P1 is the one that decides
+the phase:** with zero strategy orders, the book built from the *emitted* feed
+must be byte-identical to the phase-9 book from the *original* feed. It is
+testable on data already in hand, before OUCH or SoupBinTCP exist, and it is
+built first.
+
 ### 12.1 — Protocol scope
 
 `include/itchbook/ouch/` — pick one OUCH version (4.2 is simpler; state the
