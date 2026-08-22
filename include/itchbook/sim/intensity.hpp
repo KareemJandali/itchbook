@@ -302,8 +302,17 @@ inline IntensityFit fit_intensity(const std::vector<DepthBucket>& buckets,
             const double inter2 = (ewy - slope2 * ewx) / ew;
             out.k_ex_touch = -slope2;
             out.A_ex_touch = std::exp(inter2);
-            out.touch_excluded_ok = true;
-            if (touch != nullptr) {
+            // A NEGATIVE k IS NOT A FILL CURVE. lambda = A*exp(-k*delta) with
+            // k < 0 says orders resting FURTHER from the mid fill FASTER, which
+            // is not a shape any book produces; it is what a regression returns
+            // when the deep buckets are three single-fill points with almost no
+            // exposure between them. Seen on the thin name at the first real
+            // calibration, in all four lanes. Reporting the number would put a
+            // fill curve in the paper that runs backwards, so the fit is marked
+            // unusable and the touch is left unjudged rather than judged against
+            // nonsense.
+            out.touch_excluded_ok = out.k_ex_touch > 0.0;
+            if (out.touch_excluded_ok && touch != nullptr) {
                 out.touch_residual_ex = touch->y - (inter2 + slope2 * touch->x);
             }
         }

@@ -85,7 +85,7 @@ void print_lane(const LaneCalibration& c) {
     std::printf("%-28s %14.1f\n", "untradable seconds",
                 static_cast<double>(c.untradable_ns) / 1e9);
     if (!c.fit.ok) {
-        std::printf("\n  NO FIT: %zu usable buckets (need 2). %zu had exposure but no\n"
+        std::printf("\n  NO FIT: %zu usable buckets (need 3). %zu had exposure but no\n"
                     "  fills, which is information -- it means nothing traded that deep.\n",
                     c.fit.points, c.fit.dropped_no_fills);
         return;
