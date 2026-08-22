@@ -572,6 +572,13 @@ jobs:
       - name: Closed-loop driver agrees with the open-loop one without feedback
         run: ./build/test_closed_loop
 
+      # Phase 11.1. The A-S algebra checked against the paper, the volatility
+      # estimator against known inputs, and the unit trap locked in: the paper's
+      # own gamma and k produce a ~170-tick spread on a penny-wide book, which
+      # is how the first run of this managed to quote all day and never fill.
+      - name: Avellaneda-Stoikov model and its units
+        run: ./build/test_as_maker
+
       # Two independent implementations of the queue rules over identical bytes.
       # A queue model is a counterfactual with no ground truth, so agreement
       # between them is most of the assurance available before real data.

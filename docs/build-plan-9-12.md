@@ -1275,6 +1275,78 @@ is session end. `γ` is swept, not chosen. One section if time allows: the
 Guéant–Lehalle–Fernandez-Tapia inventory-bounded variant, which fixes A-S's
 end-of-horizon pathology — flag the pathology either way.
 
+### 11.1 — what actually happened
+
+`include/itchbook/sim/as_maker.hpp`, `tests/test_as_maker.cpp` (17 tests).
+Finite-horizon A-S with reservation price, closed-form spread, online σ,
+tick-grid clipping, a re-quote threshold, and `State`/`restore`.
+
+**The model is separated from the plumbing.** `as_quote()` is a pure function of
+(config, mid, q, τ, σ²) and everything else — books, ticks, quote ids, re-quote
+policy — sits outside it. So the algebra is checked against the paper directly,
+with no book to build and no feed to replay, and a failing test is unambiguous
+about whether it is disagreeing with the model or with the harness.
+
+**Units, which is where this model is usually got quietly wrong.** The paper's
+two terms are not dimensionally consistent unless inventory is a dimensionless
+count: the spread term needs γ in 1/price, the reservation term needs
+1/(shares·price). Implementations resolve that silently and differently, which
+is one reason published A-S results are hard to compare. Here it is resolved
+explicitly — dollars and seconds throughout, γ in 1/dollar in both terms, and
+inventory entering as `q / inventory_unit`, a named parameter that can be swept
+and reported rather than a convention buried in the arithmetic.
+
+**And the trap that unit sloppiness sets, which caught this implementation on
+its first run.** The paper's worked example uses γ = 0.1, k = 1.5. The intensity
+term is `(2/γ)·ln(1 + γ/k)`, which for small γ/k is about `2/k` — so k = 1.5 per
+dollar means a **total spread of about 170 ticks** on a book that quotes one
+wide. Two end-to-end tests failed with zero fills, and the entire cause was
+those two numbers. In equity units 1/k is the depth over which fill intensity
+falls by a factor of e — a fraction of a cent to a few cents — so k belongs in
+the hundreds. Defaults are now γ = 0.005 and k = 200, giving a ~3-tick spread on
+a $100 name with 2% daily vol, and `test_the_default_parameters_are_in_equity_units`
+asserts both that the defaults are sane *and* that the paper's values are the
+170-tick trap, so the fix cannot be helpfully reverted.
+
+**σ is estimated from mid CHANGES, not returns.** A-S models arithmetic Brownian
+motion; the volatility it wants is dollars per root-second, not percent.
+Sampling is on a fixed time grid rather than per message, because per-message
+sampling makes the estimate a function of how busy the symbol is — tested by
+feeding one estimator 500× more messages than another over the same price path
+and requiring the same answer. A feed gap snaps the sample clock forward instead
+of emitting catch-up samples at one price, which would collapse the variance
+toward zero. A zero σ² is floored rather than allowed: it makes the spread term
+vanish and the strategy quote both sides at the reservation price, which is not
+conservative, it is nonsense.
+
+**The end-of-horizon pathology is flagged, asserted, and counted.** As t → T the
+inventory term decays to nothing, so the model stops skewing for inventory
+exactly when it has least time to unload it — it assumes terminal inventory is
+liquidated at the mid, which no desk can do. `min_time_remaining` can floor τ as
+a mitigation and **defaults to zero**, so the pathology is visible rather than
+papered over. A test walks τ down and requires the skew to decay strictly to
+exactly zero. And the strategy counts quotes placed in the last tenth of the
+session while holding inventory, so it appears as a number in the results rather
+than a paragraph nobody reads. GLFT's inventory-bounded variant is the
+principled fix and is not implemented.
+
+**What the tests deliberately do NOT assert:** that a larger γ widens the
+spread. It does not in general — the intensity term `(2/γ)·ln(1 + γ/k)` shrinks
+with γ, so the total is non-monotonic, and the test demonstrates a case where a
+larger γ gives a *narrower* spread. Asserting monotonic widening would encode a
+plausible-sounding falsehood. What is asserted is that γ scales the inventory
+skew linearly, and that end to end a higher γ carries less inventory.
+
+`State`/`restore` follows the rule: what was learned travels (the σ estimator,
+live quote ids, counters), what was configured does not. A test restores a
+snapshot into a maker built with a *corrected* γ and requires the correction to
+survive — the same protection `ledger.hpp` gives a fee schedule.
+
+**Still open:** the restart test covers the strategy's own state round trip, not
+a full closed-loop run driven through a snapshot and compared against one that
+never died. That needs the `restart_check` machinery pointed at the closed-loop
+driver, and it is the last piece of 11.0's carried-over item.
+
 ### 11.2 — Calibrating λ(δ) from your own fills, the centrepiece
 
 A-S needs `λ(δ) = A·e^(−k·δ)`. Everyone else assumes `A` and `k`; you can
