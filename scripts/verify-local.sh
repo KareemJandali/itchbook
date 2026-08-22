@@ -14,6 +14,20 @@
 # point of the second compiler here is its FRONT END, and a clang build that
 # cannot link is still a clang build that has parsed every line.
 #
+# It then earned its keep a second time, on a machine CI does not have. The
+# first run of this script on macOS failed both builds on a line CI had passed
+# green since phase 10.6:
+#
+#     std::printf("%" PRIu64, books.books());     // books() returns size_t
+#
+# On Linux x86-64 size_t and uint64_t are the same type, so that line is not
+# merely tolerated, it is CORRECT and -Wformat is silent. On macOS uint64_t is
+# `unsigned long long` and size_t is `unsigned long`, and -Werror=format
+# rejects it. Two compilers catch what differs by front end; only two data
+# models catch what differs by platform. RUN THIS ON YOUR OWN MACHINE, not
+# just on the one CI happens to use -- there is now a macos-build-and-test job
+# in CI because of this, but the local run is what found it.
+#
 # What this does NOT do is the long tail: the full-day differentials, the
 # adversarial matrix, the rate sweep. Those live in CI and take minutes. This is
 # the fast gate -- compile clean on both, all unit tests on both, every
