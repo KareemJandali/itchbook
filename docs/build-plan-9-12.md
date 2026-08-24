@@ -511,8 +511,11 @@ write its sibling. No number reaches a document by being retyped.
 
 - [x] Census wall-clock, compressed size and peak live orders recorded in
       `validation/`.
-      *(`census-2019-12-30.json`: 8.25 GB compressed, 268,744,780 messages,
-      44.57 s, 1,924,078 peak live orders.)*
+      *(`census-2019-12-30.json`: 3.52 GB on disk, 8.25 GB uncompressed,
+      268,744,780 messages, **65.94 s** for the framing + live-order pass
+      (16.51 s framing-only, `census-2019-12-30-framing.json`), 1,924,078 peak
+      live orders. The 44.57 s in the next item is the all-symbols replay, which
+      is a different pass and a different artifact.)*
 - [x] Full day, all symbols, one process: end-to-end and book-only both
       reported, bottleneck attributed by measurement.
       *(44.57 s end-to-end, 16.51 s framing-only, **28.06 s the book's own
@@ -529,10 +532,12 @@ write its sibling. No number reaches a document by being retyped.
 - [ ] ≥8 sampled symbols bit-identical vs the oracle (seed printed); global
       invariants hold; `unknown_ref == 0`; `locate_mismatch == 0`.
       *(Three of four, and the missing one is the differential. `unknown_refs`
-      and `locate_mismatch` are **0 on both days**. The global invariants hold —
-      but 2 of 12 could not run, because the committed census predates the type
-      histogram they need, and `full-day-check.py` exits non-zero rather than
-      reporting ten passes as twelve; re-running the census closes that.
+      and `locate_mismatch` are **0 on both days**. **All twelve global
+      invariants hold and all twelve run**: `full-day-check.py` on the committed
+      census, run and per-symbol CSV prints "OK: 12 global invariants hold across
+      268,744,780 messages and 8,906 symbols" and exits 0, with no skips. (The
+      two that need the census type histogram have had it since `981dc61`, "The
+      census, with the type histogram".)
       **The ≥8-symbol differential was never run.** 9.12 changed the shape of
       verification to global invariants and this check did not survive the
       change — which is a substitution, not the item, and is recorded as one
@@ -549,13 +554,19 @@ write its sibling. No number reaches a document by being retyped.
       `operational_halts` and `broken_trades` in `census-2019-08-30.json` and
       `all-symbols-2019-12-30.json`. A zero is the result 9.6 asked for: the
       constants stay unconfirmed against real bytes and the count says so.
-      `W` is modelled and printed by `book_replay`, but it is **not written to
-      the JSON**, so it is not per-day verifiable from `validation/` the way the
-      other two are — one field, not an experiment. The derivation is stated in
+      `W` is acted on — `dispatch.hpp` routes it to `set_mwcb_breached()` and
+      `tradable()` reads it — and `book_replay` prints it in the summary as
+      `MWCB level breached ('W')`, but it is **not written to the JSON**, so it
+      is not per-day verifiable from `validation/` the way the other two are —
+      one field, not an experiment. The derivation is stated in
       `book_set.hpp::tradable`, which gates on `H`, the operational halt and the
-      MWCB level. **Note the `messages.hpp` "types this book does NOT model"
-      block still says `h` and `W` are unmodelled, and that is now false** — 9.6
-      implemented both and the comment did not follow.)*
+      MWCB level. All three stay **false** for `modelled()` deliberately: that
+      predicate is the contract `python/reference/book.py` mirrors, and none of
+      the three is a book mutation. **The `messages.hpp` block that lists them
+      went stale when 9.6 landed — it still described `h` and `W` as
+      unreflected — and was corrected in `a05de8c`**, which files all three
+      under ACTED ON and carries the MWCB-treated-as-permanent limitation
+      across.)*
 - [ ] Peak RSS decomposed; overflow distribution and re-centre count reported;
       the band-budget paragraph written.
       *(Three of four. RSS decomposes to **92.5%** — bands 291.8 MB, reference
@@ -573,18 +584,17 @@ write its sibling. No number reaches a document by being retyped.
       path.)*
 - [x] Shared-pool and load-factor experiments run with predictions first.
       *(`validation/sweep-pool.json` and `sweep-load.json`. The load factor was
-      predicted to measure **flat** and measured **2.42×** — the largest single
-      speedup in the phase, and a falsified prediction that took the run from
-      87 s to 44.6 s.)*
+      predicted to measure **flat** and measured **2.42× book-only** (68.8 s to
+      28.4 s) — the largest single speedup in the phase, and a falsified
+      prediction that took the end-to-end run from 87 s to 44.6 s.)*
 - [x] `docs/phase9-results.md` generated from artifacts, not typed.
       *(`scripts/phase9-report.py`, `--check`ed in CI.)*
 
 **Six of ten, and the four open ones are verification breadth rather than
 machinery.** The run is done, the numbers are generated, and nothing on the
 open list needs a design. Two of them need a field added to an artifact (`W`
-per day, the overflow distribution) and a census re-run (the 2 invariants that
-cannot execute); two need work that was never started (the ≥8-symbol
-differential, four more Databento symbols on a second day).
+per day, the overflow distribution); two need work that was never started (the
+≥8-symbol differential, four more Databento symbols on a second day).
 
 **CV line — not yet earned.** The line below is written for the finished phase
 and **two of its clauses are outstanding**: there is no sampled differential
@@ -600,7 +610,7 @@ What **is** earned today, and is the stronger claim anyway because every number
 in it is committed and CI-checked: "Reconstructs every one of 8,906 securities
 from a full NASDAQ TotalView-ITCH day — 268.7M messages, 8.25 GB — in one
 process in 44.6 s at 551 MB, with zero unknown order references and zero locate
-mismatches across the entire feed, cross-checked by ten global invariants
+mismatches across the entire feed, cross-checked by twelve global invariants
 against a bookless census pass, and exact against a vendor daily bar on one
 symbol."
 
@@ -2063,7 +2073,10 @@ Two bugs in the replacement, both caught by running it rather than reading it:
       in print.
       *(**Two real latencies are committed** — `validation/as-experiment.json`
       at 0 ns and `validation/as-experiment-500us.json` at 500,000 ns, the same
-      three symbol-days in both. **P4 is graded `kept`**, 19 of 36 cells, in
+      nine evaluation symbol-days in both — three symbols over three days, which
+      is where the 36 cells come from at four lanes each. (Each artifact also
+      carries the 2019-08-30 calibration day, so twelve `(symbol, day)` pairs
+      are present and nine are graded.) **P4 is graded `kept`**, 19 of 36 cells, in
       paper §7.5; §8.5 records it as done. The grading branch had already run in
       CI on two synthetic latencies before the second real artifact landed,
       which is why the code that read it was not being executed for the first
