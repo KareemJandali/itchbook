@@ -614,11 +614,16 @@ def build_results(d, extra):
         # they differ. Substituting it silently would be moving the bar; leaving
         # it out would be reporting the noisier of two instruments because it
         # happened to be named first.
+        # PER SYMBOL, NEVER POOLED -- section 7 says so about every other table
+        # here and the first version of this one ignored it. Pooling 3 symbols
+        # into 36 cells reported A-S degrading faster overall and hid that STOR
+        # reverses: there the baseline degrades faster. An average over symbols
+        # is exactly the claim the sample cannot support.
         arms = [("symmetric-touch", 0.0), ("as-gamma0", 0.0), ("as", gsel)]
-        edge_rows = []
-        for arm, g in arms:
-            e_lo, e_hi, fracs = [], [], []
-            for sym in symbols:
+        rows = []
+        for sym in symbols:
+            for arm, g in arms:
+                e_lo, e_hi, fracs = [], [], []
                 for day in eval_days:
                     for m in MODELS:
                         r0 = pick(lo_d["runs"], sym, day, arm, m, g)
@@ -631,30 +636,41 @@ def build_results(d, extra):
                             fracs.append((r0["edge_per_share_micros"]
                                           - r1["edge_per_share_micros"])
                                          / abs(r0["edge_per_share_micros"]))
-            if e_lo:
-                edge_rows.append((arm, statistics.median(e_lo), statistics.median(e_hi),
-                                  statistics.median(fracs) if fracs else None))
+                if e_lo:
+                    rows.append((sym, arm, statistics.median(e_lo),
+                                 statistics.median(e_hi),
+                                 statistics.median(fracs) if fracs else None))
 
-        worse_e = 0
-        tot_e = 0
-        for sym in symbols:
-            for day in eval_days:
-                for m in MODELS:
-                    a0 = pick(lo_d["runs"], sym, day, "as", m, gsel)
-                    a1 = pick(hi_d["runs"], sym, day, "as", m, gsel)
-                    b0 = pick(lo_d["runs"], sym, day, "symmetric-touch", m, 0.0)
-                    b1 = pick(hi_d["runs"], sym, day, "symmetric-touch", m, 0.0)
-                    if not (a0 and a1 and b0 and b1):
-                        continue
-                    if a0["edge_per_share_micros"] == 0 or b0["edge_per_share_micros"] == 0:
-                        continue
-                    tot_e += 1
-                    da = (a0["edge_per_share_micros"] - a1["edge_per_share_micros"]) \
-                        / abs(a0["edge_per_share_micros"])
-                    db = (b0["edge_per_share_micros"] - b1["edge_per_share_micros"]) \
-                        / abs(b0["edge_per_share_micros"])
-                    if da > db:
-                        worse_e += 1
+        # The headline count, and the same count per symbol -- because "A-S
+        # degrades faster" is a claim that can hold overall and fail on a
+        # symbol, and here it does.
+        def faster(sym_filter):
+            w = t = 0
+            for sym in symbols:
+                if sym_filter and sym != sym_filter:
+                    continue
+                for day in eval_days:
+                    for m in MODELS:
+                        a0 = pick(lo_d["runs"], sym, day, "as", m, gsel)
+                        a1 = pick(hi_d["runs"], sym, day, "as", m, gsel)
+                        b0 = pick(lo_d["runs"], sym, day, "symmetric-touch", m, 0.0)
+                        b1 = pick(hi_d["runs"], sym, day, "symmetric-touch", m, 0.0)
+                        if not (a0 and a1 and b0 and b1):
+                            continue
+                        if not a0["edge_per_share_micros"] or not b0["edge_per_share_micros"]:
+                            continue
+                        t += 1
+                        da = (a0["edge_per_share_micros"] - a1["edge_per_share_micros"]) \
+                            / abs(a0["edge_per_share_micros"])
+                        db = (b0["edge_per_share_micros"] - b1["edge_per_share_micros"]) \
+                            / abs(b0["edge_per_share_micros"])
+                        if da > db:
+                            w += 1
+            return w, t
+
+        worse_e, tot_e = faster(None)
+        per_sym = {sym: faster(sym) for sym in symbols}
+        holds = [sym for sym, (w, t) in per_sym.items() if t and w > t / 2]
         agree = "agrees with" if (worse_e > tot_e / 2) == (worse > tot / 2) else \
                 "**disagrees with**"
         p4_companion = [
@@ -667,20 +683,33 @@ def build_results(d, extra):
             f"latency can act on — is reported here. It is **not** the pre-registered "
             f"bar and does not replace the verdict above; it {agree} it.",
             ">",
-            f"> | arm | median edge/share at {lo_ns:,} ns | at {hi_ns:,} ns | "
-            f"median fractional change |",
-            "> |---|---:|---:|---:|"]
-        for arm, m_lo, m_hi, frac in edge_rows:
+            f"> | symbol | arm | median edge/share at {lo_ns:,} ns | at {hi_ns:,} ns | "
+            f"median per-cell change |",
+            "> |---|---|---:|---:|---:|"]
+        for sym, arm, m_lo, m_hi, frac in rows:
             p4_companion.append(
-                f"> | `{arm}` | {m_lo:+,.0f} | {m_hi:+,.0f} | "
+                f"> | {sym} | `{arm}` | {m_lo:+,.0f} | {m_hi:+,.0f} | "
                 + (f"{-frac:+.0%} |" if frac is not None else "— |"))
         p4_companion += [
             ">",
+            "> *The last column is the median of the per-cell fractional changes, not "
+            "the change between the two medians beside it. They do not compose, and "
+            "where edge crosses zero between the two latencies they differ by a lot — "
+            "a cell going +100 to −100 is a −200% change on a base the level columns "
+            "barely move.*",
+            ">",
             f"> A-S's edge degrades faster than the baseline's in **{worse_e} of "
-            f"{tot_e}** cells, against {worse} of {tot} on equity. `as-gamma0` is in "
-            f"the table because it separates the two halves of the model: if the "
-            f"latency damage is in the spread choice rather than the skew, that row "
-            f"shows it without any inventory effect in the way.",
+            f"{tot_e}** cells overall, against {worse} of {tot} on equity — and per "
+            f"symbol it holds on "
+            + (f"{', '.join(holds)} but **not** on "
+               f"{', '.join(sym for sym in symbols if sym not in holds)}"
+               if holds and len(holds) < len(symbols) else
+               f"{'all ' + str(len(symbols)) if holds else 'none'} of them")
+            + ". "
+            + ", ".join(f"{sym} {w}/{t}" for sym, (w, t) in per_sym.items())
+            + ". `as-gamma0` is in the table because it separates the two halves of the "
+              "model: if the latency damage is in the spread choice rather than the "
+              "skew, that row shows it with no inventory effect in the way.",
             ""]
 
     # P5 -- the closed-loop band is wider than phase 6's open-loop band.
