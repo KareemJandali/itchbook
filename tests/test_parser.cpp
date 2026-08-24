@@ -80,14 +80,20 @@ int main() {
     CHECK(spec_length('Z') == -1);
     CHECK(spec_length('\0') == -1);
 
-    // modelled() is what separates "we read it" from "we merely framed it".
+    // modelled() is what separates "both implementations decode it" from "we
+    // merely framed it". It is not the same line as "we act on it": 'h', 'W'
+    // and 'B' are false here and are still routed to the BookSet by
+    // dispatch.hpp, because none of them is a book mutation for the Python
+    // oracle to mirror.
     CHECK(modelled('A'));
     CHECK(modelled('Q'));
     CHECK(modelled('H'));            // 'H' the trading action IS modelled...
-    CHECK(!modelled('h'));           // ...'h' the operational halt is not.
+    CHECK(!modelled('h'));           // ...'h' the operational halt is not,
+                                     //    though tradable() reads it.
     CHECK(!modelled('V'));
-    CHECK(!modelled('W'));
-    CHECK(!modelled('B'));
+    CHECK(!modelled('W'));           // also read by tradable(), also not
+                                     //    modelled
+    CHECK(!modelled('B'));           // counted per symbol, never applied
     CHECK(!modelled('O'));
     CHECK(!modelled('Z'));
 
@@ -113,9 +119,11 @@ int main() {
 
     // ---- unmodelled types are framed, length-checked, and delivered --------
     //
-    // The handler ignores them, but the parser must still see them: skipping a
+    // This handler ignores them, but the parser must still see them: skipping a
     // metadata message means skipping the desync check on it, and a desync that
-    // starts inside an 'h' is a desync all the same.
+    // starts inside an 'h' is a desync all the same. Three of the types below
+    // are acted on downstream, in dispatch.hpp, which cannot happen either if
+    // the parser drops them here.
     {
         auto msg = [](char t, int len) {
             std::vector<uint8_t> m(static_cast<size_t>(len), 0);

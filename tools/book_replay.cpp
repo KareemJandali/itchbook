@@ -467,9 +467,10 @@ void print_all_summary(const AllSymbols& a) {
     std::printf("%-28s %16s\n", "locate mismatches", comma(a.set.locate_mismatch()).c_str());
     std::printf("%-28s %16s\n", "undirectoried messages",
                 comma(a.set.undirectoried_messages()).c_str());
-    // The three the book does not model and cannot ignore. Reported whether or
-    // not any occurred: a zero here says the constants they are parsed with are
-    // still unconfirmed against real bytes, which is a fact about the run.
+    // The three the book does not model and cannot ignore: two gate tradable(),
+    // the third says a printed volume was revised. Reported whether or not any
+    // occurred — a zero here says the constants they are parsed with are still
+    // unconfirmed against real bytes, which is a fact about the run.
     std::printf("%-28s %16s\n", "operational halts ('h')",
                 comma(a.set.operational_halts()).c_str());
     std::printf("%-28s %16s\n", "  symbols halted at close",

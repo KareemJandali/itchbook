@@ -60,27 +60,62 @@ enum class Type : char {
     StockTradingAction   = 'H',
 };
 
-// The ITCH 5.0 types this book does NOT model, and why each is safe to skip.
-// Listing them is the point: an unmodelled type that nobody wrote down is
-// indistinguishable from one nobody thought about, and two of these bear
-// directly on tradability, which is the property recover/halt.hpp exists to
-// get right.
+// The ITCH 5.0 types this book does not model — the eleven modelled() answers
+// false for — and for each either what is done with it instead or why dropping
+// it is safe. Listing them is the point: an unmodelled type that nobody wrote
+// down is indistinguishable from one nobody thought about, and two of them
+// decide whether a symbol may trade at all, which is the property
+// BookSet::tradable() exists to get right.
 //
-//   'B'  Broken Trade          busts a previously printed trade. No book
-//                              effect — trades never entered the book — but it
-//                              does mean a day's printed volume can be revised
-//                              after the fact.
+// Three of them are acted on all the same, and only by the C++ side. None of
+// the three is a book mutation, so python/reference/book.py has nothing to
+// mirror and modelled() stays false for them — which is exactly what keeps the
+// two implementations comparable — and dispatch.hpp routes them to the BookSet
+// instead, where per-symbol and session state that is not a book lives.
+//
 //   'h'  Operational Halt      a venue-level halt of a symbol, separate from
-//                              the 'H' trading action. TRADABILITY-RELEVANT:
-//                              halt.hpp derives its session state from 'H'
-//                              alone, so an operational halt is currently not
-//                              reflected. It is rare and did not occur in the
-//                              day this project validates against, which makes
-//                              it a known gap rather than a measured one.
-//   'V'  MWCB Decline Level    market-wide circuit-breaker trigger levels,
-//   'W'  MWCB Status           and the announcement that one was breached. A
-//                              breach halts the whole market, so this is also
-//                              tradability-relevant and also not modelled.
+//                              the 'H' trading action. ACTED ON, per symbol:
+//                              set_operational_halt() records it and
+//                              BookSet::tradable() returns false while it
+//                              stands. Entries into it are counted as well, so
+//                              a run reports how many fired even for symbols
+//                              that resumed before the close. (recover/halt.hpp
+//                              does still read 'H' alone. That is not this gap:
+//                              its Session classifies crossed books, which is a
+//                              narrower question than tradability.)
+//   'W'  MWCB Status           the announcement that a market-wide circuit
+//                              breaker level was breached. ACTED ON, market
+//                              wide: set_mwcb_breached() records the level and
+//                              tradable() returns false for every symbol while
+//                              it stands. KNOWN LIMITATION — the breach is
+//                              treated as PERMANENT, and it is not. Level 1 and
+//                              2 halt the market for a fixed period and then it
+//                              reopens, and nothing in the feed says so, so
+//                              after a breach this calls every symbol
+//                              untradable for the rest of the session including
+//                              a stretch when the market is trading again.
+//                              Wrong in the safe direction for a predicate
+//                              whose consumers are risk checks, but a
+//                              limitation rather than a conservatism to be
+//                              proud of. The argument and what fixing it would
+//                              take are written out beside tradable() in
+//                              book_set.hpp.
+//   'B'  Broken Trade          busts a previously printed trade. No book
+//                              effect — trades never entered the book — and
+//                              no correction is applied either: undoing a print
+//                              means revising volume, VWAP and possibly the
+//                              close, which needs the match number of every
+//                              trade the day printed. COUNTED per symbol
+//                              instead, so a daily bar that disagrees with a
+//                              vendor's can be explained rather than argued
+//                              with. See note_broken_trade() in book_set.hpp.
+//
+// The rest are framed, length-checked and dropped.
+//
+//   'V'  MWCB Decline Level    the circuit-breaker trigger levels themselves,
+//                              published near the start of the session. Only a
+//                              breach changes tradability, and the 'W' that
+//                              announces one carries the level it breached.
 //   'Y'  Reg SHO Restriction   short-sale price-test state. Constrains who may
 //                              post, not what the book contains.
 //   'L'  Market Participant    per-MPID quoting state. TotalView carries the
@@ -96,9 +131,9 @@ enum class Type : char {
 //                              resulting auction prints as a 'Q'.
 //
 // Spec message lengths (payload bytes, including the type byte). Used to assert
-// the length prefix agrees with the type — a mismatch means desync. Unmodelled
-// types are listed here too: the handler ignores them, but the frame is still
-// checked, so a desync that lands inside a metadata message is caught at that
+// the length prefix agrees with the type — a mismatch means desync. Every type
+// above is listed here too, acted on or dropped: the frame is checked either
+// way, so a desync that lands inside a metadata message is caught at that
 // message rather than at the next one this book happens to care about.
 //
 // VERIFIED AGAINST REAL BYTES on 12302019.NASDAQ_ITCH50.gz — the whole day,
@@ -129,7 +164,9 @@ constexpr int spec_length(char t) {
         case 'P': return 44;
         case 'Q': return 40;
         case 'H': return 25;
-        // Framed and length-checked, but not modelled. See the note above.
+        // Framed and length-checked, and not modelled. Three of them — 'h',
+        // 'W' and 'B' — are still acted on at the BookSet level; the rest are
+        // dropped. See the note above.
         case 'Y': return 20;  // seen: 9,013
         case 'L': return 26;  // seen: 215,161
         case 'V': return 35;  // seen: 1 — proves V/W not transposed
@@ -180,8 +217,21 @@ constexpr const char* type_name(char t) {
     }
 }
 
-// Whether this book interprets the message, as opposed to merely framing it.
-// Used by tools that want to report what a feed contained but was ignored.
+// The twelve types the reference implementation decodes. Used by tools that
+// want to report how much of a feed no book acted on.
+//
+// Decoded is not the same as applied, and the gap is three types wide. Only
+// nine of the twelve are a book or volume mutation, which is what apply()
+// returns true for and what a run reports as messages_applied; 'R', 'S' and 'H'
+// are decoded and inert. So read-minus-applied is the unmodelled count PLUS
+// those three, which is the arithmetic scripts/full-day-check.py gates on.
+//
+// Nor is it the same question as "is it acted on at all". 'h', 'W' and 'B'
+// answer false here and are still acted on: none of them is a book mutation for
+// python/reference/book.py to mirror, so keeping them out is what keeps this
+// predicate an honest statement of what the two implementations share, and
+// dispatch.hpp routes them to the BookSet instead. See the note at the top of
+// this file for what each of the three does.
 constexpr bool modelled(char t) {
     switch (t) {
         case 'S': case 'R': case 'A': case 'F': case 'E': case 'C':

@@ -39,8 +39,11 @@ SPEC_LENGTH = {
     # Modelled.
     b"S": 12, b"R": 39, b"A": 36, b"F": 40, b"E": 31,
     b"C": 36, b"X": 23, b"D": 19, b"U": 35, b"P": 44, b"Q": 40, b"H": 25,
-    # Framed and length-checked, but not interpreted. See messages.hpp for what
-    # each one is and why skipping it is safe.
+    # Framed and length-checked, and not modelled, so this oracle decodes none
+    # of them. See messages.hpp for what each one is, for why dropping most of
+    # them is safe, and for the three ('h', 'W', 'B') the C++ side does act on
+    # outside any book — which is why they stay out of modelled() and so out of
+    # the contract these two parsers hold each other to.
     b"Y": 20, b"L": 26, b"V": 35, b"W": 12, b"K": 28, b"J": 35,
     b"h": 21, b"B": 19, b"I": 50, b"N": 20, b"O": 48,
 }
