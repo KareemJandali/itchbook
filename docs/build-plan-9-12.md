@@ -509,27 +509,100 @@ write its sibling. No number reaches a document by being retyped.
 
 ### Done — Phase 9
 
-- [ ] Census wall-clock, compressed size and peak live orders recorded in
+- [x] Census wall-clock, compressed size and peak live orders recorded in
       `validation/`.
-- [ ] Full day, all symbols, one process: end-to-end and book-only both
+      *(`census-2019-12-30.json`: 8.25 GB compressed, 268,744,780 messages,
+      44.57 s, 1,924,078 peak live orders.)*
+- [x] Full day, all symbols, one process: end-to-end and book-only both
       reported, bottleneck attributed by measurement.
-- [ ] The written throughput prediction (6.1 s bound, 12–18 s guess) kept or
+      *(44.57 s end-to-end, 16.51 s framing-only, **28.06 s the book's own
+      cost**. Decompression is 37% of the run, and the plan's claim that the run
+      would be decompression-bound by 3–7× is refuted in print.)*
+- [x] The written throughput prediction (6.1 s bound, 12–18 s guess) kept or
       falsified, in print.
+      *(Graded in `docs/phase9-results.md`, with an "inside the prediction"
+      column. **This line names the two guesses 9.11 superseded**, not the
+      prediction it committed: that was 60–120 s book-only, 80–140 s end-to-end.
+      It is **falsified** for the configuration that shipped — 28.1 s and 44.6 s
+      — and kept for the 4.19M-slot map it was written against. Both rows are in
+      the table; the load-factor sweep below is what moved it.)*
 - [ ] ≥8 sampled symbols bit-identical vs the oracle (seed printed); global
       invariants hold; `unknown_ref == 0`; `locate_mismatch == 0`.
+      *(Three of four, and the missing one is the differential. `unknown_refs`
+      and `locate_mismatch` are **0 on both days**. The global invariants hold —
+      but 2 of 12 could not run, because the committed census predates the type
+      histogram they need, and `full-day-check.py` exits non-zero rather than
+      reporting ten passes as twelve; re-running the census closes that.
+      **The ≥8-symbol differential was never run.** 9.12 changed the shape of
+      verification to global invariants and this check did not survive the
+      change — which is a substitution, not the item, and is recorded as one
+      here rather than only in the results doc.)*
 - [ ] ≥5 symbols exact vs Databento; `check_cross.py` run on each; repeated on a
       second day.
+      *(**One symbol, one day.** `validation/README.md` carries a single graded
+      row — MSFT, 2019-12-30, all five fields exact — and `check_cross.py`
+      matched the official close to the cent on it. Four more symbols and a
+      second day are outstanding. This is the done-list item with a cash cost:
+      it spends Databento credits.)*
 - [ ] `h`, `W` and `B` counted on both days; tradability derivation stated.
+      *(`h` and `B` are counted on **both** days and both are **zero** —
+      `operational_halts` and `broken_trades` in `census-2019-08-30.json` and
+      `all-symbols-2019-12-30.json`. A zero is the result 9.6 asked for: the
+      constants stay unconfirmed against real bytes and the count says so.
+      `W` is modelled and printed by `book_replay`, but it is **not written to
+      the JSON**, so it is not per-day verifiable from `validation/` the way the
+      other two are — one field, not an experiment. The derivation is stated in
+      `book_set.hpp::tradable`, which gates on `H`, the operational halt and the
+      MWCB level. **Note the `messages.hpp` "types this book does NOT model"
+      block still says `h` and `W` are unmodelled, and that is now false** — 9.6
+      implemented both and the comment did not follow.)*
 - [ ] Peak RSS decomposed; overflow distribution and re-centre count reported;
       the band-budget paragraph written.
-- [ ] `--symbol MSFT` byte-identical to the phase-8 repo (CI gate).
-- [ ] Shared-pool and load-factor experiments run with predictions first.
-- [ ] `docs/phase9-results.md` generated from artifacts, not typed.
+      *(Three of four. RSS decomposes to **92.5%** — bands 291.8 MB, reference
+      map 134.2 MB, pool 83.7 MB, residual 41.3 MB. Re-centres are reported per
+      day (4,319 and 3,988) and per symbol. The band-budget paragraph is "The
+      band is where the design actually failed", and it carries the phase's real
+      finding: 30% of symbols had at least half their adds off-band.
+      **The overflow distribution is not reported** — overflow maps appear only
+      inside the residual row, which is the one part of the memory story that is
+      an aggregate hiding a distribution, exactly the thing this phase criticised
+      the 13% off-band figure for being.)*
+- [x] `--symbol MSFT` byte-identical to the phase-8 repo (CI gate).
+      *(`validation/regression/`, gated by `scripts/regression-gate.sh` on every
+      push — so all of the above was bought without moving the single-symbol
+      path.)*
+- [x] Shared-pool and load-factor experiments run with predictions first.
+      *(`validation/sweep-pool.json` and `sweep-load.json`. The load factor was
+      predicted to measure **flat** and measured **2.42×** — the largest single
+      speedup in the phase, and a falsified prediction that took the run from
+      87 s to 44.6 s.)*
+- [x] `docs/phase9-results.md` generated from artifacts, not typed.
+      *(`scripts/phase9-report.py`, `--check`ed in CI.)*
 
-**CV line unlocked:** "Replays a full NASDAQ trading day — 268.7M messages,
-~8,700 symbols — through one process in X s (Y s book-only), verified by sampled
-differential against an independent oracle and exact against Databento daily bars
-on five symbols across two days."
+**Six of ten, and the four open ones are verification breadth rather than
+machinery.** The run is done, the numbers are generated, and nothing on the
+open list needs a design. Two of them need a field added to an artifact (`W`
+per day, the overflow distribution) and a census re-run (the 2 invariants that
+cannot execute); two need work that was never started (the ≥8-symbol
+differential, four more Databento symbols on a second day).
+
+**CV line — not yet earned.** The line below is written for the finished phase
+and **two of its clauses are outstanding**: there is no sampled differential
+against the oracle at full-day scale, and Databento has graded one symbol on one
+day, not five across two. Do not put it on a CV until items 4 and 5 are ticked.
+
+> "Replays a full NASDAQ trading day — 268.7M messages, ~8,700 symbols —
+> through one process in 44.6 s (28.1 s book-only), verified by sampled
+> differential against an independent oracle and exact against Databento daily
+> bars on five symbols across two days."
+
+What **is** earned today, and is the stronger claim anyway because every number
+in it is committed and CI-checked: "Reconstructs every one of 8,906 securities
+from a full NASDAQ TotalView-ITCH day — 268.7M messages, 8.25 GB — in one
+process in 44.6 s at 551 MB, with zero unknown order references and zero locate
+mismatches across the entire feed, cross-checked by ten global invariants
+against a bookless census pass, and exact against a vendor daily bar on one
+symbol."
 
 ---
 
@@ -1986,16 +2059,27 @@ Two bugs in the replacement, both caught by running it rather than reading it:
       who did not write it.
       *(Written — paper §4. Not reviewed. This is the item most likely to be
       wrong in a way its author cannot see, and it cannot be self-cleared.)*
-- [ ] Latency-degradation prediction written before the sweep, kept or falsified
+- [x] Latency-degradation prediction written before the sweep, kept or falsified
       in print.
-      *(P4 is committed, the grader is built, and since 11.6 the grading branch
-      is exercised in CI on two synthetic latencies — so the day a second real
-      artifact lands, the code that reads it has already run. Only one real
-      latency (0 ns) is committed, so the paper reports "not evaluated". The
-      remaining work is a second `bench/as-experiment.py --latency-ns N` on the
-      same three symbol-days, written to `validation/as-experiment-<N>.json`.)*
+      *(**Two real latencies are committed** — `validation/as-experiment.json`
+      at 0 ns and `validation/as-experiment-500us.json` at 500,000 ns, the same
+      three symbol-days in both. **P4 is graded `kept`**, 19 of 36 cells, in
+      paper §7.5; §8.5 records it as done. The grading branch had already run in
+      CI on two synthetic latencies before the second real artifact landed,
+      which is why the code that read it was not being executed for the first
+      time on the data it had to grade.
+      §7.5 also carries P4's edge companion, and the reason it exists is worth
+      keeping: P4's pre-registered bar is **equity**, and a fractional equity
+      change between two latencies is substantially a fact about what the stock
+      did to two different inventory paths. The identical test on **captured
+      edge** — the part latency can actually act on — is reported beside it. It
+      agrees with the verdict and does not replace it; the bar does not move
+      once the data is in.)*
 - [x] Paper PDF builds from committed sources; one script regenerates every
       figure; CI runs it.
+
+**Five of six.** The one open item is the only thing in this document that
+cannot be closed by writing code: §4 needs a reader who did not write it.
 
 **CV line unlocked:** "Calibrated and evaluated an Avellaneda–Stoikov market
 maker on real NASDAQ order flow with fill-model uncertainty bands — fill
