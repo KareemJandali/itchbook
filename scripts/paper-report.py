@@ -1105,13 +1105,25 @@ def build_conclusion(d, extra, cals):
 
     # --- 8.5 what remains -------------------------------------------------
     lat = sorted(extra) if extra else [d.get("latency_ns", 0)]
+    lat_str = ", ".join(f"{x:,} ns" for x in lat)
+    # P4 is graded in 7.5 the moment a second latency exists, so this item has
+    # to stop asking for one -- a "what remains" list that keeps naming work
+    # already done is the same stale-prose failure as the status banner was.
+    if len(lat) >= 2:
+        item1 = (f"1. **Latency sensitivity — done.** {len(lat)} modelled "
+                 f"latencies ({lat_str}) are committed and P4 is graded in §7.5 "
+                 f"against them. "
+                 f"The verdict is not restated here; one copy of a graded prediction "
+                 f"is the most this document keeps.")
+    else:
+        item1 = (f"1. **Latency sensitivity.** {len(lat)} modelled latency "
+                 f"({lat_str}) is committed, and P4 needs at least two to grade. The "
+                 f"prediction — that A-S degrades faster than the baseline because it "
+                 f"re-quotes more — is pre-registered and ungraded until a second "
+                 f"`validation/as-experiment*.json` at a different `latency_ns` exists.")
     L += ["### 8.5 What remains",
           "",
-          f"1. **Latency sensitivity.** {len(lat)} modelled latency "
-          f"({', '.join(f'{x:,} ns' for x in lat)}) is committed, and P4 needs at least "
-          f"two to grade. The prediction — that A-S degrades faster than the baseline "
-          f"because it re-quotes more — is pre-registered and ungraded until a second "
-          f"`validation/as-experiment*.json` at a different `latency_ns` exists.",
+          item1,
           f"2. **The outside reader.** The plan requires §4 to be reviewed by someone "
           f"who did not write it. That has not happened, and it is the section most "
           f"likely to be wrong in a way its author cannot see.",

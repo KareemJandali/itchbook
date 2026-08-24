@@ -994,6 +994,50 @@ jobs:
           # Idempotent: running the build again must change nothing.
           ./scripts/paper-build.sh --check
 
+      # P4 is the one prediction that cannot be graded from a single artifact:
+      # it compares equity at two modelled latencies, so it reads every
+      # validation/as-experiment*.json and keys them by latency_ns. Only one is
+      # committed, so the branch that GRADES it has never run -- which is the
+      # same "first executed on the day the real data arrives" problem the step
+      # above exists to solve, one prediction deeper.
+      #
+      # No verdict is asserted: these are generated feeds. What is asserted is
+      # that P4 stops reading "not evaluated", that the bar names both
+      # latencies, and that the conclusion's "what remains" stops asking for a
+      # second latency it now has.
+      - name: ...and P4 grades once a second latency exists
+        run: |
+          python3 bench/as-experiment.py --build build --out /tmp/asexp-lat.json \
+            --feed TEST:2019-12-30:data/raw/d1.gz \
+            --feed TEST:2020-01-30:data/raw/d2.gz \
+            --calibration TEST:/tmp/cal-TEST.json \
+            --calibration-day 2019-12-30 --gammas 0.001,0.005,0.02,0.1 \
+            --latency-ns 500000 > /dev/null
+          work=$(mktemp -d)
+          git ls-files -z | while IFS= read -r -d '' f; do
+            mkdir -p "$work/$(dirname "$f")"; cp "$f" "$work/$f"
+          done
+          mkdir -p "$work/validation"
+          cp /tmp/asexp.json "$work/validation/as-experiment.json"
+          cp /tmp/asexp-lat.json "$work/validation/as-experiment-500us.json"
+          cp /tmp/calib.json "$work/validation/intensity.json"
+          cd "$work"
+          ./scripts/paper-build.sh
+          python3 - <<'PY'
+          import re
+          md = open('docs/paper/as-on-itch.md').read()
+          row = re.search(r'^\| P4 \|.*$', md, re.M)
+          assert row, 'no P4 row at all'
+          row = row.group(0)
+          assert 'not evaluated' not in row, row
+          assert '500,000 ns' in row and '0 to' in row, row
+          verdict = re.search(r'\*\*(kept|falsified|mixed)\*\* \|$', row)
+          assert verdict, row
+          assert 'Latency sensitivity — done.' in md, 'the conclusion still asks for it'
+          print('P4 graded across two latencies:', verdict.group(1))
+          PY
+          ./scripts/paper-build.sh --check
+
       # A figure with no artifact behind it is a picture nothing can reproduce
       # or refute, so paper-figures.sh treats it as a failure rather than a
       # skip. That guard is the only thing standing between this paper and a
