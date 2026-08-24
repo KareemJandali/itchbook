@@ -3,8 +3,10 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–9 complete, with four verification-breadth items still
-> open and carried as open in the plan rather than quietly dropped. Phase 10,
+> **Status:** Phases 1–9 complete, with one verification-breadth clause still
+> open and carried as open in the plan rather than quietly dropped: running
+> `check_cross.py` on each graded symbol, which needs official auction prices
+> read off a page rather than taken from a transcript. Phase 10,
 > the wire-to-book pipeline, is **five of seven** — the two open items are one
 > item wearing two hats, and it wants bare metal rather than more code. Phase
 > 11, the paper, is **five of six**: its results are **run and graded**, and the
@@ -28,12 +30,21 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > See [`docs/phase9-results.md`](docs/phase9-results.md).
 >
 > **Correct.** The framing is checked against a whole day of every symbol —
-> **268,744,780 messages, 8.25 GB, no length mismatch**. Replaying one symbol's
-> file, the C++ book and an independent Python oracle then agree byte for byte
-> across **61,228 snapshot rows and 22 summary fields**, VWAP to ten decimal
-> places, zero unknown order references.
-> The reconstruction matches **Databento's published daily bar exactly** —
-> volume, open, high, low, close, to the share and the cent.
+> **268,744,780 messages, 8.25 GB, no length mismatch**. Across **ten symbols
+> sampled from that day by a printed seed** — a mega-cap, an ETF and eight drawn
+> at random from the 8,892 that quoted — the C++ book and an independent Python
+> oracle agree on **612,280 snapshot rows and 220 summary fields**, to the last
+> digit that survives a round trip, with zero unknown order references.
+> Sampling earned its keep on the first run: it found a VWAP the two printed
+> differently, which the single symbol this had always been run on happened to
+> agree on by coincidence. See [`sampled-differential-2019-12-30.json`](validation/sampled-differential-2019-12-30.json).
+> The reconstruction matches **Databento's published daily bars exactly across
+> ten symbol-days** — a mega-cap, an ETF, a mid-cap, something barely traded and
+> something that halted, on two separate trading days; volume, open, high, low
+> and close, to the share and the cent, on every one.
+> Widening that basket from one symbol to ten is what caught a bug both
+> implementations shared: an auction that never happened, counted as a trade at
+> price zero, which had corrupted `low` on **6,468 of 8,906 symbols**.
 > See [Validation](#validation).
 >
 > **Fast** — *the one claim here measured on a generated feed, not the real
@@ -620,10 +631,36 @@ OK: 61228 snapshot rows identical
 ```
 
 MSFT, 30 December 2019, 1,221,484 messages. Every sampled instant of the book,
-and every cumulative quantity between them — volume, notional, OHLC, VWAP to
-ten decimal places. The two comparisons fail differently: two books can agree
-at every instant a snapshot samples and still have miscounted in between, which
-only the summary catches.
+and every cumulative quantity between them — volume, notional, OHLC, VWAP. The
+two comparisons fail differently: two books can agree at every instant a
+snapshot samples and still have miscounted in between, which only the summary
+catches.
+
+One symbol is not a sample, though, and for most of this project's life this was
+the only real symbol either implementation had been compared on.
+`scripts/sampled-differential.py` does it for K ≥ 8, chosen by a seed it prints,
+pinning MSFT and an ETF and drawing the rest at random:
+
+```bash
+python3 scripts/sampled-differential.py 12302019.NASDAQ_ITCH50.gz \
+    --symbols-from validation/all-symbols-2019-12-30.csv \
+    --seed 20191230 --k 10 --json validation/sampled-differential-2019-12-30.json
+```
+
+```
+OK: 10 symbols bit-identical to the oracle across 612,280 snapshot rows and
+220 summary fields (seed 20191230)
+```
+
+**It failed the first time it ran**, on three of the ten. Not the book — the
+books agreed on `volume` and `notional`, which are exact integers, and on all
+61,228 snapshot rows each. They disagreed on `vwap`, because the C++ printed
+`%.10f` while the oracle prints Python's shortest round-tripping repr, and ten
+decimals is not always enough to round-trip a double. It is enough for MSFT's
+VWAP, and for the generated feed the regression gate is pinned to. **Both
+existing checks were blind to this by coincidence of the data they had been
+given**, which is the entire argument for sampling with a seed instead of
+choosing.
 
 `tests/differential.py` covers the other direction — generated adversarial
 feeds, requiring identical snapshot CSVs *and* identical summaries:

@@ -529,36 +529,143 @@ write its sibling. No number reaches a document by being retyped.
       It is **falsified** for the configuration that shipped — 28.1 s and 44.6 s
       — and kept for the 4.19M-slot map it was written against. Both rows are in
       the table; the load-factor sweep below is what moved it.)*
-- [ ] ≥8 sampled symbols bit-identical vs the oracle (seed printed); global
+- [x] ≥8 sampled symbols bit-identical vs the oracle (seed printed); global
       invariants hold; `unknown_ref == 0`; `locate_mismatch == 0`.
-      *(Three of four, and the missing one is the differential. `unknown_refs`
-      and `locate_mismatch` are **0 on both days**. **All twelve global
-      invariants hold and all twelve run**: `full-day-check.py` on the committed
-      census, run and per-symbol CSV prints "OK: 12 global invariants hold across
-      268,744,780 messages and 8,906 symbols" and exits 0, with no skips. (The
-      two that need the census type histogram have had it since `981dc61`, "The
-      census, with the type histogram".)
-      **The ≥8-symbol differential was never run.** 9.12 changed the shape of
+      *(**Done, and it failed the first time it ran.**
+      `scripts/sampled-differential.py` pins MSFT and an ETF, draws the rest
+      from the symbols that quoted with a seed it prints, slices each and
+      requires both comparisons — snapshot CSV and daily summary — to agree.
+      **Seed 20191230, K=10: 10 of 10 bit-identical across 612,280 snapshot rows
+      and 220 summary fields**, artifact in
+      `validation/sampled-differential-2019-12-30.json`.
+
+      What it caught: **three of the ten disagreed on `vwap`** — SEEL, ESBA and
+      ABIO. Not the book. `volume` and `notional`, the exact integers vwap is
+      derived from, matched on all ten, as did all 61,228 snapshot rows each.
+      The C++ printed `%.10f` while the oracle writes Python's shortest
+      round-tripping repr, and ten decimals does not always round-trip a double.
+      It does for MSFT's vwap, and it does for the generated feed the regression
+      gate is pinned to — so **the single-symbol differential and the regression
+      gate were both blind to this by coincidence of the data they had**, which
+      is the whole argument for a seed instead of a choice. Fixed by emitting
+      `%.17g`; the gate re-recorded to no change, which is itself the evidence.
+
+      One defect in the harness, found by testing the harness: its first run
+      reported eight symbols "bit-identical" over **zero** snapshot rows,
+      because the interval exceeded the synthetic session. A comparison of two
+      empty files passes. It now reports VOID and fails.
+
+      The rest of the item was already true: `unknown_refs`
+      and `locate_mismatch` are **0 on both days**. **All fifteen global
+      invariants hold and all fifteen run, on both days**: `full-day-check.py`
+      on the committed census, run and per-symbol CSV prints "OK: 15 global
+      invariants hold across 268,744,780 messages and 8,906 symbols" and exits 0
+      with no skips, and the same on 2019-08-30 across 310,317,357 messages and
+      8,841 symbols. (The two that need the census type histogram have had it
+      since `981dc61`, "The census, with the type histogram"; the three
+      `'h'`/`'W'`/`'B'` cross-checks came with the 9.6 field work, and
+      2019-08-30 got its first census at the same time.)
+      ~~**The ≥8-symbol differential was never run.** 9.12 changed the shape of
       verification to global invariants and this check did not survive the
       change — which is a substitution, not the item, and is recorded as one
-      here rather than only in the results doc.)*
+      here rather than only in the results doc.~~ **It has now been run**, and
+      the substitution is retired: the global invariants and the sampled
+      differential both hold, which is what 9.12 asked for in the first place.)*
 - [ ] ≥5 symbols exact vs Databento; `check_cross.py` run on each; repeated on a
       second day.
       *(**One symbol, one day.** `validation/README.md` carries a single graded
       row — MSFT, 2019-12-30, all five fields exact — and `check_cross.py`
       matched the official close to the cent on it. Four more symbols and a
       second day are outstanding. This is the done-list item with a cash cost:
-      it spends Databento credits.)*
-- [ ] `h`, `W` and `B` counted on both days; tradability derivation stated.
-      *(`h` and `B` are counted on **both** days and both are **zero** —
-      `operational_halts` and `broken_trades` in `census-2019-08-30.json` and
-      `all-symbols-2019-12-30.json`. A zero is the result 9.6 asked for: the
+      it spends Databento credits.
+
+      **Everything that does not need the key is done.** The basket spans the
+      spectrum the item asks for and is reconstructed on both days, oracle and
+      C++ agreeing on every one: MSFT (mega-cap), QQQ (ETF), ALLE (mid-cap),
+      AQB (illiquid), and a symbol that genuinely halted on each day — MKD, 16
+      halts on 2019-12-30, and ELTK, 3 halts on 2019-08-30, MKD having not yet
+      listed in August. Ten `validation/<SYM>_<DAY>.json` reconstructions are
+      committed and waiting to be graded; grading each is one command.
+
+      **Preparing them found a bug that would have failed the grading**, which
+      is the argument for the outside oracle made concrete. An auction that did
+      not happen still arrives as a Cross Trade with `shares == 0` and
+      `price == 0`, and both implementations folded it into the daily
+      statistics: `low` dragged to zero, `open`/`close` set to zero, and a trade
+      counted that never occurred. On 2019-12-30 it corrupted **`low` on 6,468
+      of 8,906 symbols, `close` on 5,903 and `open` on 4,976**. Volume, notional
+      and adds were untouched — an empty cross carries no shares — which is why
+      every global invariant passed over it. It survived because MSFT, the one
+      symbol ever graded externally, has real auctions at both ends, and because
+      the generated feed the regression gate is pinned to has no empty crosses
+      at all. `itch_census` had the same defect in its own counting: it reported
+      **8,906 of 8,906 symbols with a closing cross**, where the truth is
+      **2,537** (and 3,086 with an opening cross; 2,545 and 2,873 on
+      2019-08-30). That is the denominator 9.12's fourth item asks for, and it
+      was meaningless until now. Fixed in all three, with regression tests in
+      `test_book.cpp` and `tests/test_reference.py` that fail without the fix,
+      and both days' artifacts regenerated.
+
+      **The Databento clause is now closed: ten symbol-days, two days, all five
+      fields exact on every one.** Table in `validation/README.md`, each oracle
+      response committed beside its row as `databento-<SYM>-<DATE>.json` so the
+      verdict replays offline and the fetch is bought once. Total spend for the
+      basket: **$0.0000156**. This item was carried for the life of the project
+      as the one with a cash cost; the cash was a rounding error, and what
+      actually blocked it was that the reconstructions did not exist.
+
+      The external oracle then did the job it exists for. ALLE's low reads
+      **95.6800 and matches Databento to the cent**; before the empty-cross fix
+      it read **0.0000**. MSFT's row did not move at all, which is exactly why
+      one graded mega-cap could never have found it.
+
+      **The clause still open is `check_cross.py` on each.** It needs the
+      official opening and closing prices, and this item's own instruction says
+      to read those off the page rather than take them from a transcript. Two
+      further things are now known about that clause and were not before: the
+      reconstructed auction prices are finally trustworthy — `none` where there
+      was genuinely no auction, rather than a fabricated `0.0000` — and **ALLE
+      cannot be graded by it at all**, because it is NYSE-listed and has no
+      NASDAQ auction on either day. So the gradable set is MSFT and QQQ on both
+      days, ELTK, MKD's close and AQB's open. The denominator that item asks
+      for is also real now: **2,537 symbols produced a closing cross on
+      2019-12-30**, not the 8,906 the census used to report.)*
+- [x] `h`, `W` and `B` counted on both days; tradability derivation stated.
+      *(**Done — all three, both days, and checked rather than merely counted.**
+      `h` and `B` are **zero** on both days —
+      `operational_halts` and `broken_trades` in `all-symbols-2019-08-30.json` and
+      `all-symbols-2019-12-30.json`. (The first of those was committed as
+      `census-2019-08-30.json`, which it never was: it carries `feed`, `adds`
+      and `band_levels`, so it is a `book_replay --all-symbols` run. Renamed, and
+      the name `census-2019-08-30.json` now holds an actual census.) A zero is the result 9.6 asked for: the
       constants stay unconfirmed against real bytes and the count says so.
       `W` is acted on — `dispatch.hpp` routes it to `set_mwcb_breached()` and
       `tradable()` reads it — and `book_replay` prints it in the summary as
-      `MWCB level breached ('W')`, but it is **not written to the JSON**, so it
+      `MWCB level breached ('W')`, ~~but it is **not written to the JSON**, so it
       is not per-day verifiable from `validation/` the way the other two are —
-      one field, not an experiment. The derivation is stated in
+      one field, not an experiment.~~
+      **The field now exists.** `write_all_json` emits `mwcb_level_breached`
+      (empty string when the session never breached, not a `0` that would be a
+      fourth level nobody defined) and `mwcb_events`, with a `mwcb_events()`
+      accessor on `BookSet` behind it. More than a field, though, because
+      *verifiable* was the word the item used: all three are now
+      **cross-checked against the census type histogram** by
+      `full-day-check.py`. `'W'` and `'B'` are exact equalities — dispatch calls
+      `set_mwcb_breached()` and `note_broken_trade()` once per message — and
+      `'h'` is a **bound**, because a repeated halt on an already-halted symbol
+      is not a second entry. That is three more checks, so a fresh run now
+      reports **fifteen** global invariants rather than twelve, and all three
+      were confirmed able to fail before being trusted. Two things it does not
+      buy: the committed run artifacts predate the fields, so the checks SKIP
+      against them and the file exits 2 — the twelve that always passed still
+      pass — and 2019-08-30 has no type histogram to check against anyway.
+      **Both days were then re-run and the artifacts committed**, so the
+      qualification above is spent: `full-day-check.py` reports **15 of 15 on
+      2019-12-30 and 15 of 15 on 2019-08-30**, exit 0, with nothing skipped.
+      `W` is zero on both days **on the evidence** — neither census records a
+      single `'W'`, and 2019-08-30's census is new, because that day had never
+      had one, which is precisely why its `h`/`W`/`B` had nothing to be checked
+      against before. The derivation is stated in
       `book_set.hpp::tradable`, which gates on `H`, the operational halt and the
       MWCB level. All three stay **false** for `modelled()` deliberately: that
       predicate is the contract `python/reference/book.py` mirrors, and none of
@@ -567,17 +674,50 @@ write its sibling. No number reaches a document by being retyped.
       unreflected — and was corrected in `a05de8c`**, which files all three
       under ACTED ON and carries the MWCB-treated-as-permanent limitation
       across.)*
-- [ ] Peak RSS decomposed; overflow distribution and re-centre count reported;
+- [x] Peak RSS decomposed; overflow distribution and re-centre count reported;
       the band-budget paragraph written.
       *(Three of four. RSS decomposes to **92.5%** — bands 291.8 MB, reference
       map 134.2 MB, pool 83.7 MB, residual 41.3 MB. Re-centres are reported per
       day (4,319 and 3,988) and per symbol. The band-budget paragraph is "The
       band is where the design actually failed", and it carries the phase's real
       finding: 30% of symbols had at least half their adds off-band.
-      **The overflow distribution is not reported** — overflow maps appear only
+      ~~**The overflow distribution is not reported** — overflow maps appear only
       inside the residual row, which is the one part of the memory story that is
       an aggregate hiding a distribution, exactly the thing this phase criticised
-      the 13% off-band figure for being.)*
+      the 13% off-band figure for being.~~
+      **Going to report it turned up why it never was: the metric could not
+      answer the question.** `overflow_levels()` is the map's size *right now*;
+      the session ends flat, and `pop()` erases each overflow level as it
+      empties to keep the map cold — so a completed day reports an empty map for
+      every symbol however hard overflow was worked in between. Both committed
+      days say exactly that: **8,906 and 8,841 symbols, zero overflow levels
+      each, against 18.7M and 14.0M off-band adds.** A figure that is zero by
+      construction cannot decompose peak RSS, which is itself a high-water mark,
+      and a distribution over it would have been a column of zeroes presented as
+      a finding. So `Side` keeps a high-water counter now — taken in the
+      overflow branch of `push()` and nowhere else, so the dense path pays
+      nothing, and deliberately *not* reset by `clear_levels()`, because a
+      re-centre empties the map and the peak is a fact about the session.
+      `peak_overflow_levels` reaches the per-symbol CSV and the run JSON, with
+      `overflow_bytes_per_level` beside it so the report prices the maps out of
+      the residual row instead of typing a node size; the summary row that used
+      to count a structural zero prints the peak with the terminal count beneath
+      it; and `test_peak_overflow_outlives_the_levels_it_counted` fails if the
+      peak ever stops surviving what it counted. The published table is **empty
+      rather than estimated** ~~and names the re-run that fills it — the same
+      re-run as the item above~~ **until the re-run filled it**, which it now
+      has: **8,892 of 8,906 symbols on 2019-12-30 and 8,826 of 8,841 on
+      2019-08-30 used overflow**, median peak 36 levels, p99 475, max 5,593
+      (AMZN) — and **zero at the close on both days**, which is the prediction
+      the counter was built on, confirmed at full scale.
+      One caution carried into the results doc rather than celebrated: pricing
+      the peak at 72 B a node puts overflow at 41.2 MB against a residual that
+      was 41.3 MB, and the decomposition therefore reads 100.0%. **That is too
+      neat to accept.** The row is an upper bound twice over — the two sides'
+      peaks are summed though they need not coincide, and peak RSS is its own
+      high-water mark — and 8,906 books, a directory and the binary are not
+      0.1 MB between them. The real figure sits under the bound and the other
+      terms cover the rest; the doc says so instead of claiming every byte.)*
 - [x] `--symbol MSFT` byte-identical to the phase-8 repo (CI gate).
       *(`validation/regression/`, gated by `scripts/regression-gate.sh` on every
       push — so all of the above was bought without moving the single-symbol
@@ -590,11 +730,42 @@ write its sibling. No number reaches a document by being retyped.
 - [x] `docs/phase9-results.md` generated from artifacts, not typed.
       *(`scripts/phase9-report.py`, `--check`ed in CI.)*
 
-**Six of ten, and the four open ones are verification breadth rather than
-machinery.** The run is done, the numbers are generated, and nothing on the
-open list needs a design. Two of them need a field added to an artifact (`W`
-per day, the overflow distribution); two need work that was never started (the
-≥8-symbol differential, four more Databento symbols on a second day).
+**Nine of ten**, and the tenth is two-thirds done. `W` per day and the overflow
+distribution are closed: the
+fields were added, the cross-checks and the high-water counter that make them
+mean anything were added with them, and **both days were re-run and their
+artifacts committed** — which is what actually closed the boxes, because an
+artifact that *would* carry a number is not an artifact that *does*. The
+global-invariant count went twelve to fifteen and both days now report 15 of 15
+from committed bytes.
+
+**The ≥8-symbol oracle differential is closed too**, and it failed on its first
+run — see its entry. The one item still open is the Databento row, and only one
+of its three clauses remains: `check_cross.py` on each symbol, which needs
+official auction prices read off a page rather than taken from a transcript.
+The Databento grading itself is done — ten symbol-days, two days, all five
+fields exact — and it cost **$0.0000156**, so "the only item costing money" was
+never really about the money.
+
+Both of the closed items found real bugs, which is the argument for having run
+them rather than reasoning about them. The differential found a `vwap` the two
+implementations printed differently, agreeing only by coincidence on the single
+symbol it had always been run on. Preparing the Databento basket found an
+auction that did not happen being counted as a trade at price zero, which had
+corrupted `low` on 6,468 of 8,906 symbols in both implementations at once —
+invisible to every internal check, because both were wrong the same way.
+
+Worth recording because it was the expensive part and none of it was the book:
+the re-run reproduced every deterministic field on both days and **did not
+reproduce the wall clock** — 52.49 s against 44.57 s. Chasing it cost more than
+the fields did and ruled out, by measurement, the code (`dfe2837`'s own binary
+reports the same 52.49 s today), the power state, the build flags and I/O. What
+is left is that the machine is busier than it was. The recorded figures are kept
+and the attempt is published beside them in
+[`validation/timing-reproduction-2026-08-24.json`](../validation/timing-reproduction-2026-08-24.json),
+because a performance number should measure the program rather than what else
+was running — the same reason every sweep in this phase reports the minimum of
+its samples.
 
 **CV line — not yet earned.** The line below is written for the finished phase
 and **two of its clauses are outstanding**: there is no sampled differential
@@ -610,9 +781,14 @@ What **is** earned today, and is the stronger claim anyway because every number
 in it is committed and CI-checked: "Reconstructs every one of 8,906 securities
 from a full NASDAQ TotalView-ITCH day — 268.7M messages, 8.25 GB — in one
 process in 44.6 s at 551 MB, with zero unknown order references and zero locate
-mismatches across the entire feed, cross-checked by twelve global invariants
-against a bookless census pass, and exact against a vendor daily bar on one
-symbol."
+mismatches across the entire feed, cross-checked by fifteen global invariants
+against a bookless census pass on two separate trading days, and exact against a
+vendor daily bar on one symbol."
+
+Fifteen, and both days carry it from committed artifacts — `full-day-check.py`
+exits 0 with nothing skipped on 2019-12-30 and on 2019-08-30. The wall clock in
+that sentence is the recorded one and its reproduction attempt is published; see
+the note above.
 
 ---
 

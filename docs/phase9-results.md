@@ -26,6 +26,9 @@ off a terminal and typed in.
 | unknown references | 0 |
 | locate mismatches | 0 |
 | undirectoried messages | 0 |
+| operational halts ('h') | 0 |
+| broken trades ('B') | 0 |
+| MWCB ('W') | 0 — no market-wide breach on this day |
 
 ## The two numbers, and which is which
 
@@ -55,8 +58,11 @@ The single-symbol benchmark reports 22.8 ns per message. Across a whole day of e
 | dense bands | 291.8 | 512 slots x 2 sides x 8,906 books x 32 B |
 | reference map | 134.2 | 8,388,608 slots x 16 B |
 | order pool | 83.7 | 2,093,056 orders x 40 B |
-| **accounted** | **509.8** | 92.5% of peak RSS |
-| residual | 41.3 | books, directory, overflow maps, allocator, binary |
+| overflow maps (bound) | 41.2 | 571,766 peak levels x 72 B per red-black node |
+| **accounted** | **550.9** | 100.0% of peak RSS |
+| residual | 0.1 | books, directory, allocator, binary |
+
+**The overflow row is an upper bound, so the 0.1 MB residual is not evidence that the decomposition closed.** The bound sums each side's peak although the two need not peak together, and compares them against a peak RSS that need not coincide with either. Books, the directory and the binary are certainly not 0.1 MB between them, so the real overflow figure sits somewhat below the bound and those terms cover the rest. Measuring the coincident sum would mean one side's insert reading the other side's map, which is why it is a bound and says so.
 
 Peak live orders were 1,924,078; the pool ended at 2,093,056, and the reference map was pre-sized to 8,388,608 slots — 4.36x the peak, which is the load factor that sizing was chosen for.
 
@@ -105,6 +111,58 @@ And 7 symbols were judged fine and drifted out anyway, because the policy looks 
 | TSLA | 286,674 | 97.9% | 1 |
 | BABA | 274,670 | 95.9% | 0 |
 | TQQQ | 874,084 | 29.8% | 0 |
+
+## Overflow, distributed
+
+The dense band is the fast store and the `std::map` behind it is the slow one, so *how much* fell through matters as much as the off-band percentage above. It is reported here rather than folded into the residual row, which is what made that row an aggregate hiding a distribution.
+
+**At the close, 0 overflow levels stood across all 8,906 symbols, in 0 of them.** That number is structural rather than small: the session ends flat, and the book erases each overflow level as it empties to keep the map cold. A completed day reports an empty map however hard overflow was worked in between — and it was worked, 18,739,843 times. The terminal size cannot decompose peak RSS, which is itself a high-water mark.
+
+**8,892 of 8,906 symbols (99.8%) used overflow at some point**, holding 571,766 levels between them at their respective worsts.
+
+| percentile of symbols using overflow | peak levels held |
+|---|---:|
+| p10 | 11 |
+| p25 | 19 |
+| p50 | 36 |
+| p75 | 69 |
+| p90 | 119 |
+| p99 | 475 |
+| max | 5,593 |
+
+### The symbols that leaned on overflow hardest
+
+| symbol | peak overflow levels | adds | off-band | re-centres |
+|---|---:|---:|---:|---:|
+| AMZN | 5,593 | 287,475 | 99.0% | 1 |
+| AAPL | 4,997 | 795,712 | 40.7% | 1 |
+| MSFT | 3,455 | 630,899 | 8.3% | 0 |
+| TSLA | 3,455 | 286,674 | 97.9% | 1 |
+| NVDA | 2,984 | 244,389 | 90.1% | 1 |
+| FB | 2,626 | 288,078 | 89.9% | 0 |
+
+## The wall clock did not reproduce, and the book is not why
+
+On 2026-08-24 every figure above was re-measured. Each **deterministic** one came back identical — 231,556 per-symbol cells compared, 0 differing. The wall clock did not: **52.49 s against the 44.57 s recorded**, 1.18x. So the arms were run alternately inside one session, sharing whatever load there was, because running one to completion and then the other is how a busy machine gets attributed to a code change.
+
+| binary | runs | best |
+|---|---:|---:|
+| dfe2837 - the commit whose run recorded 44.57 s | 2 | 52.49 s |
+| HEAD - 49 commits later, unmodified | 2 | 53.92 s |
+| HEAD + peak-overflow and MWCB fields | 4 | 53.20 s |
+
+The commit that recorded 44.57 s reports 52.49 s today — its own binary, the same file, byte-identical output. All three arms sit within 1.43 s of each other, so neither the 49 commits of phase 10 and 11 work nor the counters added for this section cost anything measurable. What moved is the machine.
+
+Ruled out, each by measurement rather than by argument:
+
+* **power state** — battery min 52.43 s, AC min 53.20 s - AC did not help, so a power cap does not explain it
+* **build flags** — -march=native measured 52.97 s, indistinguishable
+* **io** — the framing-only pass moved 16.51 -> 17.41 s (+5%) while the book pass moved +21%; an I/O or decompression cause would move both
+
+What is left is contention: the machine was not idle; top consumers were WindowServer and application helpers, which compete for the single performance core a synchronous book_replay needs, on a machine with 6 performance cores and a 1-minute load average between 4.04 and 6.94 across the runs.
+
+**The recorded numbers above are kept rather than replaced.** They were taken on a quieter machine, and a performance figure should measure the program rather than what else was running — the same reason the sweeps in this phase report the minimum of their samples. `timing_provenance` in each artifact names the two fields this applies to; every other field in them is from the re-run.
+
 
 <!-- generated:end -->
 
