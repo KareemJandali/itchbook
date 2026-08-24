@@ -227,6 +227,10 @@ def main(argv=None):
     ap.add_argument("--oracle-json", metavar="PATH",
                     help="read the oracle from a file instead of the network, "
                          "for offline reruns of a fetch you already paid for")
+    ap.add_argument("--save-oracle", metavar="PATH",
+                    help="write the fetched oracle to a file, so the fetch you "
+                         "just paid for can be replayed by --oracle-json and "
+                         "committed as the artifact the verdict rests on")
     a = ap.parse_args(argv)
 
     with open(a.summary) as f:
@@ -244,6 +248,16 @@ def main(argv=None):
             print(f"{a.dataset} ohlcv-1d {a.symbol} {a.date}: ${cost}")
             return 0
         theirs = fetch_daily(a.api_key, a.dataset, a.symbol, a.date)
+        # Save before grading, not after. A grader that exits non-zero on a
+        # mismatch would otherwise throw away the response that was just paid
+        # for, and the next run would pay again to look at the same numbers --
+        # exactly when you most want to keep them.
+        if a.save_oracle:
+            with open(a.save_oracle, "w") as f:
+                json.dump({"dataset": a.dataset, "schema": "ohlcv-1d",
+                           "symbol": a.symbol, "date": a.date, **theirs},
+                          f, indent=2)
+                f.write("\n")
 
     if not check_window(ours, a.date, a.summary):
         return 1

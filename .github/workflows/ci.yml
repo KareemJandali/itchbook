@@ -600,6 +600,24 @@ jobs:
           python3 scripts/full-day-check.py --census /tmp/census.json \
             --run /tmp/run.json --per-symbol /tmp/per.csv
 
+      # 9.12's sampled differential. The seed is PINNED here and rotates
+      # locally, because CI's job is to fail on a regression rather than to
+      # explore -- a job that draws new symbols every push fails for a new
+      # reason every push. There is no market data here, so it samples the
+      # generated multi-locate feed; the real-day run and its seed are recorded
+      # in validation/sampled-differential-2019-12-30.json.
+      #
+      # --interval-ms 10 because this feed's session is seconds long, not hours.
+      # At a coarser interval every snapshot CSV comes out empty, and two empty
+      # files are identical -- which this script now reports as VOID rather than
+      # as a pass, after doing exactly that on its first run.
+      - name: Sampled differential (K symbols, seeded, oracle vs C++)
+        run: |
+          python3 scripts/sampled-differential.py data/raw/multi.gz \
+            --symbols-from /tmp/per.csv --seed 20191230 --k 8 \
+            --build build --interval-ms 10 --out /tmp/sampled \
+            --slices /tmp/slices --json /tmp/sampled.json
+
       - name: Smoke test (reference book replay)
         run: |
           python3 python/reference/replay.py data/raw/sample.gz --symbol TEST \

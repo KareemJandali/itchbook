@@ -21,16 +21,165 @@ BEGIN = "<!-- generated:begin -->"
 END = "<!-- generated:end -->"
 
 
+# A field an artifact does not carry is not a field that measured zero. Three of
+# these helpers exist only to keep that distinction visible: the run that
+# produced validation/ predates the fields below, and the alternative to saying
+# so is a table that reports absence as a number.
+MISSING = ("_not recorded in this artifact_ — the committed run predates the "
+           "field. `book_replay --all-symbols --json` writes it now; the value "
+           "arrives with the next run over the day.")
+
+
+def mwcb_row(run):
+    """'W' as a table row: the level breached, or the reason there is no row."""
+    if "mwcb_events" not in run:
+        return f"| MWCB ('W') | {MISSING} |"
+    n = run["mwcb_events"]
+    lvl = run.get("mwcb_level_breached") or ""
+    if n == 0:
+        # A zero here is a result, not an absence: it says the constants 'W' is
+        # parsed with are still unconfirmed against real bytes, which is exactly
+        # what 9.6 asked the count for.
+        return "| MWCB ('W') | 0 — no market-wide breach on this day |"
+    return f"| MWCB ('W') | {n} message(s), last level `{lvl}` |"
+
+
+def overflow_memory(run):
+    """(MB, table row) for the overflow maps at their worst, or (0, None)."""
+    peak = run.get("peak_overflow_levels")
+    per = run.get("overflow_bytes_per_level")
+    if peak is None or per is None:
+        return 0.0, None
+    mb = peak * per / 1e6
+    return mb, (f"| overflow maps (bound) | {mb:.1f} | {peak:,} peak levels x {per} B "
+                f"per red-black node |")
+
+
+def overflow_section(run, rows):
+    """The overflow distribution, or the reason there is not one yet."""
+    L = ["## Overflow, distributed", "",
+         "The dense band is the fast store and the `std::map` behind it is the "
+         "slow one, so *how much* fell through matters as much as the off-band "
+         "percentage above. It is reported here rather than folded into the "
+         "residual row, which is what made that row an aggregate hiding a "
+         "distribution.", ""]
+
+    # The terminal count IS in the committed artifact, and it is zero -- which
+    # is the finding, not a gap. Stating it is what makes the peak column
+    # legible as a fix rather than as a second opinion.
+    term = sum(int(r["overflow_levels"]) for r in rows)
+    users = sum(1 for r in rows if int(r["overflow_levels"]) > 0)
+    flat = int(run["resting_orders"]) == 0
+    L += [f"**At the close, {term:,} overflow levels stood across all "
+          f"{len(rows):,} symbols, in {users:,} of them.**"
+          + (" That number is structural rather than small: " if term == 0 else " ")
+          + ("the session ends flat" if flat
+             else f"these books closed holding {int(run['resting_orders']):,} orders")
+          + ", and the book erases each overflow level as it empties to keep the "
+          "map cold. A completed day reports an empty map however hard overflow "
+          "was worked in between — and it was worked, "
+          f"{int(run['off_band_adds']):,} times. The terminal size cannot "
+          "decompose peak RSS, which is itself a high-water mark.", ""]
+
+    if not rows or "peak_overflow_levels" not in rows[0]:
+        L += ["**The high-water distribution is not in this artifact.** "
+              "`peak_overflow_levels` is written per symbol by "
+              "`book_replay --all-symbols --per-symbol` now; the run committed "
+              "here predates the column, and there is no way to recover a peak "
+              "from a file that recorded only the end. One re-run over the day "
+              "fills in the table below, which is left empty rather than "
+              "estimated:", "",
+              "| percentile of symbols using overflow | peak levels held |",
+              "|---|---:|",
+              "| p50 | — |", "| p90 | — |", "| p99 | — |", "| max | — |", ""]
+        return L
+
+    peaks = sorted(int(r["peak_overflow_levels"]) for r in rows
+                   if int(r["peak_overflow_levels"]) > 0)
+    if not peaks:
+        L += ["No symbol ever used overflow on this feed.", ""]
+        return L
+
+    def pctile(q):
+        return peaks[min(int(q / 100 * (len(peaks) - 1)), len(peaks) - 1)]
+
+    total = sum(peaks)
+    L += [f"**{len(peaks):,} of {len(rows):,} symbols "
+          f"({len(peaks) / len(rows) * 100:.1f}%) used overflow at some point**, "
+          f"holding {total:,} levels between them at their respective worsts.", "",
+          "| percentile of symbols using overflow | peak levels held |", "|---|---:|"]
+    for q in (10, 25, 50, 75, 90, 99):
+        L.append(f"| p{q} | {pctile(q):,} |")
+    L.append(f"| max | {peaks[-1]:,} |")
+
+    worst = sorted((r for r in rows if int(r["peak_overflow_levels"]) > 0),
+                   key=lambda r: -int(r["peak_overflow_levels"]))[:6]
+    L += ["", "### The symbols that leaned on overflow hardest", "",
+          "| symbol | peak overflow levels | adds | off-band | re-centres |",
+          "|---|---:|---:|---:|---:|"]
+    for r in worst:
+        a = int(r["adds"])
+        L.append(f"| {r['symbol']} | {int(r['peak_overflow_levels']):,} | {a:,} | "
+                 f"{int(r['off_band_adds']) / a * 100 if a else 0:.1f}% | {r['recentres']} |")
+    return L
+
+
 def load():
     sweep = V / "sweep-load.json"
+    repro = V / "timing-reproduction-2026-08-24.json"
     return (json.loads((V / "census-2019-12-30-framing.json").read_text()),
             json.loads((V / "census-2019-12-30.json").read_text()),
             json.loads((V / "all-symbols-2019-12-30.json").read_text()),
             list(csv.DictReader((V / "all-symbols-2019-12-30.csv").open())),
-            json.loads(sweep.read_text()) if sweep.exists() else None)
+            json.loads(sweep.read_text()) if sweep.exists() else None,
+            json.loads(repro.read_text()) if repro.exists() else None)
 
 
-def build(floor, census, run, rows, sweep):
+def reproduction_section(r):
+    """The re-run that did not reproduce the wall clock, and what it ruled out."""
+    if r is None:
+        return []
+    rec = r["recorded"]["elapsed_seconds"]
+    arms = [(a["label"], min(a["samples"]), len(a["samples"])) for a in r["arms"]]
+    best = min(m for _, m, _ in arms)
+    L = ["## The wall clock did not reproduce, and the book is not why", "",
+         f"On {r['date']} every figure above was re-measured. Each **deterministic** "
+         f"one came back identical — {r['per_symbol_cells_compared']:,} per-symbol cells "
+         f"compared, {r['per_symbol_cells_differing']} differing. The wall clock did not: "
+         f"**{best:.2f} s against the {rec:.2f} s recorded**, "
+         f"{best / rec:.2f}x. So the arms were run alternately inside one session, "
+         "sharing whatever load there was, because running one to completion and then "
+         "the other is how a busy machine gets attributed to a code change.", "",
+         "| binary | runs | best |", "|---|---:|---:|"]
+    for label, m, n in arms:
+        L.append(f"| {label} | {n} | {m:.2f} s |")
+    spread = max(m for _, m, _ in arms) - best
+    L += ["",
+          f"The commit that recorded {rec:.2f} s reports "
+          f"{arms[0][1]:.2f} s today — its own binary, the same file, byte-identical "
+          f"output. All three arms sit within {spread:.2f} s of each other, so neither the "
+          "49 commits of phase 10 and 11 work nor the counters added for this section "
+          "cost anything measurable. What moved is the machine.", "",
+          "Ruled out, each by measurement rather than by argument:", ""]
+    for k, v in r["controls_ruled_out"].items():
+        L.append(f"* **{k.replace('_', ' ')}** — {v}")
+    c = r["conditions"]
+    L += ["",
+          f"What is left is contention: {c['note']}, on a machine with "
+          f"{c['cores']['performance']} performance cores and a 1-minute load average "
+          f"between {c['load_average_1min_range'][0]} and "
+          f"{c['load_average_1min_range'][1]} across the runs.",
+          "",
+          "**The recorded numbers above are kept rather than replaced.** They were taken "
+          "on a quieter machine, and a performance figure should measure the program "
+          "rather than what else was running — the same reason the sweeps in this phase "
+          "report the minimum of their samples. `timing_provenance` in each artifact "
+          "names the two fields this applies to; every other field in them is from the "
+          "re-run.", ""]
+    return L
+
+
+def build(floor, census, run, rows, sweep, repro=None):
     act = [r for r in rows if int(r["adds"]) > 0]
     def frac(r):
         return int(r["off_band_adds"]) / int(r["adds"])
@@ -68,6 +217,9 @@ def build(floor, census, run, rows, sweep):
          f"| unknown references | {run['unknown_refs']} |",
          f"| locate mismatches | {run['locate_mismatch']} |",
          f"| undirectoried messages | {run['undirectoried_messages']} |",
+         f"| operational halts ('h') | {run['operational_halts']} |",
+         f"| broken trades ('B') | {run['broken_trades']} |",
+         mwcb_row(run),
          "",
          "## The two numbers, and which is which", "",
          "| | seconds | M msg/s |", "|---|---:|---:|",
@@ -124,16 +276,43 @@ def build(floor, census, run, rows, sweep):
           f"The single-symbol benchmark reports {CACHE_HOT_NS} ns per message. Across a whole "
           f"day of every symbol it is **{book * 1e9 / msgs:.0f} ns**.",
           ""]
+    ov_mb, ov_note = overflow_memory(run)
+    acc += ov_mb
     L += [
          "## Memory, decomposed", "",
          "| | MB | what it is |", "|---|---:|---|",
          f"| dense bands | {band:.1f} | {run['band_levels']} slots x 2 sides x "
          f"{run['books']:,} books x 32 B |",
          f"| reference map | {ref:.1f} | {run['ref_map_slots']:,} slots x 16 B |",
-         f"| order pool | {pool:.1f} | {run['pool_capacity_orders']:,} orders x 40 B |",
-         f"| **accounted** | **{acc:.1f}** | {acc / peak * 100:.1f}% of peak RSS |",
-         f"| residual | {peak - acc:.1f} | books, directory, overflow maps, allocator, binary |",
+         f"| order pool | {pool:.1f} | {run['pool_capacity_orders']:,} orders x 40 B |"]
+    if ov_note is not None:
+        L.append(ov_note)
+    L += [f"| **accounted** | **{acc:.1f}** | {acc / peak * 100:.1f}% of peak RSS |",
+          f"| residual | {peak - acc:.1f} | "
+          + ("books, directory, allocator, binary |" if ov_note is not None
+             else "books, directory, overflow maps, allocator, binary |"),
          "",
+]
+    if ov_note is not None:
+        # Do not let this read as a decomposition that closed. The overflow row
+        # is an upper bound twice over -- the two sides' peaks are summed though
+        # they need not coincide, and peak RSS is its own high-water mark that
+        # need not coincide with either. It lands within 0.2 MB of the residual
+        # it replaced, and that agreement is too neat to take at face value:
+        # 8,906 books, a directory and the binary itself cannot together be the
+        # 0.1 MB left over. The honest reading is that the true overflow
+        # contribution is somewhat under the bound and the other terms make up
+        # the difference, not that every byte is now accounted for.
+        L += [f"**The overflow row is an upper bound, so the {peak - acc:.1f} MB residual "
+              "is not evidence that the decomposition closed.** The bound sums each "
+              "side's peak although the two need not peak together, and compares them "
+              "against a peak RSS that need not coincide with either. Books, the "
+              "directory and the binary are certainly not "
+              f"{peak - acc:.1f} MB between them, so the real overflow figure sits "
+              "somewhat below the bound and those terms cover the rest. Measuring the "
+              "coincident sum would mean one side's insert reading the other side's "
+              "map, which is why it is a bound and says so.", ""]
+    L += [
          f"Peak live orders were {census['live_orders']['peak']:,}; the pool ended at "
          f"{run['pool_capacity_orders']:,}, and the reference map was pre-sized to "
          f"{run['ref_map_slots']:,} slots — {run['ref_map_slots'] / census['live_orders']['peak']:.2f}x "
@@ -168,6 +347,8 @@ def build(floor, census, run, rows, sweep):
           "| symbol | adds | off-band | re-centres |", "|---|---:|---:|---:|"]
     for r in worst:
         L.append(f"| {r['symbol']} | {int(r['adds']):,} | {frac(r) * 100:.1f}% | {r['recentres']} |")
+    L += [""] + overflow_section(run, rows)
+    L += [""] + reproduction_section(repro)
     L += ["", END]
     return "\n".join(L)
 

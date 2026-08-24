@@ -47,6 +47,13 @@ def main():
     def check(name, got, want, note=""):
         checks.append((name, got, want, got == want, note))
 
+    def check_le(name, got, want, note=""):
+        # Not every pair of routes to a number is an equality. 'h' is the one
+        # that is not: the book counts ENTRIES INTO a halt and a repeated 'h'
+        # for a symbol already halted is not a second entry, so the census's
+        # message count bounds the book's rather than matching it.
+        checks.append((name, got, want, got <= want, note))
+
     def skip(name, why):
         # A check that did not run must not look like a check that passed.
         # Two of these went quiet on the first real run -- the census predated
@@ -77,6 +84,26 @@ def main():
     check("resting at the close", run["resting_orders"], live["final"],
           "the day ends with an empty book, or it does not")
 
+    # The three the book does not model and cannot ignore, each counted twice:
+    # once off the wire by a census with no book at all, once by dispatch while
+    # building one. Before this they were reported and nothing compared them,
+    # which on a day where all three are zero is indistinguishable from a
+    # dispatch that never routed them.
+    if not types:
+        for name in ("'W' messages", "'B' messages", "'h' messages"):
+            skip(name, "census has no type histogram; re-run itch_census")
+    elif "mwcb_events" not in run:
+        # A run artifact that predates the field is not a run that saw no 'W'.
+        for name in ("'W' messages", "'B' messages", "'h' messages"):
+            skip(name, "run predates mwcb_events; re-run book_replay --all-symbols")
+    else:
+        check("'W' messages", run["mwcb_events"], types.get("W", 0),
+              "dispatch calls set_mwcb_breached() exactly once per 'W'")
+        check("'B' messages", run["broken_trades"], types.get("B", 0),
+              "dispatch calls note_broken_trade() exactly once per 'B'")
+        check_le("'h' messages", run["operational_halts"], types.get("h", 0),
+                 "entries into a halt cannot exceed the 'h' messages that caused them")
+
     check("unknown references", run["unknown_refs"], 0,
           "every reference in the feed named an order the book was holding")
     check("locate mismatches", run["locate_mismatch"], 0,
@@ -100,7 +127,7 @@ def main():
     failed = 0
     for name, got, want, ok, note in checks:
         mark = "ok " if ok else "FAIL"
-        print(f"  {mark} {name:<{width}} {got:>15,}" + (f" != {want:,}" if not ok else ""))
+        print(f"  {mark} {name:<{width}} {got:>15,}" + (f" vs {want:,}" if not ok else ""))
         if note and not ok:
             print(f"       {note}")
         failed += 0 if ok else 1

@@ -97,32 +97,7 @@ echo "rows compared: $(( $(wc -l < "$OUT/py.csv") - 1 ))"
 
 echo
 echo "=== daily summary ==="
-python3 - "$OUT/py.json" "$OUT/cpp.json" <<'PYEOF'
-import json, sys
-a = json.load(open(sys.argv[1]))
-b = json.load(open(sys.argv[2]))
-# The intersection: everything both implementations report about the BOOK.
-# `symbol` and `session_end_ns` are the Python driver's own bookkeeping and
-# say nothing about whether the two books agree, so they are named rather
-# than counted.
-keys = sorted(set(a) & set(b))
-only_py = sorted(set(a) - set(b))
-only_cpp = sorted(set(b) - set(a))
-bad = []
-width = max(len(k) for k in keys)
-for k in keys:
-    x, y = a[k], b[k]
-    if x != y:
-        bad.append(k)
-    print(f"  {k:<{width}}  {str(x):>18}  {str(y):>18}  {'' if x == y else '<-- DIFFER'}")
-if only_py or only_cpp:
-    print(f"\n  (driver-only fields, not compared: "
-          f"{', '.join(only_py + only_cpp)})")
-if bad:
-    print("\nFAIL: the summaries disagree on " + ", ".join(bad))
-    raise SystemExit(1)
-print(f"\n{len(keys)} summary fields identical")
-PYEOF
+python3 python/analysis/summary_diff.py "$OUT/py.json" "$OUT/cpp.json"
 
 echo
 echo "=== done: bit-identical across a full trading day ==="
