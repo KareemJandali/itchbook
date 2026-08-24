@@ -526,14 +526,14 @@ Committed in `docs/build-plan-9-12.md` §11.3 before the harness existed. Each v
 | P1 | A-S carries smaller inventory excursions | max\|q\| lower by ≥ 30% | 30/36 (83%) | **kept** |
 | P2 | the gain is inventory variance, **not** markout | 1s markout within 10% of baseline | 0/36 (0%) | **falsified** |
 | P3 | A-S loses money after fees | equity/share < 0 in ≥ 3 of 4 lanes | 8/9 symbol-days (89%) | **kept** |
-| P4 | A-S degrades faster with latency | fractional equity loss larger than baseline's | one latency only (0 ns) | **not evaluated** |
+| P4 | A-S degrades faster with latency | fractional loss from 0 to 500,000 ns larger than baseline's | 19/36 (53%) | **kept** |
 | P5 | the band over *worlds* is wider than the band over *gradings* | closed-loop band > phase-6 band (0.40) | 5/9 (56%) | **kept** |
 | P6 | γ moves inventory a lot and P&L little | max\|q\| monotone ↓ in γ **and** P&L sweep band < lane band | 25/36 monotone, 13/36 flat | **mixed** |
 | P7 | if A-S and baseline are the same on every axis, *that* is the finding | P1 and P6 falsified while P2 holds | P1 kept, P2 falsified, P6 mixed | **not triggered** |
 
 > The phase-6 artifact (`docs/figures/touch-maker.json`) does not record which symbol-day it was produced on, so P5 compares band *widths* and not the same feed twice. The comparison is scaled (max − min over the median |equity|) precisely so that it survives a change of symbol, but a reader should treat P5 as the weakest row in this table until phase 6 is re-run on a feed this paper also evaluates.
 
-Across all seven: 3 kept, 1 falsified, 1 mixed, 1 not evaluated (P1 kept, P2 falsified, P3 kept, P4 not evaluated, P5 kept, P6 mixed, P7 not triggered). Falsified predictions stay on the page — the plan committed to grading them in print whichever way they went, and phase 10.8's falsified P1 is still the most useful thing in that section.
+Across all seven: 4 kept, 1 falsified, 1 mixed, 0 not evaluated (P1 kept, P2 falsified, P3 kept, P4 kept, P5 kept, P6 mixed, P7 not triggered). Falsified predictions stay on the page — the plan committed to grading them in print whichever way they went, and phase 10.8's falsified P1 is still the most useful thing in that section.
 
 <!-- generated:results:end -->
 
@@ -602,7 +602,7 @@ A calibration that quietly emitted a number here would hand §5's spread formula
 
 ### 8.5 What remains
 
-1. **Latency sensitivity.** 1 modelled latency (0 ns) is committed, and P4 needs at least two to grade. The prediction — that A-S degrades faster than the baseline because it re-quotes more — is pre-registered and ungraded until a second `validation/as-experiment*.json` at a different `latency_ns` exists.
+1. **Latency sensitivity — done.** 2 modelled latencies (0 ns, 500,000 ns) are committed and P4 is graded in §7.5 against them. The verdict is not restated here; one copy of a graded prediction is the most this document keeps.
 2. **The outside reader.** The plan requires §4 to be reviewed by someone who did not write it. That has not happened, and it is the section most likely to be wrong in a way its author cannot see.
 3. **A second wide-floor name.** §8.3's test is carried by 3 symbols, of which 1 put the floor outside half a tick. With 1 symbol on that side of the line, "the floor fits on the grid" and "this particular symbol" are not separated by this sample.
 4. **More days.** 3 evaluation days is enough to report a day-level spread and not enough to claim significance, and none is claimed anywhere in this paper.
