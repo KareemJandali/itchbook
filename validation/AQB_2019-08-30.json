@@ -1,0 +1,28 @@
+{
+  "best_ask": 28500,
+  "best_bid": 26500,
+  "close": 28400,
+  "cross_prices": {
+    "O": 28100
+  },
+  "cross_volume": 3402,
+  "crossed": false,
+  "hidden_volume": 7554,
+  "high": 29000,
+  "low": 27700,
+  "messages_applied": 2752,
+  "messages_read": 3201,
+  "notional": 694273100,
+  "open": 28600,
+  "resting_orders": 4,
+  "resting_shares": 5001,
+  "session_end_ns": 72000000000000,
+  "snapshots_written": 0,
+  "symbol": "AQB",
+  "system_event": "M",
+  "trades": 99,
+  "trading_state": "T",
+  "unknown_refs": 0,
+  "volume": 24477,
+  "vwap": 28364.30526616824
+}

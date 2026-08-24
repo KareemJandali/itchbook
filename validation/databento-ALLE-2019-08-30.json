@@ -1,0 +1,11 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "ohlcv-1d",
+  "symbol": "ALLE",
+  "date": "2019-08-30",
+  "volume": 88799,
+  "open": 966100,
+  "high": 967600,
+  "low": 956800,
+  "close": 962600
+}

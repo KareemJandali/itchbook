@@ -1,0 +1,29 @@
+{
+  "best_ask": 54600,
+  "best_bid": 53500,
+  "close": 54600,
+  "cross_prices": {
+    "C": 54600,
+    "H": 71500
+  },
+  "cross_volume": 227736,
+  "crossed": false,
+  "hidden_volume": 256324,
+  "high": 119000,
+  "low": 53500,
+  "messages_applied": 32670,
+  "messages_read": 37062,
+  "notional": 106480342600,
+  "open": 60000,
+  "resting_orders": 156,
+  "resting_shares": 87595,
+  "session_end_ns": 68400000000000,
+  "snapshots_written": 0,
+  "symbol": "MKD",
+  "system_event": "M",
+  "trades": 7053,
+  "trading_state": "T",
+  "unknown_refs": 0,
+  "volume": 1413572,
+  "vwap": 75327.14470858223
+}

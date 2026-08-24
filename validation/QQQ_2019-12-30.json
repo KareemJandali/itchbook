@@ -1,0 +1,29 @@
+{
+  "best_ask": 2122600,
+  "best_bid": 2122300,
+  "close": 2121800,
+  "cross_prices": {
+    "C": 2122100,
+    "O": 2135000
+  },
+  "cross_volume": 349846,
+  "crossed": false,
+  "hidden_volume": 355457,
+  "high": 2138500,
+  "low": 2111600,
+  "messages_applied": 2373390,
+  "messages_read": 2373894,
+  "notional": 9006359925050,
+  "open": 2138400,
+  "resting_orders": 327,
+  "resting_shares": 89163,
+  "session_end_ns": 68400000000000,
+  "snapshots_written": 0,
+  "symbol": "QQQ",
+  "system_event": "M",
+  "trades": 24319,
+  "trading_state": "T",
+  "unknown_refs": 0,
+  "volume": 4243782,
+  "vwap": 2122248.486149854
+}

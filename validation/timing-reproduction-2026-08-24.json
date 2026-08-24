@@ -1,0 +1,59 @@
+{
+  "date": "2026-08-24",
+  "feed": "/Users/kareemjandali/Desktop/12302019.NASDAQ_ITCH50.gz",
+  "question": "whether the recorded 44.57 s is reproducible on this machine, and if not, whether the cause is the code or the machine",
+  "recorded": {
+    "commit": "dfe2837",
+    "date": "2026-08-21",
+    "elapsed_seconds": 44.57
+  },
+  "arms": [
+    {
+      "label": "dfe2837 - the commit whose run recorded 44.57 s",
+      "commit": "dfe2837",
+      "samples": [
+        52.49,
+        53.22
+      ]
+    },
+    {
+      "label": "HEAD - 49 commits later, unmodified",
+      "commit": "1651180",
+      "samples": [
+        53.92,
+        54.03
+      ]
+    },
+    {
+      "label": "HEAD + peak-overflow and MWCB fields",
+      "commit": "1651180+working-tree",
+      "samples": [
+        53.2,
+        53.21,
+        54.7,
+        53.51
+      ]
+    }
+  ],
+  "conditions": {
+    "power": "AC",
+    "load_average_1min_range": [
+      4.04,
+      6.94
+    ],
+    "cores": {
+      "performance": 6,
+      "efficiency": 2
+    },
+    "book_replay_threads": 1,
+    "note": "the machine was not idle; top consumers were WindowServer and application helpers, which compete for the single performance core a synchronous book_replay needs"
+  },
+  "controls_ruled_out": {
+    "power_state": "battery min 52.43 s, AC min 53.20 s - AC did not help, so a power cap does not explain it",
+    "build_flags": "-march=native measured 52.97 s, indistinguishable",
+    "io": "the framing-only pass moved 16.51 -> 17.41 s (+5%) while the book pass moved +21%; an I/O or decompression cause would move both"
+  },
+  "deterministic_fields_reproduced_identically": true,
+  "per_symbol_cells_compared": 231556,
+  "per_symbol_cells_differing": 0
+}

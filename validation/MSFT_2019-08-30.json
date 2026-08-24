@@ -1,0 +1,29 @@
+{
+  "best_ask": 1377500,
+  "best_bid": 1375200,
+  "close": 1377300,
+  "cross_prices": {
+    "C": 1378600,
+    "O": 1391000
+  },
+  "cross_volume": 4374512,
+  "crossed": false,
+  "hidden_volume": 746939,
+  "high": 1393500,
+  "low": 1362800,
+  "messages_applied": 1560098,
+  "messages_read": 1560579,
+  "notional": 13320854715500,
+  "open": 1386200,
+  "resting_orders": 486,
+  "resting_shares": 96271,
+  "session_end_ns": 72000000000000,
+  "snapshots_written": 0,
+  "symbol": "MSFT",
+  "system_event": "M",
+  "trades": 48425,
+  "trading_state": "T",
+  "unknown_refs": 0,
+  "volume": 9674474,
+  "vwap": 1376907.3869545776
+}

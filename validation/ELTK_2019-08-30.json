@@ -1,0 +1,30 @@
+{
+  "best_ask": 72000,
+  "best_bid": 65500,
+  "close": 70500,
+  "cross_prices": {
+    "C": 63800,
+    "H": 55900,
+    "O": 42400
+  },
+  "cross_volume": 7942,
+  "crossed": false,
+  "hidden_volume": 186876,
+  "high": 72000,
+  "low": 41000,
+  "messages_applied": 18228,
+  "messages_read": 18976,
+  "notional": 41367888550,
+  "open": 42400,
+  "resting_orders": 31,
+  "resting_shares": 19000,
+  "session_end_ns": 72000000000000,
+  "snapshots_written": 0,
+  "symbol": "ELTK",
+  "system_event": "M",
+  "trades": 3667,
+  "trading_state": "T",
+  "unknown_refs": 0,
+  "volume": 710590,
+  "vwap": 58216.25487271141
+}

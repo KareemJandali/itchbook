@@ -1,0 +1,11 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "ohlcv-1d",
+  "symbol": "MSFT",
+  "date": "2019-08-30",
+  "volume": 9674474,
+  "open": 1386200,
+  "high": 1393500,
+  "low": 1362800,
+  "close": 1377300
+}

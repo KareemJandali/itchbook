@@ -3,9 +3,39 @@
 One JSON per reconstruction of a real trading day: what the book produced, kept
 so a later change can be checked against it.
 
-| Symbol | Date | Messages | Volume | Open | High | Low | Close | Graded? |
-|---|---|---|---|---|---|---|---|---|
-| MSFT | 2019-12-30 | 1,220,796 | 6,154,278 | 159.2000 | 159.3000 | 156.7300 | 157.5700 | **PASS** |
+| Symbol | Role | Date | Messages | Volume | Open | High | Low | Close | Graded? |
+|---|---|---|---|---:|---:|---:|---:|---:|---|
+| ALLE | mid-cap | 2019-08-30 | 49,574 | 88,799 | 96.6100 | 96.7600 | 95.6800 | 96.2600 | **PASS** |
+| AQB | illiquid | 2019-08-30 | 3,201 | 24,477 | 2.8600 | 2.9000 | 2.7700 | 2.8400 | **PASS** |
+| ELTK | halted x3 | 2019-08-30 | 18,976 | 710,590 | 4.2400 | 7.2000 | 4.1000 | 7.0500 | **PASS** |
+| MSFT | mega-cap | 2019-08-30 | 1,560,579 | 9,674,474 | 138.6200 | 139.3500 | 136.2800 | 137.7300 | **PASS** |
+| QQQ | ETF | 2019-08-30 | 2,376,781 | 6,216,615 | 188.7000 | 189.4300 | 186.4300 | 187.3000 | **PASS** |
+| ALLE | mid-cap | 2019-12-30 | 24,536 | 36,263 | 124.9500 | 124.9900 | 123.4800 | 124.0700 | **PASS** |
+| AQB | illiquid | 2019-12-30 | 1,369 | 5,439 | 2.0100 | 2.0500 | 2.0100 | 2.0300 | **PASS** |
+| MKD | halted x16 | 2019-12-30 | 37,062 | 1,413,572 | 6.0000 | 11.9000 | 5.3500 | 5.4600 | **PASS** |
+| MSFT | mega-cap | 2019-12-30 | 1,220,796 | 6,154,278 | 159.2000 | 159.3000 | 156.7300 | 157.5700 | **PASS** |
+| QQQ | ETF | 2019-12-30 | 2,373,894 | 4,243,782 | 213.8400 | 213.8500 | 211.1600 | 212.1800 | **PASS** |
+
+**Ten symbol-days, two trading days, all five fields exact on every one.**
+The basket is the liquidity spectrum 9.12 asks for — a mega-cap, an ETF, a
+mid-cap, something barely traded, and something that actually halted — repeated
+on a second day. MKD had not listed in August, so August's halted name is ELTK.
+
+Each row's oracle response is committed beside it as
+`databento-<SYM>-<DATE>.json`, so the verdict can be re-checked offline and the
+fetch is paid for once. `scripts/databento-grade.sh` prices the whole basket
+without spending (it calls `metadata.get_cost`), and replays any response
+already committed rather than buying it again. The ten queries cost
+**$0.0000156 in total** — this item was carried for the life of the project as
+"the one with a cash cost", and the cash was a rounding error; what actually
+blocked it was the reconstructions not existing yet.
+
+**Preparing this basket is what found the empty-cross bug.** An auction that did
+not happen still arrives as a Cross Trade with `shares == 0` and `price == 0`,
+and folding it into the daily statistics dragged `low` to zero on 6,468 of 8,906
+symbols. ALLE's low above — 95.6800, matching Databento exactly — read `0.0000`
+before the fix. MSFT's row did not move, which is why one graded symbol could
+never have caught it: MSFT has real auctions at both ends.
 
 Graded against Databento `XNAS.ITCH` `ohlcv-1d`. All five fields match exactly.
 The message count is the record's own `messages_read` — the `--utc-day` window,

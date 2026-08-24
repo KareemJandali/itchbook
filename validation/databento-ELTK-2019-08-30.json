@@ -1,0 +1,11 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "ohlcv-1d",
+  "symbol": "ELTK",
+  "date": "2019-08-30",
+  "volume": 710590,
+  "open": 42400,
+  "high": 72000,
+  "low": 41000,
+  "close": 70500
+}

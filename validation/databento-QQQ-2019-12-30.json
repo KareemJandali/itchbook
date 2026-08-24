@@ -1,0 +1,11 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "ohlcv-1d",
+  "symbol": "QQQ",
+  "date": "2019-12-30",
+  "volume": 4243782,
+  "open": 2138400,
+  "high": 2138500,
+  "low": 2111600,
+  "close": 2121800
+}

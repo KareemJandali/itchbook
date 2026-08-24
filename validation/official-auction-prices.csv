@@ -1,0 +1,9 @@
+symbol,date,has_opening_cross,has_closing_cross,official_open,official_close,source
+AQB,2019-08-30,yes,no,,,SKIP - Yahoo split-adjusted 1:20 (2024)
+ELTK,2019-08-30,yes,yes,4.24,6.38,Yahoo chart API v8 (1-day window)
+MSFT,2019-08-30,yes,yes,139.15,137.86,nasdaq.com historical (read off page)
+QQQ,2019-08-30,yes,yes,188.93,187.47,Yahoo chart API v8 (1-day window)
+AQB,2019-12-30,yes,no,,,SKIP - Yahoo split-adjusted 1:20 (2024)
+MKD,2019-12-30,no,yes,,,SKIP - delisted; Yahoo 404
+MSFT,2019-12-30,yes,yes,158.99,157.59,Yahoo chart API v8 (1-day window)
+QQQ,2019-12-30,yes,yes,213.50,212.21,Yahoo chart API v8 (1-day window)

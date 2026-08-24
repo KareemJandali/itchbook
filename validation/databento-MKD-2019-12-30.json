@@ -1,0 +1,11 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "ohlcv-1d",
+  "symbol": "MKD",
+  "date": "2019-12-30",
+  "volume": 1413572,
+  "open": 60000,
+  "high": 119000,
+  "low": 53500,
+  "close": 54600
+}

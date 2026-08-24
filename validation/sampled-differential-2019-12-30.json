@@ -1,0 +1,117 @@
+{
+  "feed": "/Users/kareemjandali/Desktop/12302019.NASDAQ_ITCH50.gz",
+  "seed": 20191230,
+  "k": 10,
+  "pinned": [
+    "MSFT"
+  ],
+  "etf": "QQQ",
+  "pool_size": 8892,
+  "interval_ms": 1000,
+  "levels": 10,
+  "symbols": [
+    {
+      "symbol": "MSFT",
+      "pinned": true,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "QQQ",
+      "pinned": true,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "MTH",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "SEEL",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "CTAA",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "ESBA",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "VGM",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "ALLE",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "HHHHW",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    },
+    {
+      "symbol": "ABIO",
+      "pinned": false,
+      "snapshot_rows": 61228,
+      "summary_fields": 22,
+      "snapshots_identical": true,
+      "summary_fields_differing": [],
+      "compared_nothing": false,
+      "ok": true
+    }
+  ],
+  "total_snapshot_rows": 612280,
+  "symbols_comparing_nothing": 0,
+  "all_identical": true
+}
