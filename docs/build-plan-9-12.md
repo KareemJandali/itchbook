@@ -1920,12 +1920,35 @@ change between two latencies is therefore substantially a change in what the
 stock did to two different inventory paths.
 
 So §7.5 now carries the identical test on **edge** beside P4's verdict, labelled
-as not the pre-registered bar, with a per-arm table including `as-gamma0` so the
-latency damage can be attributed to the spread choice or the skew without an
-inventory effect in the way. Reporting only equity would be quoting the noisier
-of two instruments because it was named first; reporting only edge would be
-moving the bar. Both, and the reader can see why they differ. CI asserts the
-companion appears **with** the verdict and never instead of it.
+as not the pre-registered bar, with a table including `as-gamma0` so the latency
+damage can be attributed to the spread choice or the skew without an inventory
+effect in the way. Reporting only equity would be quoting the noisier of two
+instruments because it was named first; reporting only edge would be moving the
+bar. Both, and the reader can see why they differ. CI asserts the companion
+appears **with** the verdict and never instead of it.
+
+**Measured, at 0 ns against 500,000 ns.** P4 is **kept** on equity at 19/36
+(53%) — a bare majority. On edge it is 25/36, and the two agree. The interesting
+part is per symbol: **GOOG 12/12, MSFT 9/12, STOR 4/12**. A-S degrades faster on
+two symbols and *slower* on the third. Half a millisecond also takes the naive
+touch maker's own edge negative on both penny-wide names — 3,942 → −833 on MSFT,
+3,506 → −1,693 on STOR — which is §8.3's tick argument again from the other side:
+when the whole edge is a fraction of a tick, there is nothing left to lose.
+
+**And the first version of that table pooled.** It reported 36 cells across
+three symbols and said A-S degrades faster, full stop — hiding STOR's reversal
+entirely. §7 states in as many words that results are reported *per symbol-day
+and never pooled*, because with this many symbol-days an average invites exactly
+the claim the data cannot support. The rule was written down, applied to every
+other table in the section, and broken by the next table added to it. Per symbol
+now, with the per-symbol counts printed.
+
+**One more, about reading a table rather than computing one.** The level columns
+are medians of levels and the change column is a median of per-cell ratios, and
+the two do not compose: pooled, `as-gamma0` read 445 → −1,562 beside "−66%",
+which is 451% by the levels. Both numbers were right and the pair was
+unreadable. The column is labelled for what it is, with a note on why they can
+diverge where edge crosses zero.
 
 **And a transcribed number found inside the generator.** §7.1's sentence
 carried a hand-typed *"drift was 94% of equity"* — in the one file whose entire

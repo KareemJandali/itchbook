@@ -531,6 +531,24 @@ Committed in `docs/build-plan-9-12.md` §11.3 before the harness existed. Each v
 | P6 | γ moves inventory a lot and P&L little | max\|q\| monotone ↓ in γ **and** P&L sweep band < lane band | 25/36 monotone, 13/36 flat | **mixed** |
 | P7 | if A-S and baseline are the same on every axis, *that* is the finding | P1 and P6 falsified while P2 holds | P1 kept, P2 falsified, P6 mixed | **not triggered** |
 
+> **P4's bar is equity, and §7.1 measures how much of equity is drift.** P4 was pre-registered against equity per share and is graded against it above; the bar does not move once the data is in. But a fractional *equity* change between two latencies is substantially a change in what the stock did to two different inventory paths. The identical test on **edge** — the half-spread the maker actually captured, which is the part latency can act on — is reported here. It is **not** the pre-registered bar and does not replace the verdict above; it agrees with it.
+>
+> | symbol | arm | median edge/share at 0 ns | at 500,000 ns | median per-cell change |
+> |---|---|---:|---:|---:|
+> | GOOG | `symmetric-touch` | +149,952 | +113,852 | -30% |
+> | GOOG | `as-gamma0` | +54,608 | +18,636 | -66% |
+> | GOOG | `as` | +41,466 | +15,688 | -70% |
+> | MSFT | `symmetric-touch` | +3,942 | -833 | -118% |
+> | MSFT | `as-gamma0` | -96 | -1,846 | -174% |
+> | MSFT | `as` | -444 | -2,371 | -186% |
+> | STOR | `symmetric-touch` | +3,506 | -1,693 | -147% |
+> | STOR | `as-gamma0` | -2,985 | -4,168 | -42% |
+> | STOR | `as` | -948 | -1,700 | -90% |
+>
+> *The last column is the median of the per-cell fractional changes, not the change between the two medians beside it. They do not compose, and where edge crosses zero between the two latencies they differ by a lot — a cell going +100 to −100 is a −200% change on a base the level columns barely move.*
+>
+> A-S's edge degrades faster than the baseline's in **25 of 36** cells overall, against 19 of 36 on equity — and per symbol it holds on GOOG, MSFT but **not** on STOR. GOOG 12/12, MSFT 9/12, STOR 4/12. `as-gamma0` is in the table because it separates the two halves of the model: if the latency damage is in the spread choice rather than the skew, that row shows it with no inventory effect in the way.
+
 > The phase-6 artifact (`docs/figures/touch-maker.json`) does not record which symbol-day it was produced on, so P5 compares band *widths* and not the same feed twice. The comparison is scaled (max − min over the median |equity|) precisely so that it survives a change of symbol, but a reader should treat P5 as the weakest row in this table until phase 6 is re-run on a feed this paper also evaluates.
 
 Across all seven: 4 kept, 1 falsified, 1 mixed, 0 not evaluated (P1 kept, P2 falsified, P3 kept, P4 kept, P5 kept, P6 mixed, P7 not triggered). Falsified predictions stay on the page — the plan committed to grading them in print whichever way they went, and phase 10.8's falsified P1 is still the most useful thing in that section.
