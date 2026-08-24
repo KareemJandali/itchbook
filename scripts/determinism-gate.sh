@@ -35,6 +35,11 @@ set -uo pipefail
 
 BUILD="${1:-build}"
 PORT=${PORT:-26550}
+# For the gate's own self-test. TORTURE_EXTRA passes a flag to the tool on the
+# torture leg only; TORTURE_ONLY skips gate A, which the self-test does not need
+# and which costs six runs. Neither is set by any normal invocation.
+TORTURE_EXTRA="${TORTURE_EXTRA:-}"
+TORTURE_ONLY="${TORTURE_ONLY:-}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -96,7 +101,11 @@ skipped=0
 # having compared nothing, which is the same shape of lie as a clean sheet by
 # construction.
 port=$PORT
+if [[ -n "$TORTURE_ONLY" ]]; then
+    echo "    (gate A skipped: TORTURE_ONLY)"
+fi
 for ring in 12 14 16; do
+    [[ -n "$TORTURE_ONLY" ]] && break
     for rate in 30000 90000; do
         port=$((port + 1))
         "$BUILD/wire_to_book" --port "$port" --ring-log2 "$ring" --timeout-ms 4000 \
@@ -134,10 +143,12 @@ done
 # Four of the six configurations must have stayed below the knee, and they must
 # span more than one ring size -- otherwise "identical" could be one lucky
 # schedule rather than a property that survives changing the schedule.
+if [[ -z "$TORTURE_ONLY" ]]; then
 echo "    $clean_runs below the knee, $skipped skipped"
 if [[ $clean_runs -lt 4 ]]; then
     echo "    FAIL: only $clean_runs configurations ran clean; the gate compared too little"
     fail=1
+fi
 fi
 
 # ---- Gate B -----------------------------------------------------------------
@@ -146,7 +157,7 @@ echo "==> torture: overload, then check what was applied against what was sent"
 port=$((port + 1))
 "$BUILD/wire_to_book" --port "$port" --ring-log2 10 --timeout-ms 4000 \
     --rcvbuf-mb 16 --expect-messages 400000 --applied-out "$WORK/applied.gz" \
-    --json "$WORK/torture.json" --quiet > "$WORK/torture.txt" 2>&1 &
+    --json "$WORK/torture.json" $TORTURE_EXTRA --quiet > "$WORK/torture.txt" 2>&1 &
 pid=$!
 if wait_bound "$port"; then
     "$BUILD/mold_replay_udp" "$WORK/feed.pkt.gz" --host 127.0.0.1 --port "$port" \
@@ -154,7 +165,16 @@ if wait_bound "$port"; then
     wait $pid
     rc=$?
     if [[ $rc -ne 3 ]]; then
-        echo "    FAIL: expected exit 3 (lossy), got $rc — the overload did not overload"
+        # Two very different things arrive here and the distinction is the point
+        # of the exit codes: 1 is a broken identity -- the pipeline lost track of
+        # its own loss -- and 0 means the load simply was not enough to provoke
+        # any. Saying "the overload did not overload" for both sent the last
+        # reader looking at the sender when the fault was in the receiver.
+        if [[ $rc -eq 1 ]]; then
+            echo "    FAIL: exit 1 — an identity broke; the pipeline lost track of its own loss"
+        else
+            echo "    FAIL: expected exit 3 (lossy), got $rc — the overload did not overload"
+        fi
         cat "$WORK/torture.txt"
         fail=1
     else
@@ -204,8 +224,39 @@ accounted = (j["messages_into_ring"] + j["oversize_messages"] + j["staging_overf
 if accounted != j["wire_messages"]:
     print(f"    FAIL: {j['wire_messages']} on the wire, {accounted} accounted for")
     sys.exit(1)
+
+# EVERY HOLE WAS ANNOUNCED, checked here as well as inside the tool. The tool
+# asserting its own identity is one grader; this is a second one reading the
+# artifact, which is the only kind of agreement worth anything when the thing
+# under test is whether a program noticed its own loss.
+#
+# Three declared gaps and nine thousand messages refused mid-block can arrive at
+# the book as four markers, because markers coalesce -- so the sum is in
+# MESSAGES, never in events.
+missing = j["messages_lost"] + j["oversize_messages"] + j["staging_overflow"]
+if j["messages_lost_seen_by_book"] != missing:
+    print(f"    FAIL: {missing} messages went missing, the book was told about "
+          f"{j['messages_lost_seen_by_book']}")
+    sys.exit(1)
+if j["gaps_lost_to_full_ring"] != 0:
+    print(f"    FAIL: {j['gaps_lost_to_full_ring']} missing messages were never announced")
+    sys.exit(1)
+
+# ...and the no-op rule, which every damaging scenario in this repo has had
+# since phase 7. A marker that never had to wait for a slot means the overload
+# did not overload the thing this leg exists to overload, and the pass would be
+# a pass by construction -- which is exactly how the unstageable marker survived
+# four commits of green CI.
+if j["gap_markers_to_book"] == 0 or j["gap_markers_deferred"] == 0:
+    print(f"    FAIL: {j['gap_markers_to_book']} markers, "
+          f"{j['gap_markers_deferred']} of them made to wait -- the ring never got "
+          f"full enough to test the path this leg is for")
+    sys.exit(1)
+
 print(f"    {len(got)} applied, every one an in-order match against the sent feed")
 print(f"    {j['messages_lost']} declared lost; all {j['wire_messages']} accounted for")
+print(f"    {missing} missing, carried to the book by {j['gap_markers_to_book']} markers "
+      f"({j['gap_markers_deferred']} made to wait for a slot); 0 unannounced")
 PY
     fi
 else

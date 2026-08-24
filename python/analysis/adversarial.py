@@ -267,11 +267,14 @@ def pipeline_rows(b, feed, packets, work, args):
         if not must_drop and dropped != 0:
             problems.append(f"{name} (the control dropped {dropped} packets; "
                             f"lower --pipeline-rate or raise the ring)")
-        # ...and a gap that never reached the book is the silent wrongness this
-        # whole scenario exists to rule out.
+        # ...and a loss the book was never told about is the silent wrongness
+        # this whole scenario exists to rule out. Since 10.10 a marker waits for
+        # a slot rather than being discarded, so this counts MESSAGES that went
+        # missing with no marker in front of them, and it is only reachable if
+        # the consumer stopped draining altogether.
         if st["gaps_lost_to_full_ring"] != 0:
-            problems.append(f"{name} ({st['gaps_lost_to_full_ring']} gaps never "
-                            f"reached the book)")
+            problems.append(f"{name} ({st['gaps_lost_to_full_ring']} missing messages "
+                            f"were never announced to the book)")
 
         rows.append({
             "name": name, "why": why,

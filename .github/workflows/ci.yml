@@ -399,6 +399,26 @@ jobs:
       - name: Determinism gate (the pipeline's book equals the synchronous book)
         run: ./scripts/determinism-gate.sh build
 
+      # ...and gate B has to be able to fail, on the exact bug it caught in
+      # August 2026: under overload the ring got so full that the GAP MARKERS
+      # could not be staged, and the consumer went on applying the messages
+      # after them having never been told anything was missing. 10.10 made that
+      # impossible -- a marker waits for a slot and nothing may pass it -- and
+      # this proves the gate would still notice if it became possible again.
+      #
+      # --break-gap-markers restores the old discard behaviour and nothing else.
+      # TORTURE_ONLY skips gate A, which this self-test does not exercise.
+      - name: Determinism gate self-test (it must catch an unannounced loss)
+        run: |
+          if TORTURE_ONLY=1 TORTURE_EXTRA=--break-gap-markers PORT=26700 \
+               ./scripts/determinism-gate.sh build > /tmp/det-neg.txt 2>&1; then
+            cat /tmp/det-neg.txt
+            echo "FAIL: the gate passed a run where the book was never told about the loss"
+            exit 1
+          fi
+          grep -q "never announced" /tmp/det-neg.txt
+          echo "the gate correctly refused a run that lost track of its own loss"
+
       # Phase 10.7. A three-rung ladder, two runs each, purely to keep the
       # sweep path alive: it asserts that the ladder anchors to the feed's own
       # clock, that every rate produces the columns the report needs, and that

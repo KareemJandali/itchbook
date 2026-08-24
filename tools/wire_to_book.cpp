@@ -206,6 +206,8 @@ struct Options {
     uint64_t slow_consumer_ns = 0;
     int cpu_recv = -1;
     int cpu_book = -1;
+    // Self-test only: see ToRing::discard_markers.
+    bool break_gap_markers = false;
     bool quiet = false;
 };
 
@@ -275,6 +277,32 @@ struct SharedState {
 
 // The receiver's handler: the sequencer hands it messages in order, and it
 // copies them into ring slots. Framing only -- no parse.
+//
+// A HOLE ALWAYS HAS A MARKER IN FRONT OF IT.
+//
+// The budget below is the room that was checked for ONE packet's message
+// count, but a packet that closes a reorder gap makes the sequencer release
+// everything it was holding, so a single on_packet() can emit far more than
+// the packet it was handed. When that runs the budget out, the rest of the
+// delivery cannot be staged -- and the first version of this counted those
+// refusals and carried on, which left the consumer applying the messages after
+// them without ever being told anything was missing. That is exactly the
+// silent wrongness this pipeline exists to make impossible, and the torture
+// leg of the determinism gate found it: at 3M msg/s into a 1024-slot ring the
+// gap MARKERS themselves could not be staged.
+//
+// So a hole is a DEBT, not a statistic. Everything that vanishes -- a gap the
+// sequencer declared, a message too large for a slot, a message the budget
+// could not take -- adds to `owed`, and nothing further may be staged until a
+// marker carrying `owed` has been. Order survives because once the budget is
+// out NOTHING more is staged from that delivery, so everything after the first
+// refusal belongs to the same hole; and the debt is always payable, because
+// the next packet is only fed after at least one slot was proved free.
+//
+// The consequence is that markers COALESCE: one marker can carry several
+// declared gaps plus whatever the budget refused after them. Any check that
+// counts markers against the sequencer's gap count is therefore wrong, and the
+// identities below count MESSAGES missing instead.
 template <typename Shared>
 struct ToRing {
     Shared* sh = nullptr;
@@ -289,33 +317,62 @@ struct ToRing {
     // overrun of slots the consumer has not finished with.
     size_t budget = 0;
     uint64_t overflow = 0;
-    uint64_t gap_overflow = 0;
     uint64_t oversize = 0;
     uint64_t gaps = 0;
     uint64_t lost = 0;
+    uint64_t owed = 0;        // missing messages the book has not been told about
+    uint64_t deferrals = 0;   // times a marker had to wait for a slot
+    uint64_t markers = 0;     // markers staged; <= gaps, because they coalesce
+    uint64_t discarded = 0;   // --break-gap-markers only; see below
+    // A GATE WHOSE FAILURE CASE IS NEVER EXERCISED IS A GATE NOBODY HAS CHECKED
+    // OPENS. Setting this restores the pre-10.10 behaviour exactly -- a marker
+    // with no room is thrown away and the messages behind it are published
+    // anyway -- so the determinism gate can be shown to catch the very bug that
+    // reached CI green. It is reachable only from --break-gap-markers, it is
+    // named to be impossible to set by accident, and the run it produces fails.
+    bool discard_markers = false;
+
+    // Pay the debt if there is room for the marker. A false return is the
+    // caller's instruction not to stage anything either: a message published
+    // ahead of the marker that covers the hole before it is the whole failure.
+    bool settle() {
+        if (owed == 0) return true;
+        if (staged >= budget) {
+            ++deferrals;
+            if (discard_markers) { discarded += owed; owed = 0; return true; }
+            return false;
+        }
+        Slot& s = sh->ring.write_slot(staged);
+        s.arrival = arrival;
+        s.set_gap(owed);
+        ++staged;
+        ++markers;
+        owed = 0;
+        return true;
+    }
 
     void on_message(char, const uint8_t* payload, uint16_t len) {
-        if (len > kMaxMessage) { ++oversize; return; }
-        if (staged >= budget) { ++overflow; return; }
+        // Both refusals below are holes, and both are now announced. Oversize
+        // is a "cannot happen" -- kMaxMessage is static_asserted against the
+        // parser's largest message -- but a cannot-happen that silently
+        // shortens the stream is the one worth wiring into the same path as
+        // the one that does happen.
+        if (len > kMaxMessage) { ++oversize; ++owed; return; }
+        if (!settle() || staged >= budget) { ++overflow; ++owed; return; }
         Slot& s = sh->ring.write_slot(staged);
         s.arrival = arrival;
         s.len = len;
         std::memcpy(s.bytes, payload, len);
         ++staged;
     }
-    // Staged like a message, so the consumer discards the book at the point
-    // in the stream where the loss actually happened. A gap that cannot be
-    // staged is worse than one that is: the consumer would apply the messages
-    // after it as though nothing were missing, which is the silent wrongness
-    // phase 7 is named after. So it is counted separately and reported.
+    // Staged like a message, so the consumer discards the book at the point in
+    // the stream where the loss actually happened -- or held as debt until a
+    // slot frees, which is the same point, because nothing may pass a debt.
     void on_gap(uint64_t, uint64_t count) {
         ++gaps;
         lost += count;
-        if (staged >= budget) { ++gap_overflow; return; }
-        Slot& s = sh->ring.write_slot(staged);
-        s.arrival = arrival;
-        s.set_gap(count);
-        ++staged;
+        owed += count;
+        settle();
     }
 };
 
@@ -358,6 +415,7 @@ int main(int argc, char** argv) {
         else if (a == "--hist-csv") opt.hist_csv = next("--hist-csv");
         else if (a == "--cpu-recv") opt.cpu_recv = std::atoi(next("--cpu-recv"));
         else if (a == "--cpu-book") opt.cpu_book = std::atoi(next("--cpu-book"));
+        else if (a == "--break-gap-markers") opt.break_gap_markers = true;
         else if (a == "--quiet") opt.quiet = true;
         else {
             std::fprintf(stderr,
@@ -367,7 +425,8 @@ int main(int argc, char** argv) {
                 "       [--recover-after N] [--slow-consumer-ns N]\n"
                 "       [--kill-ring-occupancy N] [--kill-backlog-ms N]\n"
                 "       [--refs-capacity N] [--json out.json] [--hist-csv out.csv]\n"
-                "       [--cpu-recv N] [--cpu-book N] [--quiet]\n", argv[0]);
+                "       [--cpu-recv N] [--cpu-book N] [--break-gap-markers] [--quiet]\n",
+                argv[0]);
             return 2;
         }
     }
@@ -440,7 +499,9 @@ int run(const Options& opt) {
     bool book_pinned = false;
     uint64_t oversize = 0;
     uint64_t stage_overflow = 0;
-    uint64_t gap_overflow_out = 0;
+    uint64_t unannounced_loss = 0;   // sink.owed at end of stream; must be 0
+    uint64_t gap_deferrals = 0;
+    uint64_t gap_markers = 0;
     uint64_t malformed = 0;
     // Sequence bookkeeping, kept by the RECEIVER rather than the sequencer,
     // because the sequencer only ever sees the packets that were not dropped.
@@ -457,6 +518,7 @@ int run(const Options& opt) {
         recv_pinned = pin_to(opt.cpu_recv);
         ToRing<Shared> sink;
         sink.sh = &shared;
+        sink.discard_markers = opt.break_gap_markers;
         mold::Sequencer<ToRing<Shared>> seq;
 
         std::vector<uint8_t> storage(kBatch * kMaxDatagram);
@@ -603,11 +665,34 @@ int run(const Options& opt) {
                 shared.pushed.fetch_add(sink.staged, std::memory_order_relaxed);
             }
         }
+
+        // AND THE DEBT IS PAID BEFORE THE STREAM ENDS.
+        //
+        // Every other settle happens because something wanted to be staged
+        // behind the marker. At end of session there is nothing behind it, so a
+        // hole opened by the last delivery would go unannounced -- the same
+        // silent wrongness, one slot from the end. The consumer is still
+        // draining (done is not set until below), so waiting for a slot cannot
+        // deadlock; the deadline is only so that a consumer which has died
+        // becomes a reported failure instead of a hang.
+        if (sink.owed != 0) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (sink.owed != 0 && std::chrono::steady_clock::now() < deadline) {
+                sink.staged = 0;
+                sink.budget = shared.ring.writable_exact();
+                if (!sink.settle()) continue;
+                shared.ring.publish(sink.staged);
+                shared.pushed.fetch_add(sink.staged, std::memory_order_relaxed);
+            }
+        }
+
         seq_end = seq.expected();
         seq_stats = seq.stats();
         oversize = sink.oversize;
         stage_overflow = sink.overflow;
-        gap_overflow_out = sink.gap_overflow;
+        unannounced_loss = sink.owed + sink.discarded;
+        gap_deferrals = sink.deferrals;
+        gap_markers = sink.markers;
         shared.done.store(true, std::memory_order_release);
     });
 
@@ -802,7 +887,14 @@ int run(const Options& opt) {
         std::printf("%-32s %14" PRIu64 "\n", "  gaps that reached the book", gaps_seen);
         std::printf("%-32s %14" PRIu64 "\n", "  messages the book was told were lost",
                     messages_lost);
-        std::printf("%-32s %14" PRIu64 "\n", "  gaps lost to a full ring", gap_overflow_out);
+        std::printf("%-32s %14" PRIu64 "\n", "  markers that carried them", gap_markers);
+        std::printf("%-32s %14" PRIu64 "\n", "  markers made to wait for room",
+                    gap_deferrals);
+        // Zero on every run that is not broken. It is printed anyway, because
+        // the number that is always zero is the one nobody notices going
+        // non-zero unless it is on the page next to the ones that are not.
+        std::printf("%-32s %14" PRIu64 "\n", "  losses never announced",
+                    unannounced_loss);
 
         // Phase 7's verdict inputs, on phase 10's pipeline. "Trusted" is a
         // claim about the book, and it is the half of the CORRECT / SAFE /
@@ -829,10 +921,14 @@ int run(const Options& opt) {
         // ring-full drop removes a whole packet, so the next packet's sequence
         // number exposes it and a gap gets declared. This removes messages from
         // the MIDDLE of a delivery: the sequencer has already advanced its
-        // cursor past them, so downstream gets a hole with no gap in front of
-        // it. That is why it is counted here and why a run containing any is
-        // reported as lossy rather than quoted as a latency.
-        std::printf("%-32s %14" PRIu64 "\n", "refused mid-block (no gap raised)",
+        // cursor past them, so nothing downstream would know to expect them.
+        //
+        // Which is why they are folded into the next marker rather than merely
+        // counted. The book is told the same thing it is told about a declared
+        // gap -- this many messages are missing, here -- and the run is still
+        // reported as lossy rather than quoted as a latency, because a rate
+        // that needs this is not a rate the pipeline can carry.
+        std::printf("%-32s %14" PRIu64 "\n", "refused mid-block (folded into a gap)",
                     stage_overflow);
 
         // Messages the drop path removed from BEFORE the sequencer started and
@@ -944,6 +1040,8 @@ int run(const Options& opt) {
             "  \"staging_overflow\": %" PRIu64 ",\n"
             "  \"gaps_to_book\": %" PRIu64 ",\n"
             "  \"messages_lost_seen_by_book\": %" PRIu64 ",\n"
+            "  \"gap_markers_deferred\": %" PRIu64 ",\n"
+            "  \"gap_markers_to_book\": %" PRIu64 ",\n"
             "  \"gaps_lost_to_full_ring\": %" PRIu64 ",\n"
             "  \"state\": \"%s\",\n"
             "  \"trusted\": %s,\n"
@@ -967,7 +1065,7 @@ int run(const Options& opt) {
             kernel_known ? std::to_string(kernel_lost).c_str() : "null",
             seq_stats.gaps, seq_stats.messages_lost, oversize, malformed,
             stage_overflow,
-            gaps_seen, messages_lost, gap_overflow_out,
+            gaps_seen, messages_lost, gap_deferrals, gap_markers, unannounced_loss,
             recover::to_string(gap.state()), gap.trusted() ? "true" : "false",
             gap.stats().rebuilds, gap.stats().recoveries,
             opt.kill_ring_occupancy == 0
@@ -1012,24 +1110,43 @@ int run(const Options& opt) {
                      seq_stats.messages, pushed_messages, oversize, stage_overflow);
         ++failures;
     }
-    // 1b. Every gap the sequencer declared reached the book or was counted as
-    //     unreachable. A gap that vanished is the silent wrongness itself.
-    if (seq_stats.gaps != gaps_seen + gap_overflow_out) {
-        std::fprintf(stderr, "\nFAIL: sequencer declared %" PRIu64 " gaps, %" PRIu64
-                             " reached the book, %" PRIu64 " were refused.\n",
-                     seq_stats.gaps, gaps_seen, gap_overflow_out);
+    // 1b. EVERY MISSING MESSAGE WAS ANNOUNCED, AND THE COUNT WAS RIGHT.
+    //
+    //     Three things remove a message from the stream after the sequencer has
+    //     already advanced past it: a gap it declared, a message too large for
+    //     a slot, and a message the staging budget could not take. All three are
+    //     holes the book cannot infer, and all three now travel as gap markers.
+    //     So the messages the book was told were missing must equal the
+    //     messages that actually went missing.
+    //
+    //     Counting MARKERS against the sequencer's gap count -- which is what
+    //     this check used to do -- stopped being possible when markers began to
+    //     coalesce, and that is the right trade: the old check compared how
+    //     OFTEN loss was announced, this one compares how MUCH, and how much is
+    //     what decides whether the book rebuilds at the right place.
+    //
+    //     `unannounced_loss` is what the producer could not announce before the
+    //     stream ended. It is zero on any run that is not broken, and it is
+    //     inside the identity rather than outside it so that the sum still has
+    //     to close on a run that is.
+    if (messages_lost + unannounced_loss !=
+        seq_stats.messages_lost + oversize + stage_overflow) {
+        std::fprintf(stderr, "\nFAIL: %" PRIu64 " messages went missing (%" PRIu64
+                             " to declared gaps, %" PRIu64 " oversize, %" PRIu64
+                             " refused mid-block),\nbut the book was told about %" PRIu64
+                             " and %" PRIu64 " were never announced.\n",
+                     seq_stats.messages_lost + oversize + stage_overflow,
+                     seq_stats.messages_lost, oversize, stage_overflow,
+                     messages_lost, unannounced_loss);
         ++failures;
     }
-    // 1c. ...and the two ends agree on HOW MUCH was lost, not just on how many
-    //     times. The sequencer counts messages it declared missing; the book
-    //     counts messages it was told about. With no gap refused those are the
-    //     same number, and if they ever differ while gap_overflow is zero then
-    //     a gap arrived carrying the wrong count -- which would leave the book
-    //     rebuilding at the right place for the wrong reason.
-    if (gap_overflow_out == 0 && messages_lost != seq_stats.messages_lost) {
-        std::fprintf(stderr, "\nFAIL: sequencer lost %" PRIu64 " messages, the book "
-                             "was told about %" PRIu64 ".\n",
-                     seq_stats.messages_lost, messages_lost);
+    // 1c. And every marker the producer staged came out the other side. This is
+    //     conservation across the thread boundary for the slots that are not
+    //     messages -- the ones the check above cannot see, because it works in
+    //     messages and a marker is not one.
+    if (gaps_seen != gap_markers) {
+        std::fprintf(stderr, "\nFAIL: producer staged %" PRIu64 " gap markers, the book "
+                             "saw %" PRIu64 ".\n", gap_markers, gaps_seen);
         ++failures;
     }
     // 2. The sequencer's cursor moved exactly once per message it delivered and
@@ -1048,14 +1165,18 @@ int run(const Options& opt) {
     }
     if (failures != 0) return 1;
 
-    // A gap the ring could not hold is the one failure mode this whole design
-    // was built to avoid: the consumer goes on applying the messages after it
-    // without ever being told anything is missing. Backpressure is supposed to
-    // BECOME a graded gap, not erase one.
-    if (gap_overflow_out != 0) {
-        std::fprintf(stderr, "\nFAIL: %" PRIu64 " gaps could not be staged, so the book "
-                             "applied\nthe messages after them without being told "
-                             "anything was missing.\n", gap_overflow_out);
+    // A hole the ring could not announce is the one failure mode this whole
+    // design was built to avoid: the consumer goes on applying the messages
+    // after it without ever being told anything is missing. Backpressure is
+    // supposed to BECOME a graded gap, not erase one.
+    //
+    // Since 10.10 a marker waits for a slot instead of being discarded, and
+    // nothing may be staged in front of a waiting one, so reaching here means
+    // the consumer stopped draining entirely -- not that the load was too high.
+    if (unannounced_loss != 0) {
+        std::fprintf(stderr, "\nFAIL: %" PRIu64 " missing messages were never announced, "
+                             "so the book applied\nthe messages after them without being "
+                             "told anything was missing.\n", unannounced_loss);
         return 1;
     }
 
