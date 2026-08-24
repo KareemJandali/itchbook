@@ -74,10 +74,17 @@ def main():
         all_symbols(per_symbol, args.band_levels)
 
         # The band decides whether a level lives in a dense slot or in the cold
-        # overflow map, and nothing else. Every column except the two that
+        # overflow map, and nothing else. Every column except the ones that
         # describe the band itself must survive changing it -- which is what
         # makes the width a budget decision rather than a correctness one.
-        band_fields = {"overflow_levels", "off_band_adds", "recentres"}
+        #
+        # peak_overflow_levels belongs here for the same reason overflow_levels
+        # does, and more obviously: it is a high-water mark of the overflow map,
+        # so narrowing the band necessarily raises it. Adding the column without
+        # adding it here turned a correct reconstruction into a failed sweep at
+        # width 8 -- the check was right and the list was stale.
+        band_fields = {"overflow_levels", "peak_overflow_levels",
+                       "off_band_adds", "recentres"}
         if args.band_sweep:
             base = [{k: v for k, v in r.items() if k not in band_fields}
                     for r in csv.DictReader(per_symbol.open())]
