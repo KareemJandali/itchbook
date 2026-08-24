@@ -1924,9 +1924,12 @@ conclusion exists in one branch and refuses in the other.
       wrong in a way its author cannot see, and it cannot be self-cleared.)*
 - [ ] Latency-degradation prediction written before the sweep, kept or falsified
       in print.
-      *(P4 is committed and the grader is built: it reads every
-      `validation/as-experiment*.json`, keys them by `latency_ns`, and reports
-      "not evaluated" while there is only one. No sweep has been run.)*
+      *(P4 is committed, the grader is built, and since 11.6 the grading branch
+      is exercised in CI on two synthetic latencies — so the day a second real
+      artifact lands, the code that reads it has already run. Only one real
+      latency (0 ns) is committed, so the paper reports "not evaluated". The
+      remaining work is a second `bench/as-experiment.py --latency-ns N` on the
+      same three symbol-days, written to `validation/as-experiment-<N>.json`.)*
 - [x] Paper PDF builds from committed sources; one script regenerates every
       figure; CI runs it.
 
