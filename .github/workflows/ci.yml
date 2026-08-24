@@ -820,13 +820,32 @@ jobs:
       # are no evaluation artifacts yet, so what that currently asserts is the
       # REFUSAL: the generator must have written "no results" rather than left a
       # hole, and there must be no graded table on a page nothing backs.
-      - name: The paper matches its artifacts, and refuses to invent them
+      # The paper's results section must AGREE WITH WHETHER AN ARTIFACT EXISTS,
+      # in both directions. The first version of this asserted only the refusal
+      # -- that the paper says "No results" and carries no graded table -- which
+      # was right while nothing was committed and became wrong the moment the
+      # evaluation artifact landed. It then failed on a paper that was correct,
+      # which is the worst kind of gate: one that has to be silenced to make
+      # progress. Symmetric now, so neither state can pass by accident.
+      - name: The paper's results agree with whether an artifact exists
         run: |
           ./scripts/paper-build.sh --check
-          grep -q "No results" docs/paper/as-on-itch.md
-          if grep -q "The predictions, graded" docs/paper/as-on-itch.md; then
-            echo "FAIL: a graded prediction table with no artifact behind it"
-            exit 1
+          if [[ -f validation/as-experiment.json ]]; then
+            grep -q "The predictions, graded" docs/paper/as-on-itch.md \
+              || { echo "FAIL: an evaluation artifact is committed but the paper has no graded table"; exit 1; }
+            if grep -q "^> \*\*No results\.\*\*" docs/paper/as-on-itch.md; then
+              echo "FAIL: the paper claims no results while an artifact is committed"
+              exit 1
+            fi
+            echo "artifact present, paper reports results"
+          else
+            grep -q "No results" docs/paper/as-on-itch.md \
+              || { echo "FAIL: no artifact, and the paper does not say so"; exit 1; }
+            if grep -q "The predictions, graded" docs/paper/as-on-itch.md; then
+              echo "FAIL: a graded prediction table with no artifact behind it"
+              exit 1
+            fi
+            echo "no artifact, paper refuses to invent one"
           fi
 
       # Second half, and the one that will matter later: the generator has to
