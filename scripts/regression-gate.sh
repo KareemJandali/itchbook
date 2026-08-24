@@ -45,6 +45,25 @@ if [[ ! -x "$BIN/book_replay" ]]; then
     BIN=build-release
 fi
 
+# BRING THE CHOSEN BUILD UP TO DATE RATHER THAN TRUSTING WHATEVER IS THERE.
+#
+# A gate that reuses whichever binary happens to be sitting in build/ is a gate
+# that can test code nobody is looking at. This one did: a WSL clone carried a
+# book_replay from before --json existed, and the gate ran it. It failed loudly
+# only because the flag would not parse -- had the stale binary merely BEHAVED
+# differently, the gate would have gone green against old code, which is the
+# failure this whole script exists to prevent.
+#
+# An incremental no-op build costs a second. scripts/full-day-differential.sh
+# already did this; the other gates did not, and that is why this comment is
+# now in three files.
+if [[ -f "$BIN/CMakeCache.txt" ]]; then
+    if ! cmake --build "$BIN" --target book_replay -j >/dev/null; then
+        echo "error: $BIN failed to rebuild; the gate will not run a stale binary" >&2
+        exit 1
+    fi
+fi
+
 SEED=20260821
 MESSAGES=60000
 GAP_NS=20000

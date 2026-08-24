@@ -38,6 +38,27 @@ PORT=${PORT:-26550}
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+
+# BRING THE CHOSEN BUILD UP TO DATE RATHER THAN TRUSTING WHATEVER IS THERE.
+#
+# A gate that reuses whichever binary happens to be sitting in build/ is a gate
+# that can test code nobody is looking at. This one did: a WSL clone carried a
+# book_replay from before --json existed, and the gate ran it. It failed loudly
+# only because the flag would not parse -- had the stale binary merely BEHAVED
+# differently, the gate would have gone green against old code, which is the
+# failure this whole script exists to prevent.
+#
+# An incremental no-op build costs a second. scripts/full-day-differential.sh
+# already did this; the other gates did not, and that is why this comment is
+# now in three files.
+if [[ -f "$BUILD/CMakeCache.txt" ]]; then
+    if ! cmake --build "$BUILD" --target wire_to_book mold_replay_udp mold_wrap \
+            book_replay -j >/dev/null; then
+        echo "error: $BUILD failed to rebuild; refusing to gate on a stale binary" >&2
+        exit 2
+    fi
+fi
+
 for t in wire_to_book mold_replay_udp mold_wrap book_replay; do
     if [[ ! -x "$BUILD/$t" ]]; then echo "missing $BUILD/$t" >&2; exit 2; fi
 done
