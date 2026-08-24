@@ -52,8 +52,10 @@ struct PerSymbol {
     uint64_t trades = 0, crosses = 0;
     uint64_t opening_crosses = 0, closing_crosses = 0;
     uint64_t halts = 0;          // 'H' — stock trading action
-    uint64_t op_halts = 0;       // 'h' — operational halt, NOT modelled
-    uint64_t broken = 0;         // 'B' — broken trade, NOT modelled
+    uint64_t op_halts = 0;       // 'h' — operational halt; not modelled, but
+                                 //       BookSet::tradable() gates on it
+    uint64_t broken = 0;         // 'B' — broken trade; not modelled, and no
+                                 //       correction applied, only counted
     uint64_t executed_shares = 0;
     // Quoted prices: A / F / U.
     //
