@@ -1113,6 +1113,9 @@ messages, so identity 1 subtracts them — an identity that failed on every loss
 run would be switched off within a week. And a new identity 1b: every gap the
 sequencer declared either reached the book or was counted as unreachable.
 
+*(Both the failing-the-run rule and identity 1b were superseded in 10.10 below,
+which made an unstageable marker impossible instead of merely fatal.)*
+
 **The throttle is a multiple of the wire's interval, not a fixed duration.** It
 was absolute at first, which made the scenario silently do nothing at any rate
 but the one it was tuned on — 20 µs per message against a wire delivering one
@@ -1138,6 +1141,90 @@ a rebuild per gap and it measurably slows the consumer, which causes more drops,
 which causes more gaps. The behaviour is correct and the cost is real; a
 constructed-locate list would fix it and belongs with the next thing that needs
 `BookSet` to iterate cheaply.
+
+### 10.10 — the marker that could not be staged
+
+Found by the determinism gate's torture leg, in CI, four commits after the code
+it condemns was written and green.
+
+**The failure.** At 3M msg/s into a 1,024-slot ring, `wire_to_book` exited 1 with
+*32 gaps could not be staged, so the book applied the messages after them without
+being told anything was missing*. Not a flake — the two commits since determinism
+last passed touched documentation and the workflow file. The gate had simply
+never been run at a load extreme enough to reach the case, and the case was the
+one thing the whole design exists to prevent.
+
+**Why it happened.** The staging budget is the room checked for *one packet's*
+message count, but 10.4's item 4 is still true: a packet that closes a reorder
+gap makes the sequencer release everything it was holding, so one `on_packet()`
+can emit far more than it was handed. When that ran the budget out, the refusals
+were *counted and carried on from* — messages as `staging_overflow`, gaps as
+`gap_overflow`. Counting a hole is not announcing it. Both left the consumer
+applying the messages after a hole with nothing in front of them, and the second
+was fatal only *after* the run, which is a report, not a defence.
+
+Note which of the two was already visible: `staging_overflow` had been printed
+under the label *refused mid-block (no gap raised)* since 10.4, with a comment
+saying in as many words that downstream gets a hole with no gap in front of it.
+It was written down, and being written down passed for being handled.
+
+**The fix: a hole is a debt, not a statistic.** Everything that vanishes after
+the sequencer has advanced past it — a declared gap, a message too large for a
+slot, a message the budget could not take — adds to `owed`. Nothing may be
+staged until a marker carrying `owed` has been. Three properties make that total
+rather than best-effort:
+
+- once the budget is out, *nothing* more is staged from that delivery, so
+  everything after the first refusal belongs to the same hole and one marker
+  covers it;
+- the next packet is only fed after at least one slot was proved free, so the
+  debt is always payable before the next message the consumer would see;
+- and end-of-session settles explicitly, waiting for a slot with a deadline,
+  because at the end there is no next message to force the marker out and a hole
+  one slot from the close is the same silent wrongness.
+
+Markers therefore **coalesce**: one can carry several declared gaps plus whatever
+the budget refused after them. That is what killed identity 1b — comparing marker
+*count* to the sequencer's gap count is no longer meaningful. It is replaced by a
+better identity, in messages rather than events:
+
+> messages the book was told were missing + messages never announced
+> = messages lost to declared gaps + oversize + refused mid-block
+
+which compares *how much* was lost rather than *how often* loss was announced,
+and how much is what decides whether the book rebuilds at the right place. Plus
+a conservation check for the slots that are not messages: markers staged by the
+producer must equal markers seen by the consumer.
+
+**Measured after the fix.** One run of `wire-to-book-check.sh`'s lossy leg —
+ring 2^10 at 3M msg/s, the torture configuration — dropped 5,340 packets
+ring-full, declared 3 gaps covering 237,990 messages, refused 9,411 more
+mid-block, and carried all 247,401 to the book in **4** markers, having made a
+marker wait for a slot 11,369 times rather than discard it. `losses never
+announced: 0`. The exact counts move run to run, which is the point of the
+identity being checked rather than the numbers being asserted. Four consecutive
+determinism-gate runs, the twelve file scenarios, and the three live-pipeline
+scenarios: 0 WRONG.
+
+**What this cost, honestly.** `staging_overflow` still means the rate was not
+sustainable and still forces exit 3 — folding it into a marker makes the book
+*correct* about the loss, not the pipeline *able* to carry the load. The
+distinction is the whole point of exit 3 existing separately from exit 1.
+
+**And the gate now has to prove it can still catch this.** Two additions, both
+in CI. The torture leg checks the message-level identity itself, from the
+artifact rather than from the tool's own say-so — a program asserting that it
+noticed its own loss is one grader, and one grader is not agreement. And it
+carries the no-op rule the damaging scenarios have had since phase 7: if no
+marker was ever *made to wait for a slot*, the overload did not reach the path
+this leg exists for and the pass would be a pass by construction — which is
+precisely how the unstageable marker survived four commits of green CI.
+
+Then a self-test. `--break-gap-markers` restores the pre-10.10 discard exactly,
+and CI runs the torture leg with it and requires the gate to **fail**, matching
+on *never announced*. It is a flag whose only purpose is to break the invariant,
+which is a thing worth being uneasy about; the alternative was a gate nobody has
+watched open.
 
 ### Done — Phase 10
 
