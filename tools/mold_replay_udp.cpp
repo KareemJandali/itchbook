@@ -52,9 +52,12 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <sched.h>
+#include <sys/mman.h>
 #include <string>
 #include <vector>
 
@@ -79,8 +82,60 @@ struct Options {
     const char* lateness_csv = nullptr;
     size_t max_preload_mb = 4096;
     uint64_t spin_margin_ns = 500000;   // 500 us; see wait_until()
+
+    // Real-time scheduling priority for the sending thread. 0 = do not ask.
+    //
+    // The pacing loop is already accurate to tens of NANOSECONDS when it is
+    // running -- measured p50 lateness of 35 ns on a pinned run. Its whole error
+    // budget goes to a tail where the thread is not running at all: p99.9 of
+    // 142 us and a max of 1.09 ms, which is a scheduler quantum, not a pacing
+    // mistake. Spinning cannot help a thread that is off the CPU, and a bigger
+    // spin margin cannot either -- the observed tail is already INSIDE the
+    // existing 500 us margin.
+    //
+    // SCHED_FIFO is the standard answer and had never been asked for here.
+    int rt_priority = 0;
     bool quiet = false;
 };
+
+// What the OS actually gave us, as opposed to what was asked for. Recorded and
+// reported rather than assumed: a run that silently failed to get real-time
+// priority and one that never asked for it produce the same lateness and must
+// not produce the same report.
+struct RealTime {
+    bool requested = false;
+    bool scheduler_granted = false;
+    bool memory_locked = false;
+    std::string scheduler_error;
+    std::string memory_error;
+};
+
+// Ask for SCHED_FIFO and a locked address space. Neither is required; both are
+// reported. CAP_SYS_NICE is what grants the first (run as root, or once:
+// `sudo setcap cap_sys_nice=ep <binary>`), CAP_IPC_LOCK or a raised RLIMIT_MEMLOCK
+// the second.
+RealTime go_realtime(int priority) {
+    RealTime rt;
+    if (priority <= 0) return rt;
+    rt.requested = true;
+
+    sched_param sp{};
+    sp.sched_priority = priority;
+    if (sched_setscheduler(0, SCHED_FIFO, &sp) == 0) {
+        rt.scheduler_granted = true;
+    } else {
+        rt.scheduler_error = std::strerror(errno);
+    }
+
+    // A major fault in the pacing loop is a millisecond that no amount of
+    // priority prevents.
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) == 0) {
+        rt.memory_locked = true;
+    } else {
+        rt.memory_error = std::strerror(errno);
+    }
+    return rt;
+}
 
 // Wall clock in nanoseconds. Deliberately NOT the TSC: the schedule spans a
 // whole session and has to be comparable with a rate expressed in seconds, and
@@ -161,6 +216,7 @@ int main(int argc, char** argv) {
             opt.max_preload_mb = static_cast<size_t>(std::strtoull(next("--max-preload-mb"),
                                                                    nullptr, 10));
         }
+        else if (a == "--rt-priority") opt.rt_priority = std::atoi(next("--rt-priority"));
         else if (a == "--quiet") opt.quiet = true;
         else if (!a.empty() && a[0] == '-') {
             std::fprintf(stderr, "error: unknown option %s\n", a.c_str());
@@ -176,7 +232,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: %s <packets.gz> [--host H] [--port N] [--rate MSG/S]\n"
                      "       [--multiplier X] [--limit N] [--json out.json]\n"
-                     "       [--lateness-csv out.csv] [--quiet]\n", argv[0]);
+                     "       [--lateness-csv out.csv] [--rt-priority N] [--quiet]\n",
+                     argv[0]);
         return 2;
     }
     if (opt.rate > 0.0 && opt.multiplier > 0.0) {
@@ -243,6 +300,24 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "error: %s\n", e.what());
         ::close(fd);
         return 1;
+    }
+
+    // AFTER the preload, before the first send. Locking the address space is
+    // cheaper once the buffers exist, and raising priority earlier would only
+    // give real-time scheduling to a decompression loop.
+    const RealTime rt = go_realtime(opt.rt_priority);
+    if (rt.requested && !opt.quiet) {
+        if (rt.scheduler_granted) {
+            std::printf("%-30s SCHED_FIFO priority %d\n", "scheduling", opt.rt_priority);
+        } else {
+            std::printf("%-30s DENIED (%s) -- run as root, or once:\n"
+                        "%-30s   sudo setcap cap_sys_nice=ep <this binary>\n",
+                        "SCHED_FIFO", rt.scheduler_error.c_str(), "");
+        }
+        if (!rt.memory_locked) {
+            std::printf("%-30s not locked (%s)\n", "address space",
+                        rt.memory_error.c_str());
+        }
     }
 
     {
@@ -372,10 +447,16 @@ int main(int argc, char** argv) {
             "  \"bytes\": %" PRIu64 ",\n  \"send_errors\": %" PRIu64 ",\n"
             "  \"rate_msg_per_s\": %.3f,\n  \"multiplier\": %.3f,\n"
             "  \"achieved_msg_per_s\": %.1f,\n  \"send_seconds\": %.6f,\n"
-            "  \"lateness_ns\": {\"p50\": %.0f, \"p99\": %.0f, \"p999\": %.0f, \"max\": %u}\n}\n",
+            "  \"lateness_ns\": {\"p50\": %.0f, \"p99\": %.0f, \"p999\": %.0f, \"max\": %u},\n"
+            "  \"realtime\": {\"requested\": %s, \"priority\": %d,"
+            " \"scheduler_granted\": %s, \"memory_locked\": %s,"
+            " \"scheduler_error\": \"%s\"}\n}\n",
             packets, messages, bytes, send_errors, opt.rate, opt.multiplier,
             achieved, send_seconds,
-            late_p50, late_p99, late_p999, lateness.max());
+            late_p50, late_p99, late_p999, lateness.max(),
+            rt.requested ? "true" : "false", opt.rt_priority,
+            rt.scheduler_granted ? "true" : "false",
+            rt.memory_locked ? "true" : "false", rt.scheduler_error.c_str());
         if (std::fclose(f) != 0) return 1;
     }
     return send_errors == 0 ? 0 : 1;

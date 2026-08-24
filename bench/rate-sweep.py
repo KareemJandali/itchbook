@@ -90,7 +90,7 @@ def real_time_rate(build, feed, work):
     return t
 
 
-def one_run(build, packets, rate, port, ring_log2, work, expect, cpus):
+def one_run(build, packets, rate, port, ring_log2, work, expect, cpus, rt_priority=0):
     """One offered rate. Returns the merged sender and receiver record.
 
     `cpus` is (recv, book, sender) or (None, None, None). Pinning matters more
@@ -124,6 +124,8 @@ def one_run(build, packets, rate, port, ring_log2, work, expect, cpus):
         return None
     send_cmd = [os.path.join(build, "mold_replay_udp"), packets, "--host", "127.0.0.1",
                 "--port", str(port), "--rate", str(int(rate)), "--json", sj, "--quiet"]
+    if rt_priority:
+        send_cmd += ["--rt-priority", str(rt_priority)]
     if cpu_send is not None:
         send_cmd = ["taskset", "-c", str(cpu_send)] + send_cmd
     send = run(send_cmd)
@@ -185,6 +187,13 @@ def main():
     ap.add_argument("--cpu-book", type=int, help="pin the book thread to this core")
     ap.add_argument("--cpu-sender", type=int,
                     help="run the load generator on this core, via taskset")
+    ap.add_argument("--rt-priority", type=int, default=0,
+                    help="ask for SCHED_FIFO at this priority in the load generator. "
+                         "Its pacing is accurate to tens of nanoseconds at p50; the "
+                         "lateness that disqualifies a sweep is a tail where the thread "
+                         "is not running. Needs CAP_SYS_NICE -- root, or once: "
+                         "sudo setcap cap_sys_nice=ep <build>/mold_replay_udp. Denial is "
+                         "reported, never silent.")
     ap.add_argument("--multipliers", default="1,2,5,10,25,50,100,200,400,800",
                     help="offered rate as multiples of one times real time")
     ap.add_argument("--extend", type=int, default=6,
@@ -236,8 +245,14 @@ def main():
         rows = []
         port = a.port
         extended = 0
+        print()
+        print("SENDER LATE p99.9 IS THE COLUMN THAT DECIDES THE VERDICT, and it is")
+        print("shown because 'sender late' alone hides whether you are 2x over the")
+        print("10 us bar or 200x. The measured pacing is accurate to tens of")
+        print("nanoseconds at p50; the whole error budget is in this tail.")
         print(f"\n{'offered':>12} {'achieved':>12} {'x real':>7} {'p50 ns':>10} "
-              f"{'p99 ns':>11} {'p99.9 ns':>11} {'ring':>7} {'kern':>6} {'occ':>7}  verdict")
+              f"{'p99 ns':>11} {'p99.9 ns':>11} {'late p99.9':>11} {'ring':>7} "
+              f"{'kern':>6} {'occ':>7}  verdict")
         queue = list(mults)
         while queue:
             m = queue.pop(0)
@@ -246,7 +261,7 @@ def main():
             for _ in range(a.repeats):
                 port += 1
                 got = one_run(build, packets, rate, port, a.ring_log2, work, expect,
-                              cpus)
+                              cpus, rt_priority=a.rt_priority)
                 if got is not None:
                     runs.append(got)
             if not runs:
@@ -274,10 +289,12 @@ def main():
             verdict = "LOSSY" if lossy else ("sender late" if row["sender_late"] else "clean")
             if row["achieved_fraction"] < 0.9:
                 verdict += f" (sent {row['achieved_fraction'] * 100:.0f}% of offered)"
+            late999 = row["sender"].get("lateness_ns", {}).get("p999", 0)
             print(f"{rate:12,.0f} {row['achieved_rate']:12,.0f} {m:7g} "
                   f"{row['wire_to_book_ns']['p50']:10,.0f} "
                   f"{row['wire_to_book_ns']['p99']:11,.0f} "
                   f"{row['wire_to_book_ns']['p999']:11,.0f} "
+                  f"{late999:11,.0f} "
                   f"{row['ring_full_drops']:7,} {('?' if k is None else f'{k:,}'):>6} "
                   f"{row['peak_ring_occupancy']:7,}  {verdict}")
 
