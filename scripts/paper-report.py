@@ -349,13 +349,56 @@ def build_results(d, extra):
               f"conclusion here should be read as though it were.", ""]
 
     # --- 7.1 headline, per symbol-day ------------------------------------
+    #
+    # THE DRIFT SENTENCE IS COMPUTED, and it was not always. It carried a
+    # hand-typed "94% of equity" inside this generator -- a transcribed number
+    # in the one file whose entire job is to stop numbers being transcribed --
+    # and by the time anyone looked, the artifact said 86%. The lesson is that
+    # standing rule 7 applies to the generator as hard as to the document: a
+    # literal in here is indistinguishable from a measurement in the output.
+    #
+    # The symbol named is chosen ON THE CLAIM BEING MADE -- the one where the
+    # drift range is widest RELATIVE TO the edge range, which is exactly "drift
+    # is the noisy term and edge is the steady one".
+    #
+    # Selecting on |drift| / |equity| instead, as the first version did, picks
+    # whichever symbol's equity landed nearest zero: STOR scored 129% there,
+    # because its drift and edge partly cancel, and the sentence came out
+    # naming the least illustrative case in the sample. A ratio with a small
+    # denominator is not evidence of a large numerator.
+    #
+    # Units stay micro-dollars per share, as everywhere else in this section.
+    # Rendering these in dollars at two decimals reported STOR's edge as
+    # "between $0.00 and $0.00", which is a true statement that destroys the
+    # number it is about.
+    drift_note = ""
+    ranked = []
+    for sym in symbols:
+        cs = [r for r in runs if r["symbol"] == sym and r["arm"] == "symmetric-touch"
+              and r["day"] in eval_days and r["gamma"] == 0.0
+              and r["equity_per_share_micros"]]
+        if len(cs) < 2:
+            continue
+        dr = [r["drift_per_share_micros"] for r in cs]
+        eg = [r["edge_per_share_micros"] for r in cs]
+        erange = max(eg) - min(eg)
+        if erange <= 0:
+            continue
+        ranked.append(((max(dr) - min(dr)) / erange, sym, cs, dr, eg))
+    if ranked:
+        ratio, dsym, cs, dr, eg = max(ranked)
+        share = statistics.median([abs(r["drift_per_share_micros"])
+                                   / abs(r["equity_per_share_micros"]) for r in cs])
+        drift_note = (
+            f" On {dsym} drift is a median {share:.0%} of equity and ranges over "
+            f"{min(dr):,} to {max(dr):,} µ$ per share across days — a spread "
+            f"{ratio:,.0f}× as wide as the edge's own {min(eg):,} to {max(eg):,}. "
+            f"One is a property of the strategy, the other of the stock.")
     L += ["### 7.1 Headline band, per symbol-day", "",
           "**Edge, not equity, is the market-making result.** `equity = edge + drift − "
           "fees`: edge is half-spread captured against the mid at fill time, drift is "
           "what the mid did to inventory, including the residual position marked at "
-          "the close. On the widest-spread symbol drift was 94% of equity and swung "
-          "from −$0.15 to +$2.45 per share across days while edge held between $0.14 "
-          "and $0.18 — one is a property of the strategy, the other of the stock. "
+          "the close." + drift_note + " "
           "Equity is still shown, because the pre-registered predictions were written "
           "against it and are graded against it in §7.5.", "",
           "All figures µ$ per share. `mk 1s` is the 1-second markout — negative is "
@@ -521,6 +564,7 @@ def build_results(d, extra):
 
     # P4 -- latency degradation, graded only across artifacts at different latencies.
     v4 = v5 = "not evaluated"
+    p4_companion = []       # emitted after the table; see below
     lat = sorted(extra.items())
     if len(lat) < 2:
         L.append(f"| P4 | A-S degrades faster with latency | fractional equity loss "
@@ -552,6 +596,92 @@ def build_results(d, extra):
         L.append(f"| P4 | A-S degrades faster with latency | fractional loss from "
                  f"{lo_ns:,} to {hi_ns:,} ns larger than baseline's | {worse}/{tot} "
                  f"({f4:.0%}) | **{v4}** |")
+
+        # THE SAME TEST ON EDGE, REPORTED BESIDE THE VERDICT AND NEVER INSTEAD
+        # OF IT.
+        #
+        # P4 was pre-registered against equity per share, so equity is what
+        # grades it -- a bar that moves once the data is in is not a bar. But
+        # `equity = edge + drift - fees` and section 7.1 measures how much of
+        # that is drift; a fractional EQUITY change between two latencies is
+        # therefore substantially a change in what the stock did to two
+        # different inventory paths, which is a fact about the stock.
+        #
+        # So the companion below runs the identical comparison on EDGE -- the
+        # half-spread the maker actually captured, which is the part latency can
+        # plausibly act on -- and says in as many words that it is not the
+        # pre-registered bar. Two honest numbers, and the reader can see why
+        # they differ. Substituting it silently would be moving the bar; leaving
+        # it out would be reporting the noisier of two instruments because it
+        # happened to be named first.
+        arms = [("symmetric-touch", 0.0), ("as-gamma0", 0.0), ("as", gsel)]
+        edge_rows = []
+        for arm, g in arms:
+            e_lo, e_hi, fracs = [], [], []
+            for sym in symbols:
+                for day in eval_days:
+                    for m in MODELS:
+                        r0 = pick(lo_d["runs"], sym, day, arm, m, g)
+                        r1 = pick(hi_d["runs"], sym, day, arm, m, g)
+                        if not (r0 and r1):
+                            continue
+                        e_lo.append(r0["edge_per_share_micros"])
+                        e_hi.append(r1["edge_per_share_micros"])
+                        if r0["edge_per_share_micros"]:
+                            fracs.append((r0["edge_per_share_micros"]
+                                          - r1["edge_per_share_micros"])
+                                         / abs(r0["edge_per_share_micros"]))
+            if e_lo:
+                edge_rows.append((arm, statistics.median(e_lo), statistics.median(e_hi),
+                                  statistics.median(fracs) if fracs else None))
+
+        worse_e = 0
+        tot_e = 0
+        for sym in symbols:
+            for day in eval_days:
+                for m in MODELS:
+                    a0 = pick(lo_d["runs"], sym, day, "as", m, gsel)
+                    a1 = pick(hi_d["runs"], sym, day, "as", m, gsel)
+                    b0 = pick(lo_d["runs"], sym, day, "symmetric-touch", m, 0.0)
+                    b1 = pick(hi_d["runs"], sym, day, "symmetric-touch", m, 0.0)
+                    if not (a0 and a1 and b0 and b1):
+                        continue
+                    if a0["edge_per_share_micros"] == 0 or b0["edge_per_share_micros"] == 0:
+                        continue
+                    tot_e += 1
+                    da = (a0["edge_per_share_micros"] - a1["edge_per_share_micros"]) \
+                        / abs(a0["edge_per_share_micros"])
+                    db = (b0["edge_per_share_micros"] - b1["edge_per_share_micros"]) \
+                        / abs(b0["edge_per_share_micros"])
+                    if da > db:
+                        worse_e += 1
+        agree = "agrees with" if (worse_e > tot_e / 2) == (worse > tot / 2) else \
+                "**disagrees with**"
+        p4_companion = [
+            f"> **P4's bar is equity, and §7.1 measures how much of equity is drift.** "
+            f"P4 was pre-registered against equity per share and is graded against it "
+            f"above; the bar does not move once the data is in. But a fractional "
+            f"*equity* change between two latencies is substantially a change in what "
+            f"the stock did to two different inventory paths. The identical test on "
+            f"**edge** — the half-spread the maker actually captured, which is the part "
+            f"latency can act on — is reported here. It is **not** the pre-registered "
+            f"bar and does not replace the verdict above; it {agree} it.",
+            ">",
+            f"> | arm | median edge/share at {lo_ns:,} ns | at {hi_ns:,} ns | "
+            f"median fractional change |",
+            "> |---|---:|---:|---:|"]
+        for arm, m_lo, m_hi, frac in edge_rows:
+            p4_companion.append(
+                f"> | `{arm}` | {m_lo:+,.0f} | {m_hi:+,.0f} | "
+                + (f"{-frac:+.0%} |" if frac is not None else "— |"))
+        p4_companion += [
+            ">",
+            f"> A-S's edge degrades faster than the baseline's in **{worse_e} of "
+            f"{tot_e}** cells, against {worse} of {tot} on equity. `as-gamma0` is in "
+            f"the table because it separates the two halves of the model: if the "
+            f"latency damage is in the spread choice rather than the skew, that row "
+            f"shows it without any inventory effect in the way.",
+            ""]
 
     # P5 -- the closed-loop band is wider than phase 6's open-loop band.
     p6 = load(PHASE6)
@@ -624,6 +754,9 @@ def build_results(d, extra):
               "indistinguishable as predicted. The plan pre-committed to reporting this "
               "as a result rather than reframing it, and this line is emitted by the "
               "grader, not by an author deciding how to feel about the table.", ""]
+
+    if p4_companion:
+        L += p4_companion
 
     if p6 is not None:
         L += ["> The phase-6 artifact (`docs/figures/touch-maker.json`) does not record "
