@@ -173,9 +173,29 @@ if [[ $? -ne 0 ]]; then exit 1; fi
 # tenants, and on a quiet pinned box five runs is a couple of minutes.
 echo
 echo "--- 2. rate-latency sweep (this is the long one) ---"
+# REAL-TIME PRIORITY FOR THE LOAD GENERATOR, because pinning was not the
+# obstacle. The first pinned run measured the sender's own pacing at a p50
+# lateness of 35 ns and a p99.9 of 142 us: the loop is accurate to tens of
+# nanoseconds when it runs, and its entire error budget goes to a tail where it
+# is not running. A 1.09 ms maximum is a scheduler quantum. Spinning cannot help
+# a thread that is off the CPU, and the observed tail is already inside the
+# existing 500 us spin margin, so a bigger margin cannot either.
+#
+# SCHED_FIFO is the standard remedy and had never been asked for. It needs
+# CAP_SYS_NICE; setcap grants it once without running the whole sweep as root.
+# If neither works the sweep still runs and mold_replay_udp reports the denial
+# per run, so a sweep that failed to get priority cannot be mistaken for one
+# that had it.
+if command -v setcap >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
+    sudo -n setcap cap_sys_nice=ep build-pinned/mold_replay_udp 2>/dev/null \
+        && echo "  CAP_SYS_NICE granted to the load generator" \
+        || echo "  could not setcap (needs a sudo password); SCHED_FIFO may be denied"
+fi
+
 python3 bench/rate-sweep.py --build build-pinned --out validation/rate-sweep.json \
     --messages "$MESSAGES" --repeats 5 \
     --multipliers 1,2,5,10,25,50,100,200,400 --extend 6 \
+    --rt-priority 80 \
     --cpu-recv "$CPU_RECV" --cpu-book "$CPU_BOOK" --cpu-sender "$CPU_SEND"
 
 # ---- 3. the reader-thread overlap, on real cores ----------------------------
