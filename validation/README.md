@@ -182,7 +182,7 @@ Nothing here was typed off a terminal.
 | with a stock directory entry | 8,906 |
 | that ever quoted an order | 8,892 |
 | that ever printed a trade | 7,196 |
-| with a closing cross | 8,906 |
+| with a closing cross | 2,537 |
 
 **Live orders, one shared reference space across every symbol.**
 
