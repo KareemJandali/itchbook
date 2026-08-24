@@ -1905,6 +1905,47 @@ on a computed `most()`, the tick claim only firms up once **both** sides of the
 line have been observed (`0 < wide_floor < symbols`), and CI asserts the
 conclusion exists in one branch and refuses in the other.
 
+### 11.7 — P4 is graded on equity, and equity is mostly the stock
+
+P4 was pre-registered as *A-S degrades faster with latency, measured on
+equity per share*. It stays graded that way — a bar that moves once the data is
+in is not a bar, and standing rule 2 is the whole reason the predictions were
+written before the harness existed.
+
+But §7.1 already says `equity = edge + drift − fees` and that drift is the term
+belonging to the stock rather than the strategy. On GOOG drift is a median 86%
+of equity and ranges over −153,774 to 2,450,158 µ$ per share across days — a
+spread **70× as wide** as edge's own 139,804 to 177,184. A fractional *equity*
+change between two latencies is therefore substantially a change in what the
+stock did to two different inventory paths.
+
+So §7.5 now carries the identical test on **edge** beside P4's verdict, labelled
+as not the pre-registered bar, with a per-arm table including `as-gamma0` so the
+latency damage can be attributed to the spread choice or the skew without an
+inventory effect in the way. Reporting only equity would be quoting the noisier
+of two instruments because it was named first; reporting only edge would be
+moving the bar. Both, and the reader can see why they differ. CI asserts the
+companion appears **with** the verdict and never instead of it.
+
+**And a transcribed number found inside the generator.** §7.1's sentence
+carried a hand-typed *"drift was 94% of equity"* — in the one file whose entire
+job is to stop numbers being typed. By the time anyone checked, the artifact
+said 86%. Standing rule 7 applies to the generator exactly as hard as to the
+document: a literal in there is indistinguishable, in the output, from a
+measurement.
+
+Two bugs in the replacement, both caught by running it rather than reading it:
+
+- Picking the illustrative symbol by `|drift| / |equity|` selects whichever
+  symbol's equity landed nearest zero. STOR scored 129% because its drift and
+  edge partly cancel, and the sentence named the least illustrative case in the
+  sample. A ratio with a small denominator is not evidence of a large numerator.
+  It selects on **drift range over edge range** now, which is the claim being
+  made.
+- Rendering µ$ as dollars at two decimals reported STOR's edge as *"between
+  $0.00 and $0.00"* — a true statement that destroys the number it is about.
+  The sentence stays in µ$ per share, as the rest of the section does.
+
 ### Done — Phase 11
 
 - [x] λ(δ) calibrated from own MBO fills, fit quality and touch-misfit figure

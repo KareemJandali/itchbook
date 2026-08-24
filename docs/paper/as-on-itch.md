@@ -326,7 +326,7 @@ k used, per symbol and lane — from the committed calibration artifacts, never 
 
 ### 7.1 Headline band, per symbol-day
 
-**Edge, not equity, is the market-making result.** `equity = edge + drift − fees`: edge is half-spread captured against the mid at fill time, drift is what the mid did to inventory, including the residual position marked at the close. On the widest-spread symbol drift was 94% of equity and swung from −$0.15 to +$2.45 per share across days while edge held between $0.14 and $0.18 — one is a property of the strategy, the other of the stock. Equity is still shown, because the pre-registered predictions were written against it and are graded against it in §7.5.
+**Edge, not equity, is the market-making result.** `equity = edge + drift − fees`: edge is half-spread captured against the mid at fill time, drift is what the mid did to inventory, including the residual position marked at the close. On GOOG drift is a median 86% of equity and ranges over -153,774 to 2,450,158 µ$ per share across days — a spread 70× as wide as the edge's own 139,804 to 177,184. One is a property of the strategy, the other of the stock. Equity is still shown, because the pre-registered predictions were written against it and are graded against it in §7.5.
 
 All figures µ$ per share. `mk 1s` is the 1-second markout — negative is adverse selection. Never pooled: each table is one symbol-day.
 

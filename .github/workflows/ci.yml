@@ -1034,7 +1034,17 @@ jobs:
           verdict = re.search(r'\*\*(kept|falsified|mixed)\*\* \|$', row)
           assert verdict, row
           assert 'Latency sensitivity — done.' in md, 'the conclusion still asks for it'
-          print('P4 graded across two latencies:', verdict.group(1))
+          # The edge-side companion must appear WITH the verdict, never instead
+          # of it: P4's bar is equity because that is how it was pre-registered,
+          # and the companion exists so the noisier instrument is not the only
+          # one reported. Both, or the report is doing the thing it warns about.
+          assert "P4's bar is equity" in md, 'no edge-side companion beside P4'
+          for arm in ('`symmetric-touch`', '`as-gamma0`', '`as`'):
+              assert arm in md, arm
+          assert re.search(r'edge degrades faster than the baseline.s in \*\*\d+ of \d+\*\*',
+                           md), 'the companion did not report a count'
+          print('P4 graded across two latencies:', verdict.group(1),
+                '-- with the edge-side companion beside it')
           PY
           ./scripts/paper-build.sh --check
 
