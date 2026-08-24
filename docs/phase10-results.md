@@ -90,13 +90,13 @@ as zero — "no drops" and "this platform cannot tell you" are different claims.
 
 | | |
 |---|---:|
-| feed | 252,101 messages over 60.1 s of session |
-| one times real time | 4,196 msg/s |
+| feed | 5,032,462 messages over 60.0 s of session |
+| one times real time | 83,849 msg/s |
 | ring | 65,536 slots |
 | clock | rdtsc / rdtscp (per-core counter) |
-| cross-core clock offset | not measured — run tools/tsc_offset on the measurement host |
-| threads pinned | **no** |
-| runs per rate | 2 (best of) |
+| cross-core clock offset | **bounded under 47 ns**, not measured — the estimate is smaller than the method can resolve (rdtsc / rdtscp (per-core counter)) |
+| threads pinned | yes |
+| runs per rate | 5 (best of) |
 | rates on the ladder | 9 |
 | rates where the sender held its schedule | 0 of 9 |
 
@@ -108,24 +108,24 @@ Offered is what the sender was told to send; achieved is what it managed. They a
 
 | offered | achieved | × real time | p50 ns | p99 ns | p99.9 ns | ring-full | kernel | mid-block | peak occupancy | sender p99.9 late | verdict |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:--|
-| 4,196 | 4,195 | 1× | 29,495 | 87,862 | 189,312 | 0 | 0 | 0 | 257 | 32,973,504 | sender late |
-| 20,980 | 20,979 | 5× | 14,632 | 62,336 | 730,785 | 0 | 0 | 0 | 841 | 26,813,468 | sender late |
-| 83,918 | 83,918 | 20× | 11,755 | 70,949 | 5,119,791 | 0 | 0 | 0 | 739 | 600,048 | sender late |
-| 209,795 | 209,794 | 50× | 10,685 | 249,562 | 835,897 | 0 | 0 | 0 | 1,040 | 83,761 | sender late |
-| 419,590 | 419,579 | 100× | 13,016 | 11,430,918 | 15,842,025 | 0 | 0 | 0 | 7,533 | 120,658 | sender late |
-| 839,180 | 839,132 | 200× | 9,427 | 830,228 | 1,393,779 | 0 | 0 | 0 | 3,640 | 154,425 | sender late |
-| 1,678,360 | 1,678,344 | 400× | 7,812 | 12,780,676 | 13,552,185 | 0 | 0 | 0 | 28,539 | 194,265 | sender late |
-| 3,356,720 | 3,356,066 | 800× | 25,287 | 10,553,152 | 10,800,259 | 0 | 0 | 0 | 51,296 | 127,473 | sender late |
-| 6,713,440 | 5,820,443 | 1600× | 5,245,600 | 11,471,745 | 11,528,928 | 947 | 0 | 0 | 65,509 | 6,969,669 | **lossy** |
+| 83,849 | 83,848 | 1× | 9,897 | 43,969 | 105,543 | 0 | 0 | 0 | 632 | 141,668 | sender late |
+| 167,698 | 167,697 | 2× | 8,720 | 40,493 | 219,233 | 0 | 0 | 0 | 1,566 | 107,150 | sender late |
+| 419,244 | 419,244 | 5× | 7,340 | 37,944 | 2,495,659 | 0 | 0 | 0 | 3,541 | 228,291 | sender late |
+| 838,489 | 838,489 | 10× | 6,888 | 56,386 | 4,050,418 | 0 | 0 | 0 | 7,292 | 764,196 | sender late |
+| 2,096,222 | 2,096,222 | 25× | 7,189 | 1,786,340 | 4,233,402 | 0 | 0 | 0 | 15,828 | 2,791,047 | sender late |
+| 4,192,445 | 4,192,421 | 50× | 86,055 | 76,417,052 | 79,388,532 | 9,151 | 0 | 0 | 65,527 | 144,859 | **lossy** |
+| 8,384,890 | 8,384,842 | 100× | 5,464,868 | 11,760,179 | 12,668,929 | 25,375 | 0 | 124 | 65,536 | 820,899 | **lossy** |
+| 16,769,780 | 16,769,078 | 200× | 5,224,894 | 10,303,592 | 11,306,112 | 58,142 | 0 | 1 | 65,536 | 371,609 | **lossy** |
+| 33,539,560 | 28,511,047 | 400× | 5,596,801 | 9,449,978 | 10,217,484 | 78,259 | 0 | 1 | 65,536 | 31,211,752 | **lossy** |
 
 ## The two annotations
 
 | | |
 |---|---|
-| max sustainable rate | 3,356,066 msg/s achieved (3,356,720 offered, 800× real time) |
-| ...at which | p50 25,287 ns, p99 10,553,152 ns, p99.9 10,800,259 ns |
-| knee | 209,795 msg/s (50× real time), p99 249,562 ns against a 70,949 ns baseline |
-| cliff | 6,713,440 msg/s (1600×) — 947 ring-full, 0 kernel, 0 mid-block |
+| max sustainable rate | 2,096,222 msg/s achieved (2,096,222 offered, 25× real time) |
+| ...at which | p50 7,189 ns, p99 1,786,340 ns, p99.9 4,233,402 ns |
+| knee | 2,096,222 msg/s (25× real time), p99 1,786,340 ns against a 40,493 ns baseline |
+| cliff | 4,192,445 msg/s (50×) — 9,151 ring-full, 0 kernel, 0 mid-block |
 
 <!-- generated:end -->
 
@@ -194,13 +194,13 @@ The prediction was that the ceiling is arithmetic: decompression costs D, the bo
 
 | | |
 |---|---:|
-| feed | 3,775,300 messages |
-| D — decompress, frame, length-check, build nothing | 0.63 s |
-| B — the book, by subtraction (T_seq − D) | 1.70 s |
-| D + B — the single-threaded path | 2.33 s |
-| model ceiling (D + B) / max(D, B) | 1.37× |
+| feed | 5,034,007 messages |
+| D — decompress, frame, length-check, build nothing | 0.48 s |
+| B — the book, by subtraction (T_seq − D) | 1.53 s |
+| D + B — the single-threaded path | 2.01 s |
+| model ceiling (D + B) / max(D, B) | 1.31× |
 | larger half | book |
-| runs per configuration | 3 (best of) |
+| runs per configuration | 5 (best of) |
 
 ### Why the ceiling leaks, measured
 
@@ -208,34 +208,34 @@ The prediction was that the ceiling is arithmetic: decompression costs D, the bo
 
 | | |
 |---|---:|
-| frame only, no inflate | 0.15 s |
-| frame + book, no inflate | 1.71 s |
-| **B isolated** | **1.56 s** |
-| subtraction overstates the book by | 9% |
+| frame only, no inflate | 0.12 s |
+| frame + book, no inflate | 1.57 s |
+| **B isolated** | **1.45 s** |
+| subtraction overstates the book by | 6% |
 
 Two effects, both real, and neither one is overlap:
 
-1. **Inflate and the book contend.** B by subtraction is 1.70 s; the book's isolated cost is 1.56 s. zlib's 32 KB window and the book's ref map do not fit in the same cache together, so interleaving them on one core costs more than running either alone.
+1. **Inflate and the book contend.** B by subtraction is 1.53 s; the book's isolated cost is 1.45 s. zlib's 32 KB window and the book's ref map do not fit in the same cache together, so interleaving them on one core costs more than running either alone.
 
-2. **The split moves work off the consumer.** Framing alone is 0.15 s for 3,775,300 messages — two `gzread` calls and a vector resize each. In the pipeline the producer absorbs all of it and the consumer walks a contiguous chunk instead. That is a cheaper inner loop, not overlap, and it lands in the same number.
+2. **The split moves work off the consumer.** Framing alone is 0.12 s for 5,034,007 messages — two `gzread` calls and a vector resize each. In the pipeline the producer absorbs all of it and the consumer walks a contiguous chunk instead. That is a cheaper inner loop, not overlap, and it lands in the same number.
 
 Stall columns are **poll counts, not time**, and are not comparable across the two sides: a consumer's empty poll is a load and a compare, while a producer's full poll goes through `writable()`, which refreshes the consumer's cache line. Which half is slower is settled above, by time.
 
 | chunk | wall clock | speedup | % of ceiling | producer polls | consumer polls | chunks |
 |---:|---:|---:|---:|---:|---:|---:|
-| 64 KB | 1.41 s | 1.65× | 121% | 410,731,923 | 33,034,560 | 1,733 |
-| 256 KB | 1.40 s | 1.66× | 121% | 307,704,380 | 6,535,549 | 433 |
-| 1024 KB | 1.31 s | 1.78× | 130% | 295,867,029 | 5,297,243 | 109 |
+| 64 KB | 1.11 s | 1.81× | 138% | 669,141,430 | 36,823,191 | 2,310 |
+| 256 KB | 1.10 s | 1.83× | 139% | 492,213,336 | 6,869,883 | 578 |
+| 1024 KB | 1.05 s | 1.91× | 146% | 465,208,847 | 6,800,350 | 145 |
 
 ### The predictions, graded
 
 | | predicted | measured | verdict |
 |---|---|---|:--|
-| P1 the ceiling is arithmetic | measured speedup ≤ (D+B)/max(D,B) | ceiling 1.37×, best 1.78× (130%) | **falsified — the model assumed the work is invariant under the split, and it is not** |
-| P2 speedup here | 1.2–1.7× | 1.78× at 1024 KB | **falsified — above the range** |
-| P3 falsification | refuted if overlapped ≥ 0.95× sequential | 0.56× sequential | **holds** |
-| P4 chunk size | FLAT | 7.6% spread across 64 KB / 256 KB / 1 MB, monotonic | **undecided** — spread is within the noise of this machine, but bigger chunks were faster at every size and in both runs of the sweep. A real effect too small to separate here |
-| P5 which side stalls | producer more often (B > D) | producer 410,731,923, consumer 33,034,560 | **withdrawn — poll counts are not comparable across the sides; see above** |
+| P1 the ceiling is arithmetic | measured speedup ≤ (D+B)/max(D,B) | ceiling 1.31×, best 1.91× (146%) | **falsified — the model assumed the work is invariant under the split, and it is not** |
+| P2 speedup here | 1.2–1.7× | 1.91× at 1024 KB | **falsified — above the range** |
+| P3 falsification | refuted if overlapped ≥ 0.95× sequential | 0.52× sequential | **holds** |
+| P4 chunk size | FLAT | 5.7% spread across 64 KB / 256 KB / 1 MB, monotonic | **undecided** — spread is within the noise of this machine, but bigger chunks were faster at every size and in both runs of the sweep. A real effect too small to separate here |
+| P5 which side stalls | producer more often (B > D) | producer 669,141,430, consumer 36,823,191 | **withdrawn — poll counts are not comparable across the sides; see above** |
 
 <!-- generated:overlap:end -->
 
