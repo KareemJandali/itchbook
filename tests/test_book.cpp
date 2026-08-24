@@ -276,6 +276,44 @@ void test_overflow_band() {
     CHECK_EQ(bid, kMid);
 }
 
+void test_peak_overflow_outlives_the_levels_it_counted() {
+    // The line above -- an emptied overflow map reporting zero -- is correct
+    // and is also why overflow_levels() cannot describe a completed day. Every
+    // session ends with the book flat, so a full-day run reports zero for every
+    // symbol however hard overflow was worked in between: both real days in
+    // validation/ do exactly that, 8,906 and 8,841 symbols at zero against
+    // 18.7M and 14.0M off-band adds. peak_overflow_levels() is the figure that
+    // survives, and this test is the one that fails if it stops surviving.
+    Book book(kTick);
+    book.add(1, 'B', kMid, 100);            // centres the band here
+
+    book.add(2, 'B', kMid + 900000, 200);   // off the band
+    book.add(3, 'B', kMid + 37, 300);       // off the tick grid
+    CHECK_EQ(book.overflow_levels(), 2u);
+    CHECK_EQ(book.peak_overflow_levels(), 2u);
+
+    book.remove(2);
+    CHECK_EQ(book.overflow_levels(), 1u);
+    CHECK_EQ(book.peak_overflow_levels(), 2u);
+
+    book.remove(3);
+    CHECK_EQ(book.overflow_levels(), 0u);   // the day's end, in miniature
+    CHECK_EQ(book.peak_overflow_levels(), 2u);
+
+    // A level re-entered after being erased is not a new peak on its own...
+    book.add(4, 'B', kMid + 37, 400);
+    CHECK_EQ(book.peak_overflow_levels(), 2u);
+    // ...and a third distinct price is.
+    book.add(5, 'B', kMid + 38, 500);
+    book.add(6, 'B', kMid + 900000, 600);
+    CHECK_EQ(book.peak_overflow_levels(), 3u);
+
+    // The two sides are counted separately, and the sum is a bound rather than
+    // a coincident maximum -- documented as such on peak_overflow_levels().
+    book.add(7, 'S', kMid - 900000, 700);
+    CHECK_EQ(book.peak_overflow_levels(), 4u);
+}
+
 void test_top_ordering_and_depth() {
     Book book(kTick);
     for (int i = 0; i < 5; ++i) {
@@ -394,6 +432,45 @@ void test_unknown_refs_and_untouched_book() {
     CHECK_EQ(book.low(), kMid);
 }
 
+void test_an_auction_that_did_not_happen_is_not_a_trade() {
+    // A Cross Trade with shares == 0 and price == 0 is how the feed says an
+    // auction did NOT occur: every symbol that is not NASDAQ-listed gets one at
+    // the open, and any symbol without a closing auction gets one at the close.
+    //
+    // Counting it drags `low` to zero, sets `open`/`close` to zero and counts a
+    // trade that never happened. On 2019-12-30 that corrupted `low` on 6,468 of
+    // 8,906 symbols. It survived because MSFT -- the only symbol ever graded
+    // against an outside source -- has real auctions at both ends, and because
+    // the generated feed the regression gate is pinned to has no empty crosses.
+    // Both implementations had the bug, so the differential agreed and was
+    // wrong together.
+    Book book(kTick);
+    book.trade(kMid, 100);
+    CHECK_EQ(book.trades(), 1u);
+
+    book.cross(0, 0, 'O');              // the auction that did not happen
+    CHECK_EQ(book.trades(), 1u);        // still one trade
+    CHECK_EQ(book.volume(), 100u);
+    CHECK_EQ(book.cross_volume(), 0u);
+    CHECK_EQ(book.open(), kMid);        // not 0
+    CHECK_EQ(book.close(), kMid);       // not 0
+    CHECK_EQ(book.low(), kMid);         // not 0 -- this is the one that bit
+    CHECK(book.cross_prices().find('O') == book.cross_prices().end());
+
+    // A real auction still counts, and still publishes its price.
+    book.cross(kMid + 500, 2000, 'C');
+    CHECK_EQ(book.trades(), 2u);
+    CHECK_EQ(book.cross_volume(), 2000u);
+    CHECK_EQ(book.close(), kMid + 500);
+    CHECK_EQ(book.cross_prices().at('C'), kMid + 500);
+
+    // The same rule for a zero-share print, for the same reason.
+    Book b2(kTick);
+    b2.trade(kMid, 0);
+    CHECK_EQ(b2.trades(), 0u);
+    CHECK_EQ(b2.low(), -1);             // never set
+}
+
 void test_dispatch_matches_the_wire() {
     // One message of each mutating type, applied through dispatch.hpp, to prove
     // the offsets line up with what the book expects.
@@ -494,6 +571,8 @@ int main() {
     test_refmap_churn_against_reference();
     test_best_price_cursor();
     test_overflow_band();
+    test_peak_overflow_outlives_the_levels_it_counted();
+    test_an_auction_that_did_not_happen_is_not_a_trade();
     test_top_ordering_and_depth();
     test_mutation_semantics();
     test_replace_loses_priority_and_inherits_side();

@@ -58,7 +58,18 @@ class Book:
         return self.bids if side == "B" else self.asks
 
     def _record_trade(self, price, shares):
-        """Fold one printable execution into the daily stats."""
+        """Fold one printable execution into the daily stats.
+
+        A print of zero shares is not a print. An auction that did not happen
+        still arrives, as a Cross Trade with shares == 0 and price == 0: every
+        symbol that is not NASDAQ-listed gets one at the open, and any symbol
+        without a closing auction gets one at the close. Folded in, it sets
+        `open` and `close` to zero, drags `low` to zero, and counts a trade
+        that never occurred. Both implementations did this, so the differential
+        agreed with itself and was wrong together.
+        """
+        if shares == 0:
+            return
         self.volume += shares
         self.notional += price * shares
         self.trades += 1
@@ -137,7 +148,10 @@ class Book:
     def cross(self, price, shares, cross_type):
         """'Q' — opening / closing / halt cross. Volume only."""
         self.cross_volume += shares
-        self.cross_prices[cross_type] = price
+        # An absent auction is not an auction that printed at zero, and
+        # check_cross.py grades this number.
+        if shares > 0:
+            self.cross_prices[cross_type] = price
         self._record_trade(price, shares)
 
     # ---- queries -------------------------------------------------------------

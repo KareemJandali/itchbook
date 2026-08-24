@@ -217,7 +217,15 @@ struct Census {
                 if (s != nullptr) { ++s->trades; note_trade(*s, m::trade::price(p)); }
                 break;
             case 'Q':
-                if (s != nullptr) {
+                // An auction that did not happen still sends a Cross Trade, with
+                // shares == 0 and price == 0. Counting those made every symbol
+                // on the tape look as though it had both auctions -- 8,906 of
+                // 8,906 on 2019-12-30 -- which is the denominator 9.12's free
+                // oracle is supposed to report, and it meant nothing. It also
+                // fed price 0 into the per-symbol price range. Same defect the
+                // book had in record_trade(); the census is a second
+                // implementation and had it too.
+                if (s != nullptr && m::cross_trade::shares(p) > 0) {
                     ++s->crosses;
                     note_trade(*s, m::cross_trade::price(p));
                     const char kind = m::cross_trade::cross_type(p);

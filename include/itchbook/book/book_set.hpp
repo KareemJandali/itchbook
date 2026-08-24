@@ -271,6 +271,13 @@ public:
 
     char mwcb_level_breached() const { return session_.mwcb_level_breached; }
 
+    // 'W' messages seen. The level above is the last one breached and says
+    // WHICH; this says HOW MANY, and the two answer different questions on a
+    // day that breached and resumed. Both are session-wide by definition: a
+    // market-wide circuit breaker is not a property of a symbol, which is why
+    // neither appears in the per-symbol file alongside 'h' and 'B'.
+    uint64_t mwcb_events() const { return session_.mwcb_events; }
+
     Storage& storage() { return store_; }
     const Storage& storage() const { return store_; }
 

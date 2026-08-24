@@ -389,6 +389,15 @@ void test_tradability_comes_from_three_places_not_one() {
     CHECK(!set.tradable(1));
     CHECK(!set.tradable(2));
     CHECK_EQ(set.mwcb_level_breached(), '1');
+    CHECK_EQ(set.mwcb_events(), 1u);
+
+    // The level says WHICH, the count says HOW MANY, and a day that escalates
+    // needs both: the level alone cannot distinguish one breach from three.
+    // Both reach the run artifact, which is what makes 'W' checkable per day
+    // the way 'h' and 'B' already were.
+    set.set_mwcb_breached('2');
+    CHECK_EQ(set.mwcb_level_breached(), '2');
+    CHECK_EQ(set.mwcb_events(), 2u);
 
     // A locate that never got a book is not tradable, and asking must not
     // build one for it.

@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -299,6 +300,8 @@ uint64_t peak_rss() {
 bool write_all_json(const AllSymbols& a, const char* path) {
     uint64_t volume = 0, adds = 0, off_band = 0, recentres = 0, resting_shares = 0;
     size_t quoted = 0;
+    uint64_t overflow_now = 0, overflow_peak = 0;
+    size_t overflow_symbols = 0;
     a.set.for_each_book([&](uint16_t, const itchbook::book::Book& b,
                             const itchbook::book::SymbolInfo&) {
         volume += b.volume();
@@ -306,6 +309,9 @@ bool write_all_json(const AllSymbols& a, const char* path) {
         adds += b.adds();
         off_band += b.off_band_adds();
         recentres += b.recentres();
+        overflow_now += b.overflow_levels();
+        overflow_peak += b.peak_overflow_levels();
+        if (b.peak_overflow_levels() > 0) ++overflow_symbols;
         if (b.resting_orders() > 0) ++quoted;
     });
     std::FILE* f = std::fopen(path, "w");
@@ -316,6 +322,23 @@ bool write_all_json(const AllSymbols& a, const char* path) {
     const double band_mb = static_cast<double>(a.set.books()) * 2.0 *
                            static_cast<double>(a.opt.band_levels) *
                            static_cast<double>(sizeof(itchbook::book::Level)) / 1e6;
+    // What one overflow level costs, so the report does not have to guess.
+    //
+    // A red-black tree node is the pair the map holds plus the tree's own
+    // bookkeeping: a colour and three pointers, which is 32 bytes on LP64 under
+    // both libstdc++ and libc++. Emitted rather than typed into the report, and
+    // stated as a BOUND rather than a measurement: a node allocator's own
+    // rounding is not visible from here, and the sum of the two sides' peaks is
+    // already a bound before this multiplies it.
+    constexpr size_t kOverflowBytesPerLevel =
+        sizeof(std::map<int32_t, itchbook::book::Level>::value_type) + 32;
+
+    // Absent is empty, not a sentinel -- the same rule the price fields follow.
+    // '\0' means the session never breached, and writing "0" for that would be
+    // a fourth MWCB level nobody defined.
+    const std::string mwcb =
+        a.set.mwcb_level_breached() == '\0' ? std::string()
+                                            : std::string(1, a.set.mwcb_level_breached());
     std::fprintf(f,
         "{\n"
         "  \"feed\": \"%s\",\n"
@@ -348,8 +371,14 @@ bool write_all_json(const AllSymbols& a, const char* path) {
         "  \"unknown_refs\": %llu,\n"
         "  \"locate_mismatch\": %llu,\n"
         "  \"undirectoried_messages\": %llu,\n"
+        "  \"overflow_levels\": %llu,\n"
+        "  \"peak_overflow_levels\": %llu,\n"
+        "  \"overflow_bytes_per_level\": %zu,\n"
+        "  \"symbols_using_overflow\": %zu,\n"
         "  \"operational_halts\": %llu,\n"
-        "  \"broken_trades\": %llu\n"
+        "  \"broken_trades\": %llu,\n"
+        "  \"mwcb_level_breached\": \"%s\",\n"
+        "  \"mwcb_events\": %llu\n"
         "}\n",
         a.opt.feed,
         a.opt.reader_thread ? "true" : "false",
@@ -375,8 +404,14 @@ bool write_all_json(const AllSymbols& a, const char* path) {
         static_cast<unsigned long long>(a.set.unknown_ref()),
         static_cast<unsigned long long>(a.set.locate_mismatch()),
         static_cast<unsigned long long>(a.set.undirectoried_messages()),
+        static_cast<unsigned long long>(overflow_now),
+        static_cast<unsigned long long>(overflow_peak),
+        kOverflowBytesPerLevel,
+        overflow_symbols,
         static_cast<unsigned long long>(a.set.operational_halts()),
-        static_cast<unsigned long long>(a.set.broken_trades()));
+        static_cast<unsigned long long>(a.set.broken_trades()),
+        mwcb.c_str(),
+        static_cast<unsigned long long>(a.set.mwcb_events()));
     const bool bad = std::ferror(f) != 0;
     return std::fclose(f) == 0 && !bad;
 }
@@ -386,12 +421,15 @@ void print_all_summary(const AllSymbols& a) {
     uint64_t resting_shares = 0;
     size_t quoted = 0;
     size_t overflow_symbols = 0;
+    uint64_t overflow_now = 0, overflow_peak = 0;
     a.set.for_each_book([&](uint16_t, const itchbook::book::Book& b,
                             const itchbook::book::SymbolInfo&) {
         volume += b.volume();
         resting_shares += b.resting_shares();
         if (b.resting_orders() > 0) ++quoted;
-        if (b.overflow_levels() > 0) ++overflow_symbols;
+        overflow_now += b.overflow_levels();
+        overflow_peak += b.peak_overflow_levels();
+        if (b.peak_overflow_levels() > 0) ++overflow_symbols;
     });
     std::printf("%-28s %16s\n", "messages read", comma(a.read).c_str());
     std::printf("%-28s %16s\n", "messages applied", comma(a.applied).c_str());
@@ -404,7 +442,18 @@ void print_all_summary(const AllSymbols& a) {
     std::printf("%-28s %16s\n", "ref map slots", comma(a.set.storage().refs.capacity()).c_str());
     std::printf("%-28s %16s\n", "pool capacity (orders)", comma(a.set.pool_capacity()).c_str());
     std::printf("%-28s %16s\n", "pools", comma(a.set.pools()).c_str());
+    // Overflow, at its worst rather than at the end.
+    //
+    // This row used to count symbols whose overflow map was non-empty WHEN THE
+    // RUN STOPPED, and on a complete day that is zero for every symbol on the
+    // tape: the session ends flat and pop() erases each level as it empties.
+    // It read as "overflow was never used" over a day with 18.7M off-band adds.
+    // The peak is the figure that can be set against peak RSS, which is also a
+    // high-water mark; the terminal count stays, one line below, so the zero is
+    // visible as a fact about when it is sampled.
     std::printf("%-28s %16s\n", "symbols using overflow", comma(overflow_symbols).c_str());
+    std::printf("%-28s %16s\n", "  peak overflow levels", comma(overflow_peak).c_str());
+    std::printf("%-28s %16s\n", "  overflow levels at close", comma(overflow_now).c_str());
     // The band, priced and graded. Memory is knowable before the run; the
     // off-band fraction is the only thing that says whether the width was
     // right, and it can only be known after it.
@@ -479,6 +528,8 @@ void print_all_summary(const AllSymbols& a) {
                 comma(a.set.broken_trades()).c_str());
     std::printf("%-28s %16c\n", "MWCB level breached ('W')",
                 a.set.mwcb_level_breached() == 0 ? '-' : a.set.mwcb_level_breached());
+    std::printf("%-28s %16s\n", "  'W' messages",
+                comma(a.set.mwcb_events()).c_str());
     std::printf("%-28s %16c\n", "last system event",
                 a.set.system_event() == 0 ? '-' : a.set.system_event());
 }
@@ -570,7 +621,16 @@ void write_json(const Replayer& r, const char* path) {
     if (b.volume() == 0) {
         std::fprintf(f, "  \"vwap\": null\n");   // no trades, no average
     } else {
-        std::fprintf(f, "  \"vwap\": %.10f\n", b.vwap());
+        // %.17g, not %.10f: 17 significant digits is what round-trips an IEEE
+        // double, and the oracle writes Python's repr, which is the shortest
+        // string that round-trips. At ten decimals the two agree only when the
+        // shortest form happens to need ten -- which is exactly what MSFT's
+        // vwap needs, so the one symbol this differential had ever been run on
+        // agreed by coincidence and hid the mismatch. The sampled differential
+        // found it on SEEL, ESBA and ABIO the first time it ran; every other
+        // summary field, including the exact integer `notional` and `volume`
+        // this is derived from, already matched on all ten symbols.
+        std::fprintf(f, "  \"vwap\": %.17g\n", b.vwap());
     }
     std::fprintf(f, "}\n");
     std::fclose(f);

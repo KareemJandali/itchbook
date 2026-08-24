@@ -262,6 +262,11 @@ public:
         o->level_idx = idx;
         if (idx == kOverflowLevel) {
             overflow_[o->price].push_back(o);
+            // High-water mark, taken here and nowhere else: this is the only
+            // branch that can grow the map, so the dense path pays nothing for
+            // it. See peak_overflow_count() for why the terminal size cannot
+            // answer the question this one does.
+            if (overflow_.size() > peak_overflow_) peak_overflow_ = overflow_.size();
         } else {
             Level& lvl = dense_[idx];
             bool was_empty = lvl.empty();
@@ -429,6 +434,22 @@ public:
     size_t level_count() const { return dense_nonempty_ + overflow_.size(); }
     size_t overflow_count() const { return overflow_.size(); }
 
+    // The most levels this side's overflow map ever held at once.
+    //
+    // overflow_count() is the map's size RIGHT NOW, and on a complete trading
+    // day that number is structurally zero: the session ends with every order
+    // cancelled or executed, pop() erases each level as it empties to keep the
+    // map cold, and so a full day's run reports an empty map for every symbol
+    // no matter how hard overflow was used in between. Both real days in
+    // validation/ report exactly that -- 8,906 and 8,841 symbols, zero
+    // overflow levels each, against 18.7M and 14.0M off-band adds. A metric
+    // that is zero by construction cannot decompose peak RSS, which is itself
+    // a high-water mark; this is the counter that can.
+    //
+    // Not reset by clear_levels(): a re-centre empties the map, and the peak
+    // is a fact about the session rather than about the current band.
+    size_t peak_overflow_count() const { return peak_overflow_; }
+
 private:
     bool is_bid() const { return side_ == 'B'; }
     bool better(int32_t a, int32_t b) const { return is_bid() ? a > b : a < b; }
@@ -476,6 +497,7 @@ private:
     std::map<int32_t, Level> overflow_;   // cold: off-band and off-tick prices
     int64_t cursor_ = -1;
     size_t dense_nonempty_ = 0;
+    size_t peak_overflow_ = 0;
 };
 
 // ---- the book ---------------------------------------------------------------
@@ -616,7 +638,9 @@ public:
 
     void cross(int32_t price, uint64_t shares, char type) {   // 'Q'
         cross_volume_ += shares;
-        cross_prices_[type] = price;
+        // Same rule for the published auction price: an absent auction is not
+        // an auction that printed at zero, and check_cross.py grades this.
+        if (shares > 0) cross_prices_[type] = price;
         record_trade(price, shares);
     }
 
@@ -799,6 +823,15 @@ public:
     uint64_t locate_mismatch() const { return locate_mismatch_; }
     size_t overflow_levels() const { return bids_.overflow_count() + asks_.overflow_count(); }
 
+    // The two sides' peaks, summed. That is an UPPER BOUND on the levels both
+    // maps held at any one instant, not a measurement of it -- the bid's worst
+    // moment and the ask's need not be the same moment. It is reported as a
+    // bound because the cheap alternative, sampling the sum on every overflow
+    // insert, would make one side's insert read the other side's map.
+    size_t peak_overflow_levels() const {
+        return bids_.peak_overflow_count() + asks_.peak_overflow_count();
+    }
+
     // ---- the band, as it actually behaved -----------------------------------
     //
     // Off-band is not failure. Every symbol on a real day holds STUB QUOTES --
@@ -890,6 +923,19 @@ private:
     Side& side_for(char side) { return side == 'B' ? bids_ : asks_; }
 
     void record_trade(int32_t price, uint64_t shares) {
+        // A print of zero shares is not a print.
+        //
+        // An auction that did not happen still arrives, as a Cross Trade with
+        // shares == 0 and price == 0: every symbol that is not NASDAQ-listed
+        // gets one at the open, and any symbol without a closing auction gets
+        // one at the close. Folded into the daily stats it sets `open` and
+        // `close` to zero and drags `low` to zero, and counts a trade that
+        // never occurred. BOTH implementations did this, so the differential
+        // agreed with itself and was wrong together -- the exact failure the
+        // external oracle exists to catch. It showed on ALLE (NYSE-listed, so
+        // no NASDAQ opening auction), AQB and MKD; MSFT and QQQ have real
+        // auctions at both ends and hid it.
+        if (shares == 0) return;
         volume_ += shares;
         notional_ += static_cast<uint64_t>(price) * shares;
         ++trades_;

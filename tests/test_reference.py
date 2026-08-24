@@ -468,5 +468,44 @@ class TestSnapshots(unittest.TestCase):
         self.assertGreater(fine, coarse)
 
 
+class EmptyCross(unittest.TestCase):
+    """A Cross Trade with no shares is an auction that did not happen.
+
+    Every symbol that is not NASDAQ-listed gets one at the open, and any symbol
+    without a closing auction gets one at the close. Folding it into the daily
+    stats sets `open`/`close` to zero and drags `low` to zero -- on 2019-12-30
+    it corrupted `low` on 6,468 of 8,906 symbols. The C++ book had the identical
+    bug, so the differential agreed with itself and was wrong together, which is
+    exactly what an outside oracle is for.
+    """
+
+    def test_zero_share_cross_is_not_a_trade(self):
+        b = Book()
+        b.trade(MID, 100)
+        b.cross(0, 0, "O")
+        self.assertEqual(b.trades, 1)
+        self.assertEqual(b.volume, 100)
+        self.assertEqual(b.cross_volume, 0)
+        self.assertEqual(b.open, MID)
+        self.assertEqual(b.close, MID)
+        self.assertEqual(b.low, MID)      # not 0 -- this is the one that bit
+        self.assertNotIn("O", b.cross_prices)
+
+    def test_a_real_auction_still_counts(self):
+        b = Book()
+        b.trade(MID, 100)
+        b.cross(MID + 500, 2000, "C")
+        self.assertEqual(b.trades, 2)
+        self.assertEqual(b.cross_volume, 2000)
+        self.assertEqual(b.close, MID + 500)
+        self.assertEqual(b.cross_prices["C"], MID + 500)
+
+    def test_zero_share_print_is_not_a_trade_either(self):
+        b = Book()
+        b.trade(MID, 0)
+        self.assertEqual(b.trades, 0)
+        self.assertIsNone(b.low)
+
+
 if __name__ == "__main__":
     unittest.main()
