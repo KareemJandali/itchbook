@@ -52,14 +52,15 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
-#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <sched.h>
-#include <sys/mman.h>
 #include <string>
 #include <vector>
+#if defined(__linux__)
+#include <sched.h>
+#include <sys/mman.h>
+#endif
 
 #include "itchbook/bench/histogram.hpp"
 #include "itchbook/bench/rdtsc.hpp"
@@ -114,11 +115,22 @@ struct RealTime {
 // reported. CAP_SYS_NICE is what grants the first (run as root, or once:
 // `sudo setcap cap_sys_nice=ep <binary>`), CAP_IPC_LOCK or a raised RLIMIT_MEMLOCK
 // the second.
+//
+// LINUX ONLY, and the non-Linux path REFUSES rather than quietly succeeding.
+// `sched_setscheduler` and `mlockall` are POSIX options that macOS does not
+// implement, which the macOS CI job found the first time this file was pushed:
+// the point of that job is exactly the class of bug where a Linux-only call
+// compiles green on every runner that matters until it does not. The refusal
+// matters more than the portability -- a sender that reports "real-time
+// requested" on a platform where it did nothing would put a number in a table
+// that means something it does not, and the whole reason RealTime records what
+// was GRANTED is that asked-for and got are different facts.
 RealTime go_realtime(int priority) {
     RealTime rt;
     if (priority <= 0) return rt;
     rt.requested = true;
 
+#if defined(__linux__)
     sched_param sp{};
     sp.sched_priority = priority;
     if (sched_setscheduler(0, SCHED_FIFO, &sp) == 0) {
@@ -134,6 +146,10 @@ RealTime go_realtime(int priority) {
     } else {
         rt.memory_error = std::strerror(errno);
     }
+#else
+    rt.scheduler_error = "not supported on this platform";
+    rt.memory_error = "not supported on this platform";
+#endif
     return rt;
 }
 
