@@ -329,6 +329,39 @@ jobs:
                     (sent['packets'] - got['received']))
           "
 
+      # 10.7's sender tail was a scheduling tail, not a pacing error: p50
+      # lateness of 35 ns against a 1.09 ms max is a thread being taken off the
+      # CPU, and spinning does not help when you are not running. So the sender
+      # can ASK for SCHED_FIFO -- and the only thing asserted here is that
+      # asking and getting stay distinguishable. A run that silently failed to
+      # get real-time priority and one that never asked produce identical
+      # lateness, so a report that conflated them would put a number in a table
+      # meaning something it does not.
+      #
+      # No outcome is asserted: this runner is unprivileged and a self-hosted
+      # root one is not, and the point is that either way the artifact says
+      # which happened. On macOS the calls do not exist at all and the tool
+      # reports that rather than pretending.
+      - name: The sender asks for real-time priority, and says what it got
+        run: |
+          ./build/mold_replay_udp data/raw/pace.mold.gz --rate 100000 \
+            --host 127.0.0.1 --port 26411 --rt-priority 50 --json /tmp/rt.json \
+            > /tmp/rt.txt 2>&1
+          cat /tmp/rt.txt | head -5
+          python3 -c "
+          import json
+          rt = json.load(open('/tmp/rt.json'))['realtime']
+          assert rt['requested'] is True, rt
+          assert rt['priority'] == 50, rt
+          # Granted or refused, but never ambiguous: a refusal must carry the
+          # reason it was refused.
+          if not rt['scheduler_granted']:
+              assert rt['scheduler_error'], 'refused without saying why'
+              print('SCHED_FIFO refused here, and said so:', rt['scheduler_error'])
+          else:
+              print('SCHED_FIFO granted at priority', rt['priority'])
+          "
+
       - name: Cross-core clock offset tool runs
         run: |
           ./build/tsc_offset --samples 20000 --cpu-a 0 --cpu-b 1 --json /tmp/tsc.json
@@ -857,12 +890,28 @@ jobs:
               echo "FAIL: the paper claims no results while an artifact is committed"
               exit 1
             fi
-            echo "artifact present, paper reports results"
+            grep -q "^### 8.1 The answer" docs/paper/as-on-itch.md \
+              || { echo "FAIL: an artifact is committed but the paper has no conclusion"; exit 1; }
+            if grep -q "Not concluded" docs/paper/as-on-itch.md; then
+              echo "FAIL: the paper declines to conclude while an artifact is committed"
+              exit 1
+            fi
+            if grep -q "results pending data" docs/paper/as-on-itch.md; then
+              echo "FAIL: the status banner says results are pending while they are not"
+              exit 1
+            fi
+            echo "artifact present, paper reports results and concludes"
           else
             grep -q "No results" docs/paper/as-on-itch.md \
               || { echo "FAIL: no artifact, and the paper does not say so"; exit 1; }
             if grep -q "The predictions, graded" docs/paper/as-on-itch.md; then
               echo "FAIL: a graded prediction table with no artifact behind it"
+              exit 1
+            fi
+            grep -q "Not concluded" docs/paper/as-on-itch.md \
+              || { echo "FAIL: no artifact, and the conclusion does not say so"; exit 1; }
+            if grep -q "^### 8.1 The answer" docs/paper/as-on-itch.md; then
+              echo "FAIL: a conclusion with no artifact behind it"
               exit 1
             fi
             echo "no artifact, paper refuses to invent one"
@@ -910,6 +959,25 @@ jobs:
           verdicts = re.findall(r'\*\*(kept|falsified|mixed|not evaluated|'
                                 r'TRIGGERED|not triggered)\*\* \|', block)
           assert len(verdicts) == 7, verdicts
+          # The conclusion, the abstract's finding sentence and the status banner
+          # are generated from the same artifact as the tables. A conclusion is
+          # the most-quoted part of a paper and the likeliest to be left behind
+          # by its own numbers, so it gets the same treatment and the same check.
+          concl = md.split('<!-- generated:conclusion:begin -->')[1] \
+                    .split('<!-- generated:conclusion:end -->')[0]
+          for h in ('8.1 The answer', '8.2 Which half', '8.3 The mechanism',
+                    '8.5 What remains'):
+              assert h in concl, (h, concl[:400])
+          assert 'Not concluded' not in concl, 'refused to conclude with an artifact present'
+          find = md.split('<!-- generated:findings:begin -->')[1] \
+                   .split('<!-- generated:findings:end -->')[0]
+          assert 'symbol-day-lane cells' in find, find
+          stat = md.split('<!-- generated:status:begin -->')[1] \
+                   .split('<!-- generated:status:end -->')[0]
+          assert 'Status: run.' in stat, stat
+          # A one-symbol synthetic run is below the pre-registered scope, and the
+          # banner has to say so rather than reading like a finished paper.
+          assert 'BELOW the pre-registered scope' in stat, stat
           cal = md.split('<!-- generated:calibration:begin -->')[1] \
                   .split('<!-- generated:calibration:end -->')[0]
           assert 'calibrated_per_lane' in cal, 'the per-lane decision vanished'
@@ -938,6 +1006,14 @@ jobs:
           done
           mkdir -p "$work/docs/figures/paper"
           echo '<svg></svg>' > "$work/docs/figures/paper/gamma-pnl.svg"
+          # AND REMOVE THE ARTIFACT, which is what makes the figure an ORPHAN
+          # rather than merely stale. Once validation/as-experiment.json was
+          # committed, the copy above carried it along and --check reported a
+          # figure that did not match its artifact -- a true statement, and not
+          # the one under test. Same shape as the "No results" assertion that
+          # inverted the day the results landed: a self-test written for the
+          # empty world has to be updated when the world stops being empty.
+          rm -f "$work"/validation/as-experiment.json "$work"/validation/intensity*.json
           cd "$work"
           if ./scripts/paper-figures.sh --check > /tmp/orphan.txt 2>&1; then
             cat /tmp/orphan.txt

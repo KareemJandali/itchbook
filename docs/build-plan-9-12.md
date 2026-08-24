@@ -1861,16 +1861,62 @@ manifest beside three freshly drawn figures while reporting "no figures, no
 manifest — consistent". A checker that cannot fail is worse than no checker, and
 it took generating figures with real content to notice.
 
+### 11.6 — the conclusion, and what it took to be allowed to write one
+
+The paper had results in §7 and stopped at "Reproducing". Three sections were
+still hand-written and three sections were now wrong: the status banner said
+*results pending data* above a graded seven-row table, and §9 *What remains*
+opened with "the evaluation is not run". That is the same defect as phase 10's
+"UNMEASURABLE on this hardware" sitting above a measured bound — prose that was
+true when typed and false afterwards, with nothing able to tell.
+
+So the banner, the abstract's finding sentence and the whole of §8 are generated
+now, from the same artifact §7's tables come from, and the paper is §1–§7,
+§8 Conclusion, §9 Limitations, §10 Reproducing.
+
+**The finding.** Over 3 symbols × 3 days × 4 lanes, A-S captures **less**
+half-spread per share than a naive touch maker in **36 of 36** cells and goes
+outright negative in 16, against 0 of 36 for the baseline; one-second markout is
+worse in 32 of 36. The inventory prediction survives — median max|q| is 75%
+below the baseline's — so A-S buys inventory control with adverse selection,
+which is the reverse of the pre-registered mechanism.
+
+**Two things the three-arm design bought, and a two-arm design would have
+lost.** The `as-gamma0` control separates the *spread choice* from the *skew*,
+and they point opposite ways: the skew is a real and isolated win (with it, A-S
+holds less inventory than the naive maker on 3 of 3 symbols; **without** it, A-S
+holds *more* on 3 of 3), while the spread choice is where every dollar of the
+edge goes, and it is the larger of the two on 3 of 3.
+
+**The mechanism, and it is about measurement rather than about A-S.** The
+inventory-free floor `(1/γ)·ln(1 + γ/k)` is 8.12 ticks on GOOG and **0.31 and
+0.49 ticks** on MSFT and STOR — below half a tick, below the smallest increment
+the venue can quote. The sign of A-S's captured edge follows that one test on
+3 of 3 symbols. An implementation that *assumes* k never finds out that its own
+spread formula is asking for a price the venue does not have.
+
+**A defect the generator found in itself.** The first draft computed every count
+correctly and then stated the *direction* in a fixed string. Run against CI's
+synthetic feed — where A-S happens to beat the baseline — the page read
+"0 of 4 cells" immediately above "it is a different market, made worse", and
+"1 symbols". A generated conclusion that can only conclude one thing is a
+hand-written conclusion with extra steps. Every directional sentence now branches
+on a computed `most()`, the tick claim only firms up once **both** sides of the
+line have been observed (`0 < wide_floor < symbols`), and CI asserts the
+conclusion exists in one branch and refuses in the other.
+
 ### Done — Phase 11
 
-- [ ] λ(δ) calibrated from own MBO fills, fit quality and touch-misfit figure
+- [x] λ(δ) calibrated from own MBO fills, fit quality and touch-misfit figure
       shown; the 11.2.4 conditioning decision written down.
-      *(The decision is written down — paper §6.1, and `calibrated_per_lane` in
-      the artifact. The calibration itself has not been run on real data.)*
-- [ ] A-S vs baseline: ≥3 symbols × ≥3 days (calibration day excluded) × 4
+      *(Four symbols calibrated on 2019-08-30 — `validation/intensity-*.json`.
+      Fitted k spans 11.9 to 483.9 across symbols and lanes. AMD's fit fails on
+      3 of 4 lanes and the artifact says so rather than emitting a number.)*
+- [x] A-S vs baseline: ≥3 symbols × ≥3 days (calibration day excluded) × 4
       closed-loop fill models; all headline numbers are bands.
-      *(Harness complete and exercised in CI on synthetic feeds; the paper
-      refuses to print a results table until the artifact exists.)*
+      *(GOOG, MSFT, STOR over 2019-10-30, 2019-12-30, 2020-01-30, calibrated on
+      2019-08-30 — `validation/as-experiment.json`, 288 runs. Tables and the
+      seven graded predictions are generated from it.)*
 - [x] `InventoryStrategy` has `State`/`restore` and a restart test.
 - [ ] The band-over-worlds methodology paragraph written and reviewed by someone
       who did not write it.

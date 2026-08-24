@@ -26,6 +26,7 @@ transcribed once from the committed plan; every verdict is derived from them.
 import argparse
 import glob
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -53,6 +54,40 @@ P1_INVENTORY_CUT = 0.30     # max|q| lower by at least 30%
 P2_MARKOUT_EQUIV = 0.10     # within 10% of baseline counts as indistinguishable
 P3_NEGATIVE_LANES = 3       # equity/share negative in >= 3 of 4 lanes
 MAJORITY = 0.5              # "on most symbol-days"
+
+# The minimum price increment, transcribed once like the bars above rather than
+# derived: Reg NMS Rule 612 sets it at $0.01 for NMS stocks quoted at or above
+# $1, and every symbol evaluated here traded far above that on every day in the
+# sample. It is a fact about the venue, not a measurement, and it is the only
+# constant in the conclusion that does not come out of an artifact -- which is
+# why it is here, named, instead of inline as 0.01.
+TICK = 0.01
+
+
+def plural(n, word, suffix="s"):
+    """`1 symbol`, `3 symbols`. Trivial, and it is here because the first draft
+    of the conclusion read "Over 1 symbols" on a one-symbol run -- which is the
+    smallest possible version of the failure this whole file exists to prevent:
+    generated prose asserting something the inputs did not say."""
+    return f"{n:,} {word}{'' if n == 1 else suffix}"
+
+
+def most(hits, total):
+    """+1 if the claim holds on a majority, -1 if it holds on none, else 0.
+
+    EVERY DIRECTIONAL SENTENCE IN THE CONCLUSION BRANCHES ON ONE OF THESE.
+    The first draft computed the counts correctly and then stated the direction
+    in a fixed string -- so on a synthetic feed where A-S beat the baseline the
+    page read "0 of 4 cells" immediately above "it is a different market, made
+    worse". A generated conclusion that can only conclude one thing is a
+    hand-written conclusion with extra steps."""
+    if total == 0:
+        return 0
+    if hits > total / 2:
+        return 1
+    if hits == 0:
+        return -1
+    return 0
 
 
 def cell_verdict(hits, total, bar=MAJORITY):
@@ -613,6 +648,486 @@ def build_results(d, extra):
     return "\n".join(L)
 
 
+# ------------------------------------------------------------------ the status
+#
+# The banner under the title is generated for a reason this repository has
+# already paid for once: docs/phase10-results.md carried a hand-written caveat
+# reading "UNMEASURABLE on this hardware" directly above a generated table
+# reporting a measured bound. The prose was true when it was typed and false
+# afterwards, and nothing could tell, because nothing regenerated it. A status
+# line is the single most quotable sentence in a paper and the one most likely
+# to be left behind by its own results, so it is computed too.
+
+
+def build_status(d, cals):
+    L = ["<!-- generated:status:begin -->", ""]
+    if d is None:
+        L += ["> **Status: methodology complete, results pending data.** Every section "
+              "below that describes *how* is finished. Every section that reports *what "
+              "happened* is generated from committed artifacts by "
+              "`scripts/paper-report.py`, and those artifacts do not exist yet — the "
+              f"evaluation needs at least {MIN_SYMBOLS} symbols across the liquidity "
+              f"spectrum and at least {MIN_EVAL_DAYS} trading days, with the calibration "
+              "day excluded. The generator refuses to emit a results table it does not "
+              "have, so this document cannot accidentally look finished. See §7.", "",
+              "<!-- generated:status:end -->"]
+        return "\n".join(L)
+
+    syms = d["symbols"]
+    days = d["evaluation_days"]
+    scope_ok = len(syms) >= MIN_SYMBOLS and len(days) >= MIN_EVAL_DAYS
+    measured = d.get("k_source") == "measured-per-lane"
+    L += [f"> **Status: run.** {len(syms)} symbols ({', '.join(syms)}) over "
+          f"{len(days)} evaluation days from real NASDAQ TotalView-ITCH 5.0, with "
+          f"{d['calibration_day']} held out to fit λ(δ)"
+          f"{' from measured fills, per symbol and per lane' if measured else ''}. "
+          f"{'That meets' if scope_ok else 'That is BELOW'} the pre-registered scope of "
+          f"≥ {MIN_SYMBOLS} symbols and ≥ {MIN_EVAL_DAYS} evaluation days. Every number "
+          f"and every verdict below §6 is generated from committed artifacts by "
+          f"`scripts/paper-report.py`; none is typed. The conclusion is in §8 and the "
+          f"pre-registered predictions are graded — kept and falsified alike — in §7.5.",
+          ""]
+    L += ["<!-- generated:status:end -->"]
+    return "\n".join(L)
+
+
+# ------------------------------------------------- the abstract's two findings
+
+
+def three_arm_cells(d):
+    """Every (symbol, day, lane) in which all three arms ran, at the swept gamma.
+
+    Shared by the abstract and the conclusion so the two cannot disagree about
+    what the sample is -- an abstract that quotes a different denominator from
+    the section it summarises is the oldest way for a paper to be wrong about
+    itself."""
+    runs = d["runs"]
+    positive = [g for g in d["gammas"] if g > 0]
+    gsel = positive[len(positive) // 2] if positive else 0.0
+    out = []
+    for sym in d["symbols"]:
+        for day in d["evaluation_days"]:
+            for m in MODELS:
+                t = pick(runs, sym, day, "symmetric-touch", m, 0.0)
+                z = pick(runs, sym, day, "as-gamma0", m, 0.0)
+                a = pick(runs, sym, day, "as", m, gsel)
+                if t and z and a:
+                    out.append((sym, day, m, t, z, a))
+    return out, gsel
+
+
+def build_findings(d):
+    """The abstract's result sentence. Generated, because the abstract is the
+    part of a paper that gets quoted without the rest of it attached."""
+    L = ["<!-- generated:findings:begin -->", ""]
+    if d is None:
+        L += ["The evaluation has not been run; §7 says exactly what it is waiting for, "
+              "and no finding is stated anywhere in this document until it exists.", "",
+              "<!-- generated:findings:end -->"]
+        return "\n".join(L)
+    cells, gsel = three_arm_cells(d)
+    if not cells:
+        L += ["The committed artifact has no cell in which all three arms ran, so no "
+              "finding is stated here.", "", "<!-- generated:findings:end -->"]
+        return "\n".join(L)
+    n = len(cells)
+    worse = sum(1 for *_, t, _, a in cells
+                if a["edge_per_share_micros"] < t["edge_per_share_micros"])
+    neg = sum(1 for *_, a in cells if a["edge_per_share_micros"] < 0)
+    inv = statistics.median([(t["inv_max_abs"] - a["inv_max_abs"]) / t["inv_max_abs"]
+                             for *_, t, _, a in cells if t["inv_max_abs"] > 0])
+    mk_worse = sum(1 for *_, t, _, a in cells if a["markout_1s"] < t["markout_1s"])
+    d_edge = most(worse, n)
+    d_mk = most(mk_worse, n)
+
+    answer = {1: "no", -1: "yes"}.get(d_edge, "not on this sample, either way")
+    inv_clause = (f"while holding a median {inv:.0%} less inventory" if inv > 0
+                  else f"while holding a median {abs(inv):.0%} **more** inventory")
+    if d_edge == 1 and d_mk == 1 and inv > 0:
+        trade = ("— it buys inventory control with adverse selection, which is the "
+                 "reverse of the pre-registered prediction")
+    elif d_edge == -1 and d_mk != 1:
+        trade = ("— it captures more half-spread without being more adversely "
+                 "selected, which is what the pre-registration expected")
+    else:
+        trade = "— the axes do not point the same way on this sample"
+    L += [f"**The answer, over {plural(len(d['symbols']), 'symbol')} and "
+          f"{plural(len(d['evaluation_days']), 'evaluation day')}, is "
+          f"{answer}.** A-S captures less half-spread per share than a naive touch "
+          f"maker in {worse} of {n} symbol-day-lane cells and goes outright negative "
+          f"in {neg}, {inv_clause} {trade}. The mechanism runs through the tick: "
+          f"measured k sets A-S's inventory-free half-spread, and §8.3 tests whether "
+          f"the sign of its captured edge follows from whether that half-spread fits "
+          f"on the venue's price grid. Assuming k, as implementations almost "
+          f"universally do, is what keeps that question from being asked.", "",
+          "<!-- generated:findings:end -->"]
+    return "\n".join(L)
+
+
+# -------------------------------------------------------------- the conclusion
+#
+# The conclusion is generated for the same reason the tables are: a hand-written
+# summary is where a paper's numbers go to drift, and it is the section a reader
+# is most likely to quote. Everything below is computed from the same artifacts
+# the tables come from, including the direction of every claim -- there is no
+# string in here that asserts a finding the arithmetic did not produce.
+#
+# And it refuses, like build_results does. A paper with no evaluation artifact
+# gets a conclusion that says what it is waiting for, not a hedge that reads
+# like a result.
+
+
+def half_spread_dollars(k, gamma):
+    """The inventory-free half of A-S's spread: (1/gamma)*ln(1 + gamma/k).
+
+    Half of the (2/gamma)*ln(1 + gamma/k) term in section 5, which is the part
+    that does not depend on inventory or on the horizon -- so it is the floor
+    on how tight the model will ever quote, and the thing to compare against
+    the tick. gamma -> 0 takes it to 1/k, and the limit is taken here for the
+    same reason the strategy takes it: the control arm is gamma = 0 and it has
+    to stay inside the same code path."""
+    if k is None or k <= 0:
+        return None
+    if gamma <= 0:
+        return 1.0 / k
+    return math.log(1.0 + gamma / k) / gamma
+
+
+def no_conclusion_block():
+    return "\n".join([
+        "<!-- generated:conclusion:begin -->",
+        "",
+        "> **Not concluded.** `validation/as-experiment.json` is not committed, so there",
+        "> is nothing to conclude from. This section is written by",
+        "> `scripts/paper-report.py` out of the same artifact the tables in §7 come from,",
+        "> and it emits a finding only when there is one — a conclusion is the easiest",
+        "> place in a paper for a number to drift away from the run that produced it,",
+        "> and the easiest sentence for a reader to quote.",
+        ">",
+        "> What §7 needs before this section can say anything is listed there.",
+        "",
+        "<!-- generated:conclusion:end -->",
+    ])
+
+
+def build_conclusion(d, extra, cals):
+    if d is None:
+        return no_conclusion_block()
+
+    runs = d["runs"]
+    gammas = d["gammas"]
+    positive = [g for g in gammas if g > 0]
+    gsel = positive[len(positive) // 2] if positive else 0.0
+    symbols = d["symbols"]
+    eval_days = d["evaluation_days"]
+    k_by_symbol = d.get("k_by_symbol", {})
+
+    cells = []
+    for sym in symbols:
+        for day in eval_days:
+            for m in MODELS:
+                t = pick(runs, sym, day, "symmetric-touch", m, 0.0)
+                z = pick(runs, sym, day, "as-gamma0", m, 0.0)
+                a = pick(runs, sym, day, "as", m, gsel)
+                if t and z and a:
+                    cells.append((sym, day, m, t, z, a))
+
+    L = ["<!-- generated:conclusion:begin -->", ""]
+    if not cells:
+        L += ["> **Not concluded.** The committed artifact has no cell in which all "
+              "three arms ran, so nothing here can be compared against anything.", "",
+              "<!-- generated:conclusion:end -->"]
+        return "\n".join(L)
+
+    n = len(cells)
+
+    # --- 8.1 the answer ---------------------------------------------------
+    edge_worse = sum(1 for *_, t, _, a in cells
+                     if a["edge_per_share_micros"] < t["edge_per_share_micros"])
+    edge_neg_as = sum(1 for *_, a in cells if a["edge_per_share_micros"] < 0)
+    edge_neg_t = sum(1 for *_, t, _, _ in cells if t["edge_per_share_micros"] < 0)
+    inv_cut = statistics.median([(t["inv_max_abs"] - a["inv_max_abs"]) / t["inv_max_abs"]
+                                 for *_, t, _, a in cells if t["inv_max_abs"] > 0])
+    mk_worse = sum(1 for *_, t, _, a in cells if a["markout_1s"] < t["markout_1s"])
+    mk_shift = statistics.median([a["markout_1s"] - t["markout_1s"]
+                                  for *_, t, _, a in cells])
+
+    d_edge = most(edge_worse, n)
+    d_mk = most(mk_worse, n)
+    verdict = {1: "no", -1: "yes"}.get(d_edge, "neither, on this sample")
+    if d_edge == 1 and d_mk == 1:
+        summary = ("Inventory-aware quoting in this implementation is not a cheaper "
+                   "way to make the same market; it is a different market, made worse.")
+    elif d_edge == -1 and d_mk == -1:
+        summary = ("Inventory-aware quoting captured more half-spread and was no more "
+                   "adversely selected on every cell here, which is the outcome the "
+                   "pre-registration expected.")
+    else:
+        summary = ("Edge and markout do not point the same way across these cells, so "
+                   "no single-sentence answer is stated: the per-symbol table in §8.2 "
+                   "is the result, and this line is deliberately not a summary of it.")
+    if inv_cut > 0:
+        inv_para = (f"The inventory claim itself survives: median max\\|q\\| is "
+                    f"**{inv_cut:.0%} below** the baseline's. A-S holds materially less "
+                    f"inventory"
+                    + (", and pays for it in adverse selection — the opposite of the "
+                       "pre-registered mechanism (P2, §7.5)." if d_mk == 1 else
+                       ", and does so without a markout penalty on most cells here."))
+    else:
+        inv_para = (f"The inventory claim does **not** survive on this sample: median "
+                    f"max\\|q\\| is {abs(inv_cut):.0%} **above** the baseline's, so A-S "
+                    f"carried larger excursions than the naive maker. P1 (§7.5) is "
+                    f"graded on the same numbers and reads accordingly.")
+    L += ["### 8.1 The answer",
+          "",
+          f"§1 asked whether inventory-aware quoting loses less than naive symmetric "
+          f"quoting, and through which mechanism. Over "
+          f"{plural(len(symbols), 'symbol')} ({', '.join(symbols)}), "
+          f"{plural(len(eval_days), 'evaluation day')}, four fill models "
+          f"and {n} symbol-day-lane cells at γ = {gsel:g}: **{verdict}**.",
+          "",
+          f"Half-spread captured per share is **lower than the naive touch maker's in "
+          f"{edge_worse} of {n} cells**, and negative in {edge_neg_as} of {n} — against "
+          f"{edge_neg_t} of {n} for the baseline. One-second markout is worse in "
+          f"{mk_worse} of {n}, by a median of {abs(mk_shift):,.0f} micro-dollars per "
+          f"share — a relative figure is avoided here because the baseline's markout "
+          f"changes sign across symbols and a ratio across zero says nothing. "
+          f"{summary}",
+          "",
+          inv_para,
+          ""]
+
+    # --- 8.2 which half of A-S did it ------------------------------------
+    L += ["### 8.2 Which half of A-S did it",
+          "",
+          "The three-arm design (§7) exists for this line. `as-gamma0` is A-S's spread "
+          "with the inventory skew switched off, so the change from the baseline splits "
+          "into a **spread choice** and a **skew**, and a two-arm comparison would have "
+          "attributed all of it to inventory awareness.",
+          "",
+          "| symbol | edge/share: spread choice | edge/share: skew | max\\|q\\| vs "
+          "baseline, skew **off** | …skew **on** |",
+          "|---|---:|---:|---:|---:|"]
+    for sym in symbols:
+        c = [x for x in cells if x[0] == sym]
+        if not c:
+            continue
+        spread = statistics.median([z["edge_per_share_micros"] - t["edge_per_share_micros"]
+                                    for *_, t, z, _ in c])
+        skew = statistics.median([a["edge_per_share_micros"] - z["edge_per_share_micros"]
+                                  for *_, _, z, a in c])
+        iz = statistics.median([(t["inv_max_abs"] - z["inv_max_abs"]) / t["inv_max_abs"]
+                                for *_, t, z, _ in c if t["inv_max_abs"] > 0])
+        ia = statistics.median([(t["inv_max_abs"] - a["inv_max_abs"]) / t["inv_max_abs"]
+                                for *_, t, _, a in c if t["inv_max_abs"] > 0])
+        L.append(f"| {sym} | {spread:+,.0f} | {skew:+,.0f} | {iz:+.0%} | {ia:+.0%} |")
+    L += ["", "*Medians over that symbol's cells; edge in micro-dollars per share. A "
+          "negative inventory column means A-S carried a **larger** excursion than the "
+          "naive maker.*", ""]
+
+    skew_helps = sum(1 for sym in symbols
+                     for c in [[x for x in cells if x[0] == sym]] if c
+                     and statistics.median([(t["inv_max_abs"] - a["inv_max_abs"]) /
+                                            t["inv_max_abs"]
+                                            for *_, t, _, a in c if t["inv_max_abs"] > 0]) > 0)
+    skew_needed = sum(1 for sym in symbols
+                      for c in [[x for x in cells if x[0] == sym]] if c
+                      and statistics.median([(t["inv_max_abs"] - z["inv_max_abs"]) /
+                                             t["inv_max_abs"]
+                                             for *_, t, z, _ in c if t["inv_max_abs"] > 0]) < 0)
+    spread_dominates = 0
+    for sym in symbols:
+        c = [x for x in cells if x[0] == sym]
+        if not c:
+            continue
+        sp = abs(statistics.median([z["edge_per_share_micros"] - t["edge_per_share_micros"]
+                                    for *_, t, z, _ in c]))
+        sk = abs(statistics.median([a["edge_per_share_micros"] - z["edge_per_share_micros"]
+                                    for *_, _, z, a in c]))
+        if sp > sk:
+            spread_dominates += 1
+    ns = len(symbols)
+    skew_line = (
+        f"The **skew is a real and isolated win**: with it, A-S holds less inventory "
+        f"than the naive maker on {skew_helps} of {ns}; without it, A-S holds *more* "
+        f"on {skew_needed} of {ns}. Whatever the inventory result in §7.5 is, it "
+        f"belongs to the skew and not to A-S's spread."
+        if skew_helps > ns / 2 and skew_needed > 0 else
+        f"The skew does not separate cleanly here: A-S holds less inventory than the "
+        f"naive maker on {skew_helps} of {ns} symbols with the skew on, and on "
+        f"{ns - skew_needed} of {ns} with it off, so the two arms are not telling "
+        f"different stories about inventory on this sample.")
+    spread_line = (
+        f"And the **spread choice is where the money goes** — it is the larger of the "
+        f"two columns on {spread_dominates} of {ns}, and it is the half the "
+        f"pre-registration was not looking at."
+        if spread_dominates > ns / 2 else
+        f"The two columns are of comparable size: the spread choice is the larger on "
+        f"only {spread_dominates} of {ns}, so this sample does not attribute the edge "
+        f"change to one half of the model.")
+    L += [f"Two things fall out of that table. {skew_line} {spread_line}", ""]
+
+    # --- 8.3 the mechanism ------------------------------------------------
+    L += ["### 8.3 The mechanism: the model's own half-spread against the tick",
+          "",
+          f"A-S's spread has an inventory-free floor, `(2/γ)·ln(1 + γ/k)` — half of it "
+          f"below — and once k is *measured* rather than assumed, that floor is a "
+          f"number the venue may not be able to express. The tick is "
+          f"${TICK:.2f} (Reg NMS Rule 612), so half a tick is ${TICK / 2:.3f}.",
+          "",
+          "| symbol | median k (1/$) | half-spread floor | in ticks | fills, skew off, "
+          "vs baseline | median edge/share, A-S |",
+          "|---|---:|---:|---:|---:|---:|"]
+    sign_match = 0
+    sign_total = 0
+    wide_floor = 0
+    tighter_for_less = 0
+    for sym in symbols:
+        c = [x for x in cells if x[0] == sym]
+        ks = [k for k in (k_by_symbol.get(sym) or {}).values() if k]
+        if not c or not ks:
+            continue
+        kmed = statistics.median(ks)
+        hs = statistics.median([h for k in ks
+                                if (h := half_spread_dollars(k, gsel)) is not None])
+        fill_ratio = statistics.median([z["fills"] / t["fills"]
+                                        for *_, t, z, _ in c if t["fills"]])
+        eq = statistics.median([a["edge_per_share_micros"] for *_, a in c])
+        sign_total += 1
+        edge_z = statistics.median([z["edge_per_share_micros"] for *_, z, _ in c])
+        edge_t = statistics.median([t["edge_per_share_micros"] for *_, t, _, _ in c])
+        if fill_ratio > 1.0 and edge_z < edge_t:
+            tighter_for_less += 1
+        if hs >= TICK / 2:
+            wide_floor += 1
+        if (hs < TICK / 2) == (eq < 0):
+            sign_match += 1
+        L.append(f"| {sym} | {kmed:,.1f} | ${hs:.5f} | {hs / TICK:.2f} | "
+                 f"{fill_ratio:.2f}× | {eq:+,.0f} |")
+    # BOTH outcomes must appear before the wording is allowed to firm up. A test
+    # whose symbols all fall on one side of the line has not discriminated
+    # anything, and "3 of 3" reads identically whether it did or not.
+    discriminating = (sign_total > 0 and sign_match == sign_total
+                      and 0 < wide_floor < sign_total)
+    L += ["",
+          (f"On {tighter_for_less} of {sign_total} symbols, switching the skew off and "
+           f"quoting A-S's spread takes **more** fills than the naive touch maker at "
+           f"**less** edge per share — the model quotes tighter than the touch, buys "
+           f"volume with the half-spread it gives up, and is adversely selected for "
+           f"the difference."
+           if tighter_for_less > 0 else
+           f"On this sample A-S's spread did not systematically trade edge for fills "
+           f"against the touch maker, so the tick argument below has nothing to "
+           f"explain and should be read as untested rather than as supported."),
+          "",
+          (f"The sign of A-S's captured edge is predicted by a single test — does the "
+           f"inventory-free floor fit outside half a tick — on **{sign_match} of "
+           f"{sign_total}** symbols."
+           + ((" Where the floor has room on the price grid the edge stays positive; "
+               "where it lands **below half a tick**, below the smallest increment the "
+               "venue can quote, there is no price that expresses what the model wants "
+               "and the edge goes negative. That is a mechanism, and it is falsifiable "
+               "on the next symbol: a name whose measured k puts the floor several "
+               "ticks wide should keep positive edge whatever its capitalisation, and "
+               "one whose floor lands inside the tick should not.")
+              if discriminating else
+              (" A test that separates two cases has to have SEEN both: "
+               f"{wide_floor} of {sign_total} symbols here put the floor outside half "
+               f"a tick"
+               + (", so every symbol falls on one side of the line and the test has "
+                  "not been asked to discriminate."
+                  if wide_floor in (0, sign_total) else
+                  " and the test is not clean on all of them.")
+               + " Read this as a hypothesis this sample is consistent with, not a "
+                 "mechanism it establishes."))),
+          ""]
+    if discriminating:
+        L += ["It is also a statement about **measurement**, not about "
+              "Avellaneda–Stoikov. An implementation that assumes k — as almost all of "
+              "them do — never discovers that its own spread formula is asking for a "
+              "price the venue does not have. Assuming k is what hides this; measuring "
+              "it is what shows it.", ""]
+
+    # --- 8.4 identifiability ---------------------------------------------
+    unfit = []
+    kall = []
+    for sym, cd in sorted(cals.items()):
+        lanes = cd.get("lanes", {})
+        bad = [ln for ln in MODELS if not lanes.get(ln, {}).get("fit_ok")]
+        kall += [lanes[ln]["k"] for ln in MODELS
+                 if lanes.get(ln, {}).get("fit_ok") and lanes[ln].get("k")]
+        if bad:
+            unfit.append((sym, len(bad), len(MODELS)))
+    if kall:
+        L += ["### 8.4 The second finding: how well λ(δ) can be identified at all",
+              "",
+              f"δ is measured from the mid, so the range of δ the strategy can *observe* "
+              f"is bounded by the half-spread — and on a book that is one tick wide "
+              f"there are only a handful of depth buckets with any exposure in them. "
+              f"The fit does not fail cleanly at that end; it degrades, and it takes a "
+              f"degrees-of-freedom count to see it. Across every calibrated symbol and "
+              f"lane, fitted k spans **{min(kall):,.1f} to {max(kall):,.1f}**; a single "
+              f"scalar over that range is not a parameter.",
+              "",
+              "| symbol | lanes fitted | buckets fitted (mbo lane) | residual dof | "
+              "buckets with exposure and no fills |",
+              "|---|---:|---:|---:|---:|"]
+        for sym, cd in sorted(cals.items()):
+            lanes = cd.get("lanes", {})
+            fitted = sum(1 for ln in MODELS if lanes.get(ln, {}).get("fit_ok"))
+            ref = lanes.get("mbo") or next((lanes[ln] for ln in MODELS
+                                            if lanes.get(ln, {}).get("fit_ok")), {})
+            L.append(f"| {sym} | {fitted}/{len(MODELS)} | "
+                     f"{ref.get('buckets_fitted', 0)} | {ref.get('dof', 0)} | "
+                     f"{ref.get('buckets_no_fills', 0)} |")
+        L += ["", "A two-point fit has **zero** residual degrees of freedom and reports "
+              "R² = 1.0000 whatever the data says, which is why `fit_ok` requires three "
+              "points and not two. That guard is the only reason the row above with the "
+              "fewest lanes reads as a refusal rather than as a perfect fit.", ""]
+        if unfit:
+            evaluated = [u for u in unfit if u[0] in symbols]
+            L += ["Lanes with no usable fit, reported rather than dropped:", ""]
+            for sym, bad, tot in unfit:
+                where = "evaluated in §7" if sym in symbols else "not evaluated in §7"
+                L.append(f"- **{sym}**: {bad} of {tot} lanes — {where}")
+            L += ["",
+                  ("The experiment driver refuses to run a lane with no fitted k unless "
+                   "`--allow-assumed-k` is passed, which stamps the output "
+                   "`assumed-scalar`. So a symbol in that state is not silently "
+                   "evaluated on a placeholder — it is not evaluated."
+                   if not evaluated else
+                   "These lanes are evaluated below on an assumed rather than a fitted "
+                   "k, and every table that uses them says so."),
+                  "",
+                  "A calibration that quietly emitted a number here would hand §5's "
+                  "spread formula a curve fitted to nothing, and nothing downstream "
+                  "would show it. The refusal is the finding.", ""]
+
+    # --- 8.5 what remains -------------------------------------------------
+    lat = sorted(extra) if extra else [d.get("latency_ns", 0)]
+    L += ["### 8.5 What remains",
+          "",
+          f"1. **Latency sensitivity.** {len(lat)} modelled latency "
+          f"({', '.join(f'{x:,} ns' for x in lat)}) is committed, and P4 needs at least "
+          f"two to grade. The prediction — that A-S degrades faster than the baseline "
+          f"because it re-quotes more — is pre-registered and ungraded until a second "
+          f"`validation/as-experiment*.json` at a different `latency_ns` exists.",
+          f"2. **The outside reader.** The plan requires §4 to be reviewed by someone "
+          f"who did not write it. That has not happened, and it is the section most "
+          f"likely to be wrong in a way its author cannot see.",
+          f"3. **A second wide-floor name.** §8.3's test is carried by "
+          f"{sign_total} symbols, of which {wide_floor} put the floor outside half a "
+          f"tick. With {wide_floor} symbol{'' if wide_floor == 1 else 's'} on that side "
+          f"of the line, \"the floor fits on the grid\" and \"this particular symbol\" "
+          f"are not separated by this sample.",
+          f"4. **More days.** {len(eval_days)} evaluation days is enough to report a "
+          f"day-level spread and not enough to claim significance, and none is claimed "
+          f"anywhere in this paper.",
+          "",
+          "<!-- generated:conclusion:end -->"]
+    return "\n".join(L)
+
+
 # ------------------------------------------------------------------- plumbing
 
 def splice(text, name, block):
@@ -660,6 +1175,9 @@ def main():
     cals = load_calibrations()
     out = splice(text, "calibration", build_calibration(cals))
     out = splice(out, "results", build_results(load(EXPT), extra))
+    out = splice(out, "findings", build_findings(load(EXPT)))
+    out = splice(out, "conclusion", build_conclusion(load(EXPT), extra, cals))
+    out = splice(out, "status", build_status(load(EXPT), cals))
 
     if a.check:
         if out != text:

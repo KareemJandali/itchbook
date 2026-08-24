@@ -2,13 +2,11 @@
 
 *Kareem Jandali · École de technologie supérieure*
 
-> **Status: methodology complete, results pending data.** Every section below
-> that describes *how* is finished. Every section that reports *what happened* is
-> generated from committed artifacts by `scripts/paper-report.py`, and those
-> artifacts do not exist yet — the evaluation needs at least three symbols across
-> the liquidity spectrum and at least three trading days, with the calibration
-> day excluded. The generator refuses to emit a results table it does not have,
-> so this document cannot accidentally look finished. See §9.
+<!-- generated:status:begin -->
+
+> **Status: run.** 3 symbols (GOOG, MSFT, STOR) over 3 evaluation days from real NASDAQ TotalView-ITCH 5.0, with 2019-08-30 held out to fit λ(δ) from measured fills, per symbol and per lane. That meets the pre-registered scope of ≥ 3 symbols and ≥ 3 evaluation days. Every number and every verdict below §6 is generated from committed artifacts by `scripts/paper-report.py`; none is typed. The conclusion is in §8 and the pre-registered predictions are graded — kept and falsified alike — in §7.5.
+
+<!-- generated:status:end -->
 
 ---
 
@@ -32,6 +30,12 @@ less than naive symmetric quoting, and through which mechanism* — fewer toxic
 fills, or smaller inventory excursions? A three-arm design separates the effect
 of the **spread choice** from the effect of the **inventory skew**, which a
 two-arm comparison bundles together (§7).
+
+<!-- generated:findings:begin -->
+
+**The answer, over 3 symbols and 3 evaluation days, is no.** A-S captures less half-spread per share than a naive touch maker in 36 of 36 symbol-day-lane cells and goes outright negative in 16, while holding a median 75% less inventory — it buys inventory control with adverse selection, which is the reverse of the pre-registered prediction. The mechanism runs through the tick: measured k sets A-S's inventory-free half-spread, and §8.3 tests whether the sign of its captured edge follows from whether that half-spread fits on the venue's price grid. Assuming k, as implementations almost universally do, is what keeps that question from being asked.
+
+<!-- generated:findings:end -->
 
 ## 2. Data and venue
 
@@ -533,7 +537,79 @@ Across all seven: 3 kept, 1 falsified, 1 mixed, 1 not evaluated (P1 kept, P2 fal
 
 <!-- generated:results:end -->
 
-## 8. Limitations
+## 8. Conclusion
+
+<!-- generated:conclusion:begin -->
+
+### 8.1 The answer
+
+§1 asked whether inventory-aware quoting loses less than naive symmetric quoting, and through which mechanism. Over 3 symbols (GOOG, MSFT, STOR), 3 evaluation days, four fill models and 36 symbol-day-lane cells at γ = 0.02: **no**.
+
+Half-spread captured per share is **lower than the naive touch maker's in 36 of 36 cells**, and negative in 16 of 36 — against 0 of 36 for the baseline. One-second markout is worse in 32 of 36, by a median of 2,395 micro-dollars per share — a relative figure is avoided here because the baseline's markout changes sign across symbols and a ratio across zero says nothing. Inventory-aware quoting in this implementation is not a cheaper way to make the same market; it is a different market, made worse.
+
+The inventory claim itself survives: median max\|q\| is **75% below** the baseline's. A-S holds materially less inventory, and pays for it in adverse selection — the opposite of the pre-registered mechanism (P2, §7.5).
+
+### 8.2 Which half of A-S did it
+
+The three-arm design (§7) exists for this line. `as-gamma0` is A-S's spread with the inventory skew switched off, so the change from the baseline splits into a **spread choice** and a **skew**, and a two-arm comparison would have attributed all of it to inventory awareness.
+
+| symbol | edge/share: spread choice | edge/share: skew | max\|q\| vs baseline, skew **off** | …skew **on** |
+|---|---:|---:|---:|---:|
+| GOOG | -92,404 | -6,617 | -583% | +24% |
+| MSFT | -4,218 | -652 | -184% | +79% |
+| STOR | -6,322 | +1,546 | -18% | +80% |
+
+*Medians over that symbol's cells; edge in micro-dollars per share. A negative inventory column means A-S carried a **larger** excursion than the naive maker.*
+
+Two things fall out of that table. The **skew is a real and isolated win**: with it, A-S holds less inventory than the naive maker on 3 of 3; without it, A-S holds *more* on 3 of 3. Whatever the inventory result in §7.5 is, it belongs to the skew and not to A-S's spread. And the **spread choice is where the money goes** — it is the larger of the two columns on 3 of 3, and it is the half the pre-registration was not looking at.
+
+### 8.3 The mechanism: the model's own half-spread against the tick
+
+A-S's spread has an inventory-free floor, `(2/γ)·ln(1 + γ/k)` — half of it below — and once k is *measured* rather than assumed, that floor is a number the venue may not be able to express. The tick is $0.01 (Reg NMS Rule 612), so half a tick is $0.005.
+
+| symbol | median k (1/$) | half-spread floor | in ticks | fills, skew off, vs baseline | median edge/share, A-S |
+|---|---:|---:|---:|---:|---:|
+| GOOG | 12.3 | $0.08123 | 8.12 | 24.64× | +41,466 |
+| MSFT | 327.2 | $0.00306 | 0.31 | 1.95× | -444 |
+| STOR | 203.5 | $0.00492 | 0.49 | 1.72× | -948 |
+
+On 3 of 3 symbols, switching the skew off and quoting A-S's spread takes **more** fills than the naive touch maker at **less** edge per share — the model quotes tighter than the touch, buys volume with the half-spread it gives up, and is adversely selected for the difference.
+
+The sign of A-S's captured edge is predicted by a single test — does the inventory-free floor fit outside half a tick — on **3 of 3** symbols. Where the floor has room on the price grid the edge stays positive; where it lands **below half a tick**, below the smallest increment the venue can quote, there is no price that expresses what the model wants and the edge goes negative. That is a mechanism, and it is falsifiable on the next symbol: a name whose measured k puts the floor several ticks wide should keep positive edge whatever its capitalisation, and one whose floor lands inside the tick should not.
+
+It is also a statement about **measurement**, not about Avellaneda–Stoikov. An implementation that assumes k — as almost all of them do — never discovers that its own spread formula is asking for a price the venue does not have. Assuming k is what hides this; measuring it is what shows it.
+
+### 8.4 The second finding: how well λ(δ) can be identified at all
+
+δ is measured from the mid, so the range of δ the strategy can *observe* is bounded by the half-spread — and on a book that is one tick wide there are only a handful of depth buckets with any exposure in them. The fit does not fail cleanly at that end; it degrades, and it takes a degrees-of-freedom count to see it. Across every calibrated symbol and lane, fitted k spans **11.9 to 483.9**; a single scalar over that range is not a parameter.
+
+| symbol | lanes fitted | buckets fitted (mbo lane) | residual dof | buckets with exposure and no fills |
+|---|---:|---:|---:|---:|
+| AMD | 1/4 | 2 | 0 | 8 |
+| GOOG | 4/4 | 26 | 24 | 0 |
+| MSFT | 4/4 | 5 | 3 | 21 |
+| STOR | 4/4 | 5 | 3 | 13 |
+
+A two-point fit has **zero** residual degrees of freedom and reports R² = 1.0000 whatever the data says, which is why `fit_ok` requires three points and not two. That guard is the only reason the row above with the fewest lanes reads as a refusal rather than as a perfect fit.
+
+Lanes with no usable fit, reported rather than dropped:
+
+- **AMD**: 3 of 4 lanes — not evaluated in §7
+
+The experiment driver refuses to run a lane with no fitted k unless `--allow-assumed-k` is passed, which stamps the output `assumed-scalar`. So a symbol in that state is not silently evaluated on a placeholder — it is not evaluated.
+
+A calibration that quietly emitted a number here would hand §5's spread formula a curve fitted to nothing, and nothing downstream would show it. The refusal is the finding.
+
+### 8.5 What remains
+
+1. **Latency sensitivity.** 1 modelled latency (0 ns) is committed, and P4 needs at least two to grade. The prediction — that A-S degrades faster than the baseline because it re-quotes more — is pre-registered and ungraded until a second `validation/as-experiment*.json` at a different `latency_ns` exists.
+2. **The outside reader.** The plan requires §4 to be reviewed by someone who did not write it. That has not happened, and it is the section most likely to be wrong in a way its author cannot see.
+3. **A second wide-floor name.** §8.3's test is carried by 3 symbols, of which 1 put the floor outside half a tick. With 1 symbol on that side of the line, "the floor fits on the grid" and "this particular symbol" are not separated by this sample.
+4. **More days.** 3 evaluation days is enough to report a day-level spread and not enough to claim significance, and none is claimed anywhere in this paper.
+
+<!-- generated:conclusion:end -->
+
+## 9. Limitations
 
 Stated at length because the conclusion depends on them.
 
@@ -550,24 +626,6 @@ Stated at length because the conclusion depends on them.
 - **Latencies are synthetic.** The latency sweep applies a modelled delay; it is
   not a measurement of a real path to a real exchange.
 - **The strategy is evaluated, not deployed.** Nothing here has traded.
-
-## 9. What remains
-
-The machinery is complete and tested; the evaluation is not run. Specifically:
-
-1. **Data.** At least three symbols across the liquidity spectrum (a large-cap,
-   a mid-cap, an ETF) and at least three trading days, with the calibration day
-   excluded from evaluation.
-2. **The outside reader.** The plan requires §4 to be reviewed by someone who
-   did not write it. That has not happened, and it is the section most likely to
-   be wrong in a way its author cannot see.
-3. **Latency sensitivity**, via the existing sweep, against the pre-registered
-   prediction that A-S degrades faster than the baseline because it re-quotes
-   more.
-
-Predictions for all of the above were committed **before** the harness was
-written; they are in `docs/build-plan-9-12.md` §11.3 and will be graded in print
-whether or not they survive.
 
 ## 10. Reproducing
 
