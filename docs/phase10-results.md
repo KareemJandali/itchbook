@@ -13,44 +13,51 @@ queue, under a load that may exceed what the consumer can absorb.
 
 ## Read the caveats before the numbers
 
-The tables below were produced **in a two-core container, with neither thread
-pinned, on a machine whose cross-core TSC offset `tsc_offset` reports as
-UNMEASURABLE**. They are here because the machinery is worth showing working and
-because a committed artifact is how this repository stops numbers from drifting.
-They are not results.
+The tables below come from a **pinned run on a real machine** — eight physical
+cores, three threads on three distinct ones, an invariant TSC, and a cross-core
+offset bounded under 47 ns. That is a different situation from the one this
+section used to describe, and exactly one of the three obstacles has been
+removed.
 
-Three specific reasons not to quote them:
+**The clock is settled.** `tsc_offset` pins two threads to two separate physical
+cores and ping-pongs 200,000 samples in each direction. The offset estimate comes
+back smaller than the method can resolve — bounded under 47 ns, not distinguishable
+from zero — against a wire-to-book latency in the microseconds. On the earlier
+container it reported UNMEASURABLE; on a Mac it cannot report at all, because
+Apple silicon has no thread-affinity API. This is the phase 10 done-item asking
+for the cross-core offset measured and reported, and it is met.
 
-1. **The sender could not hold its schedule.** `mold_replay_udp` measures its
-   own lateness and reports it per rate. Where its p99.9 lateness is the same
-   order as the latency being measured, the experiment measured the load
-   generator — and the sender and the two pipeline threads are competing for two
-   cores here, so it usually is.
-2. **Unpinned.** Phase 4 measured 19.3% run-to-run variance on this repository's
-   own benchmark without pinning. Nothing here is pinned, because macOS offers
-   no thread affinity and this container has nowhere to pin to.
-3. **The arrival stamp and the completion stamp are read on different cores.**
-   Whether their difference means anything is the question `tools/tsc_offset.cpp`
-   exists to answer, and on this hardware its answer is "cannot be determined".
+**The sweep is still not a result, and the reason is unchanged.** `mold_replay_udp`
+measures its own lateness and reports it per rate. Its p99.9 lateness exceeded the
+10 µs bar at **every rate on the ladder**, including 1× real time, so the numbers
+below describe the load generator rather than the pipeline. The machine runs
+Linux under a hypervisor: threads pin to vCPUs, and the vCPUs are scheduled by
+something this process cannot see. Pinning inside a VM is real and insufficient.
 
-The real figures need a pinned Linux host with a measurable cross-core offset.
-When they exist, they replace the artifact and this document regenerates —
-`scripts/pinned-run.sh` is that run, end to end.
+So one caveat has gone and one has hardened:
 
-**Pinning alone is not enough, and this was measured rather than assumed.** The
-container reports four cores and `pthread_setaffinity_np` succeeds on them, so
-the obvious hope was that pinning would rescue the numbers here. It does help:
-best-of-five sender lateness went from 562 µs unpinned to **39 µs pinned**, a
-14× improvement. It is still four times the 10 µs qualification bar, and the
-five runs ranged from 39 µs to 44 ms. Four vCPUs on shared hardware cannot hold
-a schedule however carefully the threads are placed, so the veto stands and the
-CV number still needs a quiet machine.
+1. **The sender still cannot hold its schedule** — now demonstrably a property
+   of the nested scheduler rather than of core contention, since three threads
+   had three physical cores to themselves and it made no difference to lateness.
+2. **Pinning is real here**, unlike before. `pinned` reads true, and the cores
+   chosen are on distinct physical cores rather than SMT siblings — the default
+   choice of the last three CPUs would have put two threads on one core while
+   reporting all three as pinned.
+3. **The arrival and completion stamps come from the same clock family**, and
+   the offset between the two cores reading it is bounded at 47 ns. Their
+   difference means something now.
 
-What the same experiment did establish is that the CLOCK here is fine: pinned to
-two real cores, `tsc_offset` reports an invariant TSC and an offset bounded
-under 85 ns — not distinguishable from zero, and a rounding error against a
-wire-to-book latency in the microseconds. The clock was never the obstacle; the
-scheduler is.
+What remains is a load generator that can hold a sub-10 µs schedule. That needs
+bare metal with isolated cores, not a VM — `isolcpus` is not available under
+WSL2 and the governor is invisible to the script. `scripts/pinned-run.sh` is the
+run; it needs a different host.
+
+**Pinning alone is not enough, and this has now been measured twice.** In the
+container, best-of-five sender lateness went from 562 µs unpinned to 39 µs
+pinned — a 14× improvement that still missed the 10 µs bar by 4×. On this host,
+with genuinely distinct physical cores, the bar is missed at every rate anyway.
+Both runs point at the same thing: the scheduler underneath, not the placement
+above it.
 
 ## What the sweep does
 

@@ -1144,15 +1144,33 @@ constructed-locate list would fix it and belongs with the next thing that needs
 - [ ] Wire-to-book p50/p99/p99.9 **and the bucket distribution** at 1×
       real-time and at max sustainable rate, from a TSan-clean, pinned,
       methodology-documented run.
-- [ ] Cross-core TSC offset measured and reported, or `CLOCK_MONOTONIC_RAW` used
+      *(Pinned and TSan-clean, but NO RATE QUALIFIED: the load generator's p99.9
+      lateness exceeds 10 µs at every rate under a hypervisor. Needs bare metal.)*
+- [x] Cross-core TSC offset measured and reported, or `CLOCK_MONOTONIC_RAW` used
       and said so.
+      *(Invariant TSC, pinning real, offset **bounded under 47 ns** — smaller
+      than the ping-pong method can resolve. `validation/tsc-offset.json`.)*
 - [ ] Rate–latency curve with knee and cliff annotated; max sustainable rate in
       msg/s; kernel drops and ring drops reported separately at every rate.
-- [ ] Ring-full events land as phase-7 gaps; `consumer-slow` graded, 0 WRONG.
-- [ ] Below-knee output byte-identical to synchronous replay (CI gate).
-- [ ] Cached-index and batched-publish measured with predictions written first;
+      *(The curve exists with knee at 25× and cliff at 50×, and the two drop
+      kinds ARE reported separately — 9,151 ring-full against 0 kernel at the
+      cliff. But the latency axis is disqualified with the sweep above, so the
+      curve is shape without quotable numbers.)*
+- [x] Ring-full events land as phase-7 gaps; `consumer-slow` graded, 0 WRONG.
+- [x] Below-knee output byte-identical to synchronous replay (CI gate).
+- [x] Cached-index and batched-publish measured with predictions written first;
       one predicted-flat candidate tested and reported.
-- [ ] Phase 9's decompression gap closed and the full-day number updated.
+      *(And a spin-starvation hypothesis that looked like 539× died under
+      best-of-5 — 812 µs vs 562 µs, indistinguishable. Reverted and recorded.)*
+- [x] Phase 9's decompression gap closed and the full-day number updated.
+      *(P1 falsified twice: 1.78× against a 1.37× ceiling in the container,
+      1.91× against 1.31× on real cores. The decomposition leaks, and better
+      hardware makes the leak bigger.)*
+
+**Five of seven.** The two open items are the same item wearing two hats: both
+need a load generator that can hold a sub-10 µs schedule, which means bare metal
+with isolated cores. Everything else about them — the pipeline, the pinning, the
+clock, the drop accounting, the determinism gate — is done and measured.
 
 **CV line unlocked:** "Lock-free SPSC pipeline (hand-written ring,
 acquire/release, cache-line-isolated indices): wire-to-book p50 X ns / p99.9 Y
