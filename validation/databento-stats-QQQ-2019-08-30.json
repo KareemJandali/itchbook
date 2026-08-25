@@ -1,0 +1,28 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "statistics",
+  "symbol": "QQQ",
+  "date": "2019-08-30",
+  "records": [
+    {
+      "ts_event": 1567171800461323162,
+      "ts_ref": 18446744073709551615,
+      "price": 188930000000,
+      "quantity": 69652,
+      "stat_type": "<StatType.OPENING_PRICE: 1>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.OPENING_PRICE: 1>"
+    },
+    {
+      "ts_event": 1567195200470379681,
+      "ts_ref": 18446744073709551615,
+      "price": 187470000000,
+      "quantity": 196937,
+      "stat_type": "<StatType.CLOSE_PRICE: 11>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.CLOSE_PRICE: 11>"
+    }
+  ]
+}

@@ -25,6 +25,35 @@ different message type, and it never shows up in a day's ordinary flow.
 
 Note this is a different number from the summary's `close`, which is the last
 trade of the session including late prints. The auction is the auction.
+
+AND THE OPEN COLUMN OF A QUOTE HISTORY IS NOT THE OPENING CROSS.
+
+The paragraph above is right about the close and was wrong about the open, in a
+way that took a venue-specific oracle to see. For a NASDAQ-listed stock the
+official closing price IS the closing cross, so any quote history reports the
+same number we do. The OPEN column of a consolidated daily bar is the first
+print across every US venue, which is a different quantity and coincides with
+the opening cross only by luck.
+
+It coincided four times out of five and failed on MSFT 2019-08-30 -- ours
+139.1000, the consolidated open 139.15 -- and the volumes said why: Yahoo
+reported 23,940,100 shares for that day where XNAS.ITCH carries 9,674,474, and
+Yahoo's high was LOWER than ours. Two views of one tape cannot do that. This
+file had already rejected consolidated VOLUME for exactly that reason, four
+paragraphs up, and then used a consolidated bar's open anyway.
+
+So --stats-json is the oracle to prefer: Databento's `statistics` schema on
+XNAS.ITCH, which carries the venue's own published OPENING_PRICE and
+CLOSE_PRICE. Same universe as the feed we parse, the auction itself rather than
+a first-trade proxy, and about two millionths of a dollar per symbol-day. It
+settled MSFT 2019-08-30 at 139.1000 -- our reconstruction was right and the
+oracle had been the wrong one.
+
+It also grades the ABSENCES, which no consolidated source can. A symbol with no
+NASDAQ auction gets UNDEF_PRICE from the venue rather than silence, so "we
+reconstructed no opening cross and the venue published none" becomes a checked
+agreement instead of an untested gap -- and "we invented an auction the venue
+never held" becomes a failure instead of going unnoticed.
 """
 import argparse
 import json
@@ -35,6 +64,40 @@ from pathlib import Path
 # an intraday/IPO one; neither has a published daily figure to check against.
 CHECKED = [("O", "official open", "official_open"),
            ("C", "official close", "official_close")]
+
+# Databento's "there is no such statistic" sentinel, INT64_MAX. It is not a
+# price and must never be read as one: at 1e-9 scaling it renders as
+# 9,223,372,036.85, which is exactly the kind of number that looks like a bug in
+# our book rather than an absence in theirs.
+UNDEF_PRICE = 9223372036854775807
+STAT_OPENING, STAT_CLOSE = 1, 11
+STAT_TO_CROSS = {STAT_OPENING: "O", STAT_CLOSE: "C"}
+
+
+def stat_type_int(v):
+    """stat_type serialises as an int or as the enum's repr, depending on path."""
+    if isinstance(v, int):
+        return v
+    import re
+    m = re.search(r"(\d+)", str(v))
+    return int(m.group(1)) if m else None
+
+
+def venue_auctions(path):
+    """{'O': dollars-or-None, 'C': ...} from a committed statistics artifact.
+
+    None means the venue published UNDEF_PRICE -- it held no such auction. That
+    is a fact to check against, not a missing input.
+    """
+    recs = json.loads(Path(path).read_text())["records"]
+    out = {}
+    for rec in recs:
+        code = STAT_TO_CROSS.get(stat_type_int(rec.get("stat_type")))
+        if code is None:
+            continue
+        raw = rec.get("price")
+        out[code] = None if raw is None or int(raw) == UNDEF_PRICE else int(raw) / 1e9
+    return out
 
 
 def main():
@@ -47,17 +110,37 @@ def main():
                     help="NASDAQ official closing price, in dollars")
     ap.add_argument("--source", default="a published quote history",
                     help="where the official prices came from, for the record")
+    ap.add_argument("--stats-json", metavar="PATH",
+                    help="a committed Databento `statistics` artifact for this "
+                         "symbol-day — the venue's own published auction "
+                         "prices. Supersedes --official-open/--official-close, "
+                         "and is the oracle to prefer: see the note above on "
+                         "why a quote history's open column is a different "
+                         "quantity from the opening cross.")
     a = ap.parse_args()
+
+    venue = None
+    if a.stats_json:
+        venue = venue_auctions(a.stats_json)
+        a.source = f"the venue's own published auction prices ({a.stats_json})"
 
     d = json.loads(Path(a.summary).read_text())
     crosses = d.get("cross_prices") or {}
-    if not crosses:
+    # NO CROSS PRINTS IS AN ANSWER WHEN THERE IS SOMETHING TO CHECK IT AGAINST.
+    # Without an oracle it is indistinguishable from a feed sliced to continuous
+    # hours, so it stays an error. With one it is a claim -- "this symbol held no
+    # NASDAQ auction" -- and the venue either agrees or does not. ALLE is the
+    # case: NYSE-listed, no NASDAQ auction on either day, no cross prints in our
+    # reconstruction, and UNDEF_PRICE from the venue for both. That is a pass,
+    # and reporting it as "nothing to check" threw away the one row in the
+    # basket that tests the absence.
+    if not crosses and venue is None:
         print("no cross prints in this summary — nothing to check.")
         print("A feed sliced to continuous hours only will have none.")
         return 1
 
     print(f"cross prints reconstructed from the feed: "
-          f"{', '.join(sorted(crosses))}\n")
+          f"{', '.join(sorted(crosses)) if crosses else 'none'}\n")
     print(f"{'auction':<16}{'ours':>12}{'published':>12}  verdict")
     print("-" * 52)
 
@@ -66,6 +149,32 @@ def main():
     unusable = 0
     for code, label, arg in CHECKED:
         want = getattr(a, arg)
+
+        # THE VENUE PATH ALSO GRADES ABSENCES. Four cases, and only one of them
+        # is the ordinary comparison; the other three are things a consolidated
+        # source cannot express at all.
+        if venue is not None and code in venue:
+            theirs = venue[code]
+            mine = crosses[code] / 10000.0 if code in crosses else None
+            if theirs is None and mine is None:
+                checked += 1
+                print(f"{label:<16}{'none':>12}{'none':>12}  agree: no such auction")
+                continue
+            if theirs is None:
+                checked += 1; bad += 1
+                print(f"{label:<16}{mine:>12.4f}{'none':>12}  WE INVENTED ONE")
+                continue
+            if mine is None:
+                checked += 1; bad += 1
+                print(f"{label:<16}{'none':>12}{theirs:>12.4f}  WE MISSED ONE")
+                continue
+            checked += 1
+            same = abs(mine - theirs) < 5e-5
+            bad += not same
+            print(f"{label:<16}{mine:>12.4f}{theirs:>12.4f}  "
+                  f"{'match' if same else 'DIFFER'}")
+            continue
+
         if code not in crosses:
             continue
         ours = crosses[code] / 10000.0
@@ -124,9 +233,18 @@ def main():
               "treated as the auction")
         return 1
     print(f"\nPASS — {checked} auction price(s) match {a.source}.")
-    print("The cross prints are reconstructed correctly, against a NASDAQ "
-          "figure")
-    print("that needs no subscription to verify.")
+    if a.stats_json:
+        print("The cross prints are reconstructed correctly, against the "
+              "venue's own")
+        print("published auction prices — same universe as the feed, and the "
+              "auction")
+        print("itself rather than a first-trade proxy.")
+    else:
+        print("The cross prints are reconstructed correctly, against a NASDAQ "
+              "figure")
+        print("that needs no subscription to verify. Note the close is sound "
+              "this way")
+        print("and the open is not: see the note at the top of this file.")
     return 0
 
 

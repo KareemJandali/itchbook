@@ -3,12 +3,10 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–9 complete, with one verification clause still open and
-> carried as open in the plan rather than quietly dropped: `check_cross.py`
-> passes on five graded symbol-days and **fails on one**, MSFT's 2019-08-30
-> opening cross, where the published figure is a consolidated open and ours is
-> the NASDAQ cross print — two different quantities, and the volumes prove it
-> (23,940,100 shares against 9,674,474). Phase 10, the wire-to-book pipeline, is
+> **Status:** Phases 1–10 complete. Phase 9's last clause closed by replacing
+> a consolidated oracle with the venue's own: `check_cross.py` grades 10
+> symbol-days against Databento's `statistics` schema on `XNAS.ITCH` — 13
+> auction prices exact, 7 absences agreed, 0 failures. Phase 10, the wire-to-book pipeline, is
 > **seven of seven**: taken on bare metal, wire-to-book p50 holds at 5.3–6.2 µs
 > from real-time rates to 25× real time, sustaining 2.1 M msg/s before the first
 > drop. Phase 11, the paper, is **five of six**: its results are **run and

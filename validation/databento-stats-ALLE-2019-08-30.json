@@ -1,0 +1,28 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "statistics",
+  "symbol": "ALLE",
+  "date": "2019-08-30",
+  "records": [
+    {
+      "ts_event": 1567171800642093522,
+      "ts_ref": 18446744073709551615,
+      "price": 9223372036854775807,
+      "quantity": 0,
+      "stat_type": "<StatType.OPENING_PRICE: 1>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.OPENING_PRICE: 1>"
+    },
+    {
+      "ts_event": 1567195200369280738,
+      "ts_ref": 18446744073709551615,
+      "price": 9223372036854775807,
+      "quantity": 0,
+      "stat_type": "<StatType.CLOSE_PRICE: 11>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.CLOSE_PRICE: 11>"
+    }
+  ]
+}

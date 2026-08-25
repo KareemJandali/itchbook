@@ -1,0 +1,98 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "statistics",
+  "symbol": "MKD",
+  "date": "2019-12-30",
+  "records": [
+    {
+      "ts_event": 1577716200397704117,
+      "ts_ref": 18446744073709551615,
+      "price": 9223372036854775807,
+      "quantity": 0,
+      "stat_type": "<StatType.OPENING_PRICE: 1>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.OPENING_PRICE: 1>"
+    },
+    {
+      "ts_event": 1577720707434937993,
+      "ts_ref": 18446744073709551615,
+      "price": 6000000000,
+      "quantity": 40629,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577721261569424443,
+      "ts_ref": 18446744073709551615,
+      "price": 7000000000,
+      "quantity": 31952,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577721588041466678,
+      "ts_ref": 18446744073709551615,
+      "price": 7770000000,
+      "quantity": 38111,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577722140683463516,
+      "ts_ref": 18446744073709551615,
+      "price": 9500000000,
+      "quantity": 12355,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577722912139337033,
+      "ts_ref": 18446744073709551615,
+      "price": 11300000000,
+      "quantity": 22578,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577724439720248690,
+      "ts_ref": 18446744073709551615,
+      "price": 7620000000,
+      "quantity": 75190,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577725000102375626,
+      "ts_ref": 18446744073709551615,
+      "price": 7150000000,
+      "quantity": 5678,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1577739600806427929,
+      "ts_ref": 18446744073709551615,
+      "price": 5460000000,
+      "quantity": 1243,
+      "stat_type": "<StatType.CLOSE_PRICE: 11>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.CLOSE_PRICE: 11>"
+    }
+  ]
+}

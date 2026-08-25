@@ -1,0 +1,28 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "statistics",
+  "symbol": "MSFT",
+  "date": "2019-08-30",
+  "records": [
+    {
+      "ts_event": 1567171800733773110,
+      "ts_ref": 18446744073709551615,
+      "price": 139100000000,
+      "quantity": 310629,
+      "stat_type": "<StatType.OPENING_PRICE: 1>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.OPENING_PRICE: 1>"
+    },
+    {
+      "ts_event": 1567195200682562147,
+      "ts_ref": 18446744073709551615,
+      "price": 137860000000,
+      "quantity": 4063883,
+      "stat_type": "<StatType.CLOSE_PRICE: 11>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.CLOSE_PRICE: 11>"
+    }
+  ]
+}

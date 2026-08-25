@@ -1,0 +1,38 @@
+{
+  "dataset": "XNAS.ITCH",
+  "schema": "statistics",
+  "symbol": "ELTK",
+  "date": "2019-08-30",
+  "records": [
+    {
+      "ts_event": 1567171800887363362,
+      "ts_ref": 18446744073709551615,
+      "price": 4240000000,
+      "quantity": 451,
+      "stat_type": "<StatType.OPENING_PRICE: 1>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.OPENING_PRICE: 1>"
+    },
+    {
+      "ts_event": 1567182834384341319,
+      "ts_ref": 18446744073709551615,
+      "price": 5590000000,
+      "quantity": 7091,
+      "stat_type": "<StatType.UNCROSSING_PRICE: 16>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.UNCROSSING_PRICE: 16>"
+    },
+    {
+      "ts_event": 1567195200652983488,
+      "ts_ref": 18446744073709551615,
+      "price": 6380000000,
+      "quantity": 400,
+      "stat_type": "<StatType.CLOSE_PRICE: 11>",
+      "update_action": "<StatUpdateAction.NEW: 1>",
+      "sequence": 0,
+      "stat_type_name": "UNKNOWN_<StatType.CLOSE_PRICE: 11>"
+    }
+  ]
+}

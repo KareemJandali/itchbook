@@ -27,7 +27,37 @@ cd "$(dirname "$0")/.."
 CSV="${1:-validation/official-auction-prices.csv}"
 [[ -f "$CSV" ]] || { echo "error: no such file: $CSV" >&2; exit 2; }
 
+# THE VENUE ARTIFACTS COME FIRST. validation/databento-stats-<SYM>-<DATE>.json
+# is Databento's `statistics` schema on XNAS.ITCH -- the venue's own published
+# OPENING_PRICE and CLOSE_PRICE, in the same universe as the feed we parse.
+# Where one exists it supersedes the hand-read CSV row entirely, because a
+# consolidated quote history's open column is a different quantity from the
+# opening cross and agrees with it only by luck. Every symbol-day in the graded
+# basket has one; the CSV path below survives for anyone without them.
 ran=0; skipped=0; failed=0
+shopt -s nullglob
+for STATS in validation/databento-stats-*.json; do
+    base="${STATS##*/databento-stats-}"; base="${base%.json}"
+    DAY="${base: -10}"; SYM="${base%-$DAY}"
+    SUMMARY="validation/${SYM}_${DAY}.json"
+    [[ -f "$SUMMARY" ]] || { echo "  SKIP $SYM $DAY — no reconstruction"; skipped=$((skipped+1)); continue; }
+    echo "--- $SYM $DAY  (venue)"
+    if python3 python/analysis/check_cross.py "$SUMMARY" --stats-json "$STATS"; then
+        ran=$((ran + 1))
+    else
+        ran=$((ran + 1)); failed=$((failed + 1))
+    fi
+done
+shopt -u nullglob
+
+if (( ran > 0 )); then
+    echo
+    echo "$ran graded against the venue, $failed failed, $skipped skipped"
+    [[ $failed -eq 0 ]] || exit 1
+    exit 0
+fi
+
+echo "No venue artifacts found; falling back to the hand-read CSV."
 while IFS=, read -r SYM DAY HAS_O HAS_C OPEN CLOSE SOURCE; do
     [[ "$SYM" == "symbol" ]] && continue
     [[ -z "$SYM" ]] && continue

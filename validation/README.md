@@ -37,6 +37,37 @@ symbols. ALLE's low above — 95.6800, matching Databento exactly — read `0.00
 before the fix. MSFT's row did not move, which is why one graded symbol could
 never have caught it: MSFT has real auctions at both ends.
 
+## The auction prints, graded against the venue itself
+
+The daily bars above say the day reconstructs. They say nothing about the
+auctions, which are a different message type, rare, and the part of an ITCH book
+most likely to be quietly wrong. `scripts/check-crosses.sh` grades those
+separately, and it now does it against **Databento's `statistics` schema on
+`XNAS.ITCH`** — the venue's own published `OPENING_PRICE` and `CLOSE_PRICE`,
+committed per symbol-day as `databento-stats-<SYM>-<DATE>.json`:
+
+**10 symbol-days graded, 0 failed. 13 auction prices exact; 7 absences agreed.**
+
+The absences are the half a consolidated source cannot check at all. ALLE is
+NYSE-listed and holds no NASDAQ auction on either day: we reconstruct no cross
+print and the venue publishes `UNDEF_PRICE`, and those agreeing is a result
+rather than a gap. AQB has an opening cross and no closing one on both days;
+MKD, which halted 16 times, has a closing cross and no opening one. Every one of
+those matches what the feed said.
+
+**This replaced an oracle that was the wrong universe.** The prices were
+previously read by hand off a consolidated quote history, which is correct for
+the close — for a NASDAQ-listed stock the official closing price *is* the
+closing cross — and wrong for the open, where a consolidated bar reports the
+first print across every US venue. That coincided with the opening cross four
+times out of five and failed on MSFT 2019-08-30: ours 139.1000 against a
+published 139.15. The volumes gave it away — Yahoo reports 23,940,100 shares for
+that day where `XNAS.ITCH` carries 9,674,474, and Yahoo's high is *lower* than
+ours. Two views of one tape cannot do that. **The venue's own figure is
+139.1000**, so the reconstruction was right and the oracle was not; the four
+that passed had been passing by luck. The whole `statistics` basket cost
+**$0.0000143**.
+
 Graded against Databento `XNAS.ITCH` `ohlcv-1d`. All five fields match exactly.
 The message count is the record's own `messages_read` — the `--utc-day` window,
 not the whole file. The JSON's `symbol` is `null` because the reconstruction

@@ -571,10 +571,10 @@ write its sibling. No number reaches a document by being retyped.
       here rather than only in the results doc.~~ **It has now been run**, and
       the substitution is retired: the global invariants and the sampled
       differential both hold, which is what 9.12 asked for in the first place.)*
-- [ ] ≥5 symbols exact vs Databento; `check_cross.py` run on each; repeated on a
+- [x] ≥5 symbols exact vs Databento; `check_cross.py` run on each; repeated on a
       second day.
-      *(**Two of the three clauses are closed. The third has one failure left,
-      and it is a failure of the oracle rather than of the book.**
+      *(**All three clauses closed, and closing the third replaced an oracle
+      that had been measuring the wrong universe.**
 
       **≥5 symbols, repeated on a second day: DONE.** Ten symbol-days are graded
       against Databento `XNAS.ITCH` `ohlcv-1d` and all five fields are exact on
@@ -589,38 +589,37 @@ write its sibling. No number reaches a document by being retyped.
       cost"; the cash was a rounding error and what actually blocked it was the
       reconstructions not existing yet.
 
-      **`check_cross.py` on each: 5 graded, 1 failed, 3 skipped.** ALLE is
-      absent by design rather than oversight — it is NYSE-listed and has no
-      NASDAQ auction to reconstruct. AQB on both days and MKD in December are
-      skipped for want of a usable published figure: AQB was split 1:20 in 2024
-      so no free source quotes its 2019 prices unadjusted, and MKD has since
-      delisted.
+      **`check_cross.py` on each: 10 graded, 0 failed.** 13 auction prices
+      exact and 7 absences agreed, against **Databento's `statistics` schema on
+      `XNAS.ITCH`** — the venue's own published `OPENING_PRICE` and
+      `CLOSE_PRICE`, committed per symbol-day as
+      `databento-stats-<SYM>-<DATE>.json`. The absences are the half no
+      consolidated source can check: ALLE is NYSE-listed and holds no NASDAQ
+      auction, so we reconstruct no cross print and the venue publishes
+      `UNDEF_PRICE`, and those agreeing is a result rather than a gap. AQB has
+      an opening cross and no closing one on both days; MKD, 16 halts, has a
+      closing cross and no opening one. The `statistics` basket cost
+      **$0.0000143**, an order of magnitude less than the `trades` schema that
+      would have required inferring the cross from a day of prints.
 
-      **The failure is MSFT 2019-08-30's opening cross, and the oracle is the
-      wrong universe.** Our `O` cross print is 139.1000; the published open is
-      139.15. The closing cross matches to the cent on both days, and the same
-      code matched the December opening cross exactly, so the parse is not
-      obviously wrong — and the volumes say why. Yahoo reports 23,940,100 shares
-      against our 9,674,474 and Databento's identical 9,674,474: **2.47×**,
-      because Yahoo is consolidated across every US venue and `XNAS.ITCH` is
-      NASDAQ alone. Yahoo's high is *lower* than ours, 139.18 against 139.35,
-      which cannot happen between two views of the same tape.
+      **It got there through a failure that turned out to be the oracle's.**
+      The prices were read by hand off a consolidated quote history, which is
+      right for the close — for a NASDAQ-listed stock the official closing price
+      *is* the closing cross — and wrong for the open, where a consolidated bar
+      reports the first print across every US venue. That coincided with the
+      opening cross four times out of five and failed on MSFT 2019-08-30: ours
+      139.1000 against a published 139.15. The volumes gave it away — Yahoo
+      reports 23,940,100 shares where `XNAS.ITCH` carries 9,674,474, and Yahoo's
+      high is *lower* than ours, which two views of one tape cannot do.
+      `check_cross.py` had already rejected consolidated VOLUME for exactly that
+      reason and then used a consolidated bar's open anyway.
 
-      So three different quantities are in play and only two are the same thing:
-      138.62 is the first NASDAQ trade in the window, 139.10 is the NASDAQ
-      opening cross, and 139.15 is the consolidated regular-session open. The
-      closing cross agrees everywhere because for a NASDAQ-listed name the
-      closing cross **is** the official consolidated close; the opening cross
-      carries no such guarantee, and December agreed only because the cross
-      happened to be the first consolidated print that day. **Which means the
-      four passing opening-cross rows are luck rather than method** — the same
-      category error, four times it came out right.
-
-      What closes this properly is a same-universe oracle: Databento's
-      `XNAS.ITCH` trades, which carry the cross print itself. That is one
-      priced query away and needs the key. Until then the row stays FAIL rather
-      than being reasoned down to "not comparable", because a failure explained
-      away by its author is the thing this whole basket exists to prevent.
+      **The venue's own figure is 139.1000.** The reconstruction was right, the
+      oracle was not, and the four rows that passed had been passing by luck —
+      which is worth more than the one that failed. The failure was not reasoned
+      away on that argument, either: the row stayed FAIL until a same-universe
+      source said otherwise, because a failure explained away by the person who
+      wrote the thing is what this basket exists to prevent.
 
       **Preparing them found a bug that would have failed the grading**, which
       is the argument for the outside oracle made concrete. An auction that did
