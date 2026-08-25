@@ -1619,13 +1619,17 @@ fixed and there is now a negative self-test that forces kernel drops with a
 2,304-byte receive buffer and fails if the counter stays at zero — which is how
 the second bug was found, on the test's first run.
 
-**CV line unlocked:** "Lock-free SPSC pipeline (hand-written ring,
-acquire/release, cache-line-isolated indices): wire-to-book p50 X ns / p99.9 Y
-ns, sustains Z M msg/s on loopback, with backpressure degrading to graded feed
-gaps rather than silent loss."
+**CV line, filled:**
 
-*X, Y and Z are deliberately still blank, because the sentence as drafted wants
-one pair of latencies and one rate, and the run does not offer them at the same
+> Lock-free SPSC pipeline (hand-written ring, acquire/release,
+> cache-line-isolated indices): wire-to-book p50 holds at 5.3–6.2 µs from
+> real-time rates to 25× real time, p99.9 27.9 µs at real time; sustains
+> 2.1 M msg/s with zero drops, backpressure degrading to graded feed gaps
+> rather than silent loss.
+
+*Every figure carries the rate it was measured at, and that is the point rather
+than a caveat. The sentence originally drafted for this slot wanted one pair of
+latencies and one throughput, and the run does not offer them at the same
 operating point:*
 
 | | p50 | p99 | p99.9 | rate |
@@ -1633,12 +1637,17 @@ operating point:*
 | 1× real time | 6,189 ns | 22,696 ns | 27,885 ns | 83,849 msg/s |
 | max sustainable | 5,290 ns | 1,081,195 ns | 4,606,539 ns | 2,096,222 msg/s |
 
-*Taking p50/p99.9 from the first row and Z from the second reads as one claim
-and is two — the 6.2 µs median and the 2.1 M msg/s never happened together, and
-at 2.1 M the p99.9 is 4.6 ms rather than 27.9 µs. Either quote one row
-("p50 5.3 µs / p99.9 4.6 ms while sustaining 2.1 M msg/s", which is true and
-unflattering), or split the sentence so the operating point travels with each
-number. Do not merge the columns.*
+*Taking p50 and p99.9 from the first row and the rate from the second would read
+as one claim and be two: the 27.9 µs tail and the 2.1 M msg/s never happened
+together, and at 2.1 M the p99.9 is 4.6 ms — **165× larger**. It is the first
+thing a reader who knows this material would ask about, and a line that invites
+that question has spent its credibility before the answer.*
+
+*So the line leads instead with what is true across the whole range, which is
+also the harder result: **the median moves by under a microsecond while the
+offered rate moves by 25×** — 6,189 ns at 1×, 5,272 ns at 10×, 5,290 ns at 25×.
+A good number at one operating point is a measurement; a flat one across
+twenty-five is a property.*
 
 ---
 
