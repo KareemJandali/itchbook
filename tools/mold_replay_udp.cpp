@@ -127,17 +127,24 @@ struct RealTime {
 // was GRANTED is that asked-for and got are different facts.
 RealTime go_realtime(int priority) {
     RealTime rt;
-    if (priority <= 0) return rt;
-    rt.requested = true;
+    rt.requested = priority > 0;
 
 #if defined(__linux__)
-    sched_param sp{};
-    sp.sched_priority = priority;
-    if (sched_setscheduler(0, SCHED_FIFO, &sp) == 0) {
-        rt.scheduler_granted = true;
-    } else {
-        rt.scheduler_error = std::strerror(errno);
+    if (priority > 0) {
+        sched_param sp{};
+        sp.sched_priority = priority;
+        if (sched_setscheduler(0, SCHED_FIFO, &sp) == 0) {
+            rt.scheduler_granted = true;
+        } else {
+            rt.scheduler_error = std::strerror(errno);
+        }
     }
+    // ATTEMPTED WHETHER OR NOT PRIORITY WAS ASKED FOR. Locking the address
+    // space and raising the scheduling class are two different remedies for
+    // two different hazards -- a major fault costs a millisecond no matter
+    // what class the thread is in -- and bundling them meant --rt-priority 0
+    // silently gave up the page-fault protection as well, so the two runs a
+    // sweep compares differed in more than the flag being swept.
 
     // A major fault in the pacing loop is a millisecond that no amount of
     // priority prevents.
@@ -322,17 +329,27 @@ int main(int argc, char** argv) {
     // cheaper once the buffers exist, and raising priority earlier would only
     // give real-time scheduling to a decompression loop.
     const RealTime rt = go_realtime(opt.rt_priority);
-    if (rt.requested && !opt.quiet) {
-        if (rt.scheduler_granted) {
-            std::printf("%-30s SCHED_FIFO priority %d\n", "scheduling", opt.rt_priority);
-        } else {
-            std::printf("%-30s DENIED (%s) -- run as root, or once:\n"
-                        "%-30s   sudo setcap cap_sys_nice=ep <this binary>\n",
-                        "SCHED_FIFO", rt.scheduler_error.c_str(), "");
+    if (!opt.quiet) {
+        // TWO REPORTS UNDER TWO CONDITIONS, not one report under one. The
+        // scheduling line is only meaningful when priority was asked for; the
+        // LOCKING line is meaningful whenever the lock failed, and nesting it
+        // inside `rt.requested` made it unprintable at --rt-priority 0 -- which
+        // is exactly what scripts/pinned-run.sh now passes on any machine with
+        // RT bandwidth throttling active. The address space is unlocked in both
+        // cases and a major fault costs a millisecond in both cases.
+        if (rt.requested) {
+            if (rt.scheduler_granted) {
+                std::printf("%-30s SCHED_FIFO priority %d\n", "scheduling", opt.rt_priority);
+            } else {
+                std::printf("%-30s DENIED (%s) -- run as root, or once:\n"
+                            "%-30s   sudo setcap cap_sys_nice=ep <this binary>\n",
+                            "SCHED_FIFO", rt.scheduler_error.c_str(), "");
+            }
         }
         if (!rt.memory_locked) {
-            std::printf("%-30s not locked (%s)\n", "address space",
-                        rt.memory_error.c_str());
+            std::printf("%-30s not locked (%s) -- raise RLIMIT_MEMLOCK, or add\n"
+                        "%-30s   cap_ipc_lock to the setcap above\n",
+                        "address space", rt.memory_error.c_str(), "");
         }
     }
 
@@ -440,11 +457,41 @@ int main(int argc, char** argv) {
             // have passed a run whose sender was two orders of magnitude
             // noisier than the thing it was measuring.
             constexpr double kSenderTailBudgetNs = 10000.0;
-            std::printf("\n%s\n", late_p999 < kSenderTailBudgetNs
-                ? "The sender kept its schedule: p99.9 lateness is under 10 us."
-                : "WARNING: p99.9 sender lateness is above 10 us, which is the same order as\n"
-                  "the latency this run exists to measure. Raise --spin-margin-us, lower the\n"
-                  "rate, or treat the results as measuring the generator.");
+            if (late_p999 < kSenderTailBudgetNs) {
+                std::printf("\nThe sender kept its schedule: p99.9 lateness is under 10 us.\n");
+            } else {
+                std::printf(
+                    "\nWARNING: p99.9 sender lateness is above 10 us, which is the same order\n"
+                    "as the latency this run exists to measure. Lower the rate, or treat these\n"
+                    "results as measuring the generator until it can hold this schedule.\n");
+                // THE CAUSE DEPENDS ON THE SCHEDULING CLASS, and the first
+                // version of this message named the real-time one on a run that
+                // had not asked for real-time priority -- which is the DEFAULT
+                // case, since --rt-priority is 0 unless something passes it.
+                if (rt.scheduler_granted) {
+                    std::printf(
+                    "  This run had SCHED_FIFO, so check kernel.sched_rt_runtime_us first: a\n"
+                    "  real-time thread past its bandwidth share is DEQUEUED for the rest of\n"
+                    "  the period -- 50 ms at the stock 950000 of 1000000 -- and the pacing\n"
+                    "  loop spins whenever the next deadline is inside the spin margin, so at\n"
+                    "  any rate that saturates a core the priority buys a hole, not a shorter\n"
+                    "  tail. sysctl -w kernel.sched_rt_runtime_us=-1 lifts the cap.\n");
+                } else {
+                    std::printf(
+                    "  This run was SCHED_OTHER, so RT bandwidth throttling does not apply and\n"
+                    "  an ordinary thread was simply descheduled. --rt-priority raises the\n"
+                    "  class, which helps only on a machine that will honour it.\n");
+                }
+                std::printf(
+                    "  The spin margin is NOT the first thing to reach for, and both\n"
+                    "  directions are recorded under validation/sender-qualification/:\n"
+                    "  raising it raises the duty cycle and with it the exposure above, while\n"
+                    "  lowering it hands the tail back to nanosleep overshoot (rt_c14.json vs\n"
+                    "  rt_sm100.json: 500 us -> 100 us, p99 15,791 ns -> 78,080 ns).\n"
+                    "  A p50 of tens of nanoseconds beside a tail in the hundreds of\n"
+                    "  microseconds is not a pacing error at all -- it is a thread that was\n"
+                    "  taken off the CPU, and no margin reaches that.\n");
+            }
         }
     }
 
@@ -466,13 +513,14 @@ int main(int argc, char** argv) {
             "  \"lateness_ns\": {\"p50\": %.0f, \"p99\": %.0f, \"p999\": %.0f, \"max\": %u},\n"
             "  \"realtime\": {\"requested\": %s, \"priority\": %d,"
             " \"scheduler_granted\": %s, \"memory_locked\": %s,"
-            " \"scheduler_error\": \"%s\"}\n}\n",
+            " \"scheduler_error\": \"%s\", \"memory_error\": \"%s\"}\n}\n",
             packets, messages, bytes, send_errors, opt.rate, opt.multiplier,
             achieved, send_seconds,
             late_p50, late_p99, late_p999, lateness.max(),
             rt.requested ? "true" : "false", opt.rt_priority,
             rt.scheduler_granted ? "true" : "false",
-            rt.memory_locked ? "true" : "false", rt.scheduler_error.c_str());
+            rt.memory_locked ? "true" : "false", rt.scheduler_error.c_str(),
+            rt.memory_error.c_str());
         if (std::fclose(f) != 0) return 1;
     }
     return send_errors == 0 ? 0 : 1;

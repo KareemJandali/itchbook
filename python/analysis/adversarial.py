@@ -197,20 +197,31 @@ PIPELINE = [
 ]
 
 
-def wait_bound(port, timeout=10.0):
-    """Linux says when the receiver is listening; a fixed sleep guesses."""
+def wait_ready(proc, timeout=30.0):
+    """Block until the receiver says its BOOK THREAD exists.
+
+    Waiting for the port to appear in /proc/net/udp -- which is what this used
+    to do -- returns at bind(), which is 50 ms of clock calibration and an
+    8.4M-entry allocation short of a consumer: 91-102 ms early, measured. The
+    receiver stamps arrivals through all of it with nothing draining the ring,
+    so the scenarios below would attribute that window to the pipeline they are
+    grading. wire_to_book prints READY once the book thread exists.
+    """
+    import select
     import time
     deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with open("/proc/net/udp") as f:
-                if f":{port:04X} " in f.read().upper():
-                    return True
-        except OSError:
-            time.sleep(2.0)
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            proc.kill()
+            return False
+        if not select.select([proc.stdout], [], [], remaining)[0]:
+            continue
+        line = proc.stdout.readline()
+        if line == "":
+            return False
+        if line.startswith("READY"):
             return True
-        time.sleep(0.05)
-    return False
 
 
 def pipeline_rows(b, feed, packets, work, args):
@@ -244,10 +255,10 @@ def pipeline_rows(b, feed, packets, work, args):
         if throttle_ns:
             cmd += ["--slow-consumer-ns", str(throttle_ns)]
         recv = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.STDOUT, text=True)
-        if not wait_bound(port):
+        if not wait_ready(recv):
             recv.kill()
             recv.wait()
-            raise SystemExit(f"{name}: the receiver never bound port {port}")
+            raise SystemExit(f"{name}: the receiver never reported READY on port {port}")
         run([str(b / "mold_replay_udp"), str(packets), "--host", "127.0.0.1",
              "--port", str(port), "--rate", str(args.pipeline_rate), "--quiet"])
         tail = recv.communicate()[0]

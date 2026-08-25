@@ -181,8 +181,8 @@ jobs:
             --rcvbuf-mb 16 --expect-messages 200000 --json /tmp/tsan-wire.json \
             > /tmp/tsan-wire.txt 2>&1 &
           pid=$!
-          for _ in $(seq 1 100); do
-            if grep -qi ":684D " /proc/net/udp; then break; fi
+          for _ in $(seq 1 300); do
+            if grep -q '^READY' /tmp/tsan-wire.txt; then break; fi
             sleep 0.1
           done
           ./build-tsan/mold_replay_udp /tmp/tsan-feed.pkt.gz --host 127.0.0.1 \
@@ -194,8 +194,19 @@ jobs:
             echo "FAIL: ThreadSanitizer flagged the pipeline"
             exit 1
           fi
-          test "$rc" = 0
-          echo "pipeline race-clean end to end"
+          # 0 or 3. This step is about RACES, and exit 3 is a capacity verdict:
+          # the pipeline worked exactly as designed and lost datagrams under an
+          # offered load it could not absorb. Under ThreadSanitizer -- which
+          # instruments every memory access -- that is a live possibility at any
+          # rate, and it became more live once the kernel-drop half of the LOSSY
+          # gate started working: before, wire_to_book read /proc/net/udp after
+          # close(fd), found no row, and reported a constant 0. A race-detector
+          # step must not go red because the sanitised build was slow.
+          if [[ "$rc" != 0 && "$rc" != 3 ]]; then
+            echo "FAIL: wire_to_book exited $rc under TSan"
+            exit 1
+          fi
+          echo "pipeline race-clean end to end (exit $rc)"
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -459,11 +470,16 @@ jobs:
       # two-core shared runner cannot support a latency claim and the sweep says
       # so itself. The real curve comes from a pinned host and is committed as
       # validation/rate-sweep.json.
+      #
+      # --allow-unqualified, because the sweep now EXITS 3 when no rate on the
+      # ladder had a sender that held its 10 us schedule, and this runner never
+      # will. The flag is passed here and nowhere else: a measurement run that
+      # wanted the same exemption would have to ask for it in the open.
       - name: Rate sweep runs end to end and both figures render
         run: |
           python3 bench/rate-sweep.py --build build --out /tmp/sweep.json \
             --messages 60000 --session-seconds 20 --repeats 1 \
-            --multipliers 5,20,50 --extend 0
+            --multipliers 5,20,50 --extend 0 --allow-unqualified
           python3 - <<'PY'
           import json, sys
           d = json.load(open('/tmp/sweep.json'))

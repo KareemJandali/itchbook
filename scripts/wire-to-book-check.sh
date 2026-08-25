@@ -91,34 +91,55 @@ fail=0
 # is fire-and-forget, so a datagram sent before bind() is gone with nothing to
 # report it, and the run fails for a reason that has nothing to do with the
 # code under test.
-wait_bound() {
-    if [[ ! -r /proc/net/udp ]]; then sleep 2; return 0; fi   # not Linux
-    local port_hex
-    port_hex=$(printf '%04X' "$1")
-    for _ in $(seq 1 100); do
-        if grep -qi ":$port_hex " /proc/net/udp 2>/dev/null; then return 0; fi
+# ...AND THEN FOR THE CONSUMER, which is a later event than the port opening.
+#
+# Between bind() and the book thread existing, wire_to_book calibrates the TSC
+# (a 50 ms sleep), allocates its ref table and reserves two sample vectors --
+# while the receiver thread is already stamping arrivals into a ring nothing is
+# draining. Starting the generator at bind() therefore charges that whole window
+# to the first messages of the run. wire_to_book prints READY once the consumer
+# exists; wait for that instead of guessing with a sleep.
+# $1 is the file the receiver's output is redirected to, $2 its pid. BOTH are
+# needed: polling the file alone cannot tell "still starting up" from "died
+# during bind", so a port collision used to burn the full 30 s and then report
+# "never reported READY" while the real error sat unread in the file.
+wait_ready() {
+    local out="$1" pid="$2"
+    for _ in $(seq 1 300); do
+        if grep -q '^READY' "$out" 2>/dev/null; then return 0; fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "    receiver exited before it was ready:" >&2
+            cat "$out" >&2
+            return 1
+        fi
         sleep 0.1
     done
-    echo "    receiver never bound port $1" >&2
+    echo "    receiver never reported READY:" >&2
+    cat "$out" >&2
     return 1
 }
 
+# want_exit is an ALTERNATION, "0" or "0|4". Exit 4 is UNVERIFIED -- ring and
+# staging were clean but kernel drops are unreadable -- and on a platform with
+# no /proc/net/udp that is the correct outcome of a clean run, not a failure.
+# Insisting on a single literal made this whole script fail on macOS the moment
+# kernel_drops() started returning its "cannot tell you" sentinel instead of 0.
 run_case() {
-    local name="$1" port="$2" ringlog2="$3" rate="$4" want_exit="$5"
+    local name="$1" port="$2" ringlog2="$3" rate="$4" want_exit="$5" rcvbuf="${6:-16}"
     echo
-    echo "==> $name (ring 2^$ringlog2 slots, $rate msg/s)"
+    echo "==> $name (ring 2^$ringlog2 slots, $rate msg/s, rcvbuf ${rcvbuf} MB)"
     "$BUILD/wire_to_book" --port "$port" --ring-log2 "$ringlog2" --timeout-ms 4000 \
-        --rcvbuf-mb 16 --expect-messages 400000 --json "$WORK/$name.json" \
+        --rcvbuf-mb "$rcvbuf" --expect-messages 400000 --json "$WORK/$name.json" \
         > "$WORK/$name.txt" 2>&1 &
     local pid=$!
-    if ! wait_bound "$port"; then kill $pid 2>/dev/null; wait $pid 2>/dev/null; return 1; fi
+    if ! wait_ready "$WORK/$name.txt" "$pid"; then kill $pid 2>/dev/null; wait $pid 2>/dev/null; return 1; fi
     "$BUILD/mold_replay_udp" "$WORK/syn.pkt.gz" --host 127.0.0.1 --port "$port" \
         --rate "$rate" --quiet >/dev/null 2>&1
     wait $pid
     local rc=$?
     sed -n '/packets received/,$p' "$WORK/$name.txt" | head -20
 
-    if [[ "$rc" != "$want_exit" ]]; then
+    if [[ ! "$rc" =~ ^(${want_exit})$ ]]; then
         echo "    FAIL: exit $rc, expected $want_exit"
         cat "$WORK/$name.txt"
         return 1
@@ -128,7 +149,7 @@ run_case() {
 }
 
 # ---- run 1: nothing may be lost ---------------------------------------------
-run_case clean "$PORT_OK" "$CLEAN_RING" "$CLEAN_RATE" 0 || fail=1
+run_case clean "$PORT_OK" "$CLEAN_RING" "$CLEAN_RATE" '0|4' || fail=1
 
 if [[ $fail -eq 0 ]]; then
     python3 - "$WORK/clean.json" "$SENT" <<'PY' || fail=1
@@ -168,6 +189,63 @@ if wire != accounted:
     sys.exit(1)
 print(f"    {j['ring_full_drops']} packets dropped; all {wire} messages accounted for")
 PY
+fi
+
+# ---- run 3: the KERNEL drop path, which had no test at all ------------------
+#
+# THIS IS A NEGATIVE SELF-TEST, and it exists because the gate it tests was
+# dead for the whole life of the tool. wire_to_book read /proc/net/udp AFTER
+# close(fd); a UDP socket leaves that file the instant it closes, so the read
+# found no row, and kernel_drops() answered a missing row with 0 rather than
+# its "cannot tell you" sentinel. Every run ever taken therefore recorded
+# kernel_drops = 0 as a CONSTANT: exit 4 was unreachable, the kernel half of
+# the LOSSY gate was dead code, and a sweep could publish a max sustainable
+# rate while the kernel quietly discarded datagrams upstream of the ring --
+# which is the exact failure the header of wire_to_book.cpp says the gate is
+# there to prevent.
+#
+# Runs 1 and 2 cannot catch that: run 1 asserts kernel_drops == 0, which a
+# broken gate also reports, and run 2 overflows the RING, which is a different
+# counter. So: give the socket the smallest receive buffer the kernel will
+# grant, offer a rate no 4 KB buffer can hold, and require the number to be
+# NON-ZERO. A gate with no test that can fail is not a gate.
+#
+# DECIDED BEFORE THE RUN, not from the artifact after it. The first version
+# asked run_case for exit 3 and left a "SKIP: cannot read kernel drops" branch
+# in the Python below -- which could never print, because on such a platform the
+# run exits 4, run_case fails first, and the guard skips the Python entirely.
+if [[ ! -r /proc/net/udp ]]; then
+    echo
+    echo "==> kerndrop: SKIPPED — this platform has no /proc/net/udp, so there is"
+    echo "    no kernel drop counter for the gate to read, let alone to test."
+else
+    kd_fail=0
+    run_case kerndrop "$((PORT_LOSSY + 1))" 18 "$LOSSY_RATE" 3 0 || kd_fail=1
+    fail=$(( fail | kd_fail ))
+
+# Guarded on ITS OWN status, not the cumulative one: an unrelated failure in run
+# 1 or 2 used to hide the kernel assertion completely.
+if [[ $kd_fail -eq 0 ]]; then
+    python3 - "$WORK/kerndrop.json" <<'PY' || fail=1
+import json, sys
+j = json.load(open(sys.argv[1]))
+if j["kernel_drops"] is None:
+    print("    FAIL: /proc/net/udp is readable but the tool reported the count "
+          "as unknown")
+    sys.exit(1)
+if j["kernel_drops"] == 0:
+    print("    FAIL: a 4 KB receive buffer under full rate dropped nothing "
+          "according to the counter.\n"
+          "    That is the dead-gate signature: kernel_drops is being reported "
+          "as a constant.")
+    sys.exit(1)
+if j["ring_full_drops"] != 0:
+    print(f"    note: the ring also dropped {j['ring_full_drops']} — the "
+          "kernel assertion still stands")
+print(f"    {j['kernel_drops']:,} datagrams dropped by the kernel and counted; "
+      "the gate can fail")
+PY
+fi
 fi
 
 echo

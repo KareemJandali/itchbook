@@ -37,13 +37,23 @@
 // Backpressure becomes a graded feed gap rather than silent loss, which is the
 // same promise phase 7 made about the wire.
 //
-// THE DROPS THAT ARE NOT YOURS. On loopback the kernel's socket buffer
-// overflows before the ring does. A run that counts only ring-full events can
+// THE DROPS THAT ARE NOT YOURS. A run that counts only ring-full events can
 // lose thousands of packets upstream and report a clean sheet -- phase 7's
 // failure mode reintroduced one layer higher. So SO_RCVBUF is set AND read back
 // with getsockopt, because Linux silently caps it and the value you asked for
 // is not evidence; and kernel drops are read from /proc/net/udp and reported
 // separately from ring drops at every rate.
+//
+// WHICH ONE OVERFLOWS FIRST IS A PROPERTY OF THE SIZING, not of loopback. This
+// comment used to assert that the socket buffer always goes first, and the
+// artifact contradicts it: at --rcvbuf-mb 16 (32 MB granted) against a
+// 65,536-slot ring, a sweep recorded 88,629 ring-full drops and ZERO kernel
+// drops, because the book is the bottleneck and the receiver drains the socket
+// as fast as recvmmsg will go. Shrink the buffer and the order reverses -- at
+// --rcvbuf-mb 0 (2,304 bytes granted) the same feed produces kernel drops in
+// the thousands, which is what the negative self-test in
+// scripts/wire-to-book-check.sh uses. Both counters are reported at every rate
+// precisely because which one moves is not knowable in advance.
 //
 // Usage:
 //   wire_to_book [--port N] [--rcvbuf-mb N] [--ring-log2 N] [--timeout-ms N]
@@ -244,13 +254,34 @@ uint64_t kernel_drops(uint16_t port) {
         // sl  local_address rem_address st tx rx tr tm retr uid to inode ref ptr drops
         if (std::sscanf(line, "%*d: %63[0-9A-Fa-f]:%X", local, &local_port) != 2) continue;
         if (local_port != port) continue;
+        // TRIM FIRST. /proc/net/udp pads the drops column with trailing
+        // spaces:
+        //
+        //   3953: 00000000:67F3 ... 0000000000000000 14202<spaces>\n
+        //
+        // so strrchr(line, ' ') lands on the padding AFTER the number, and
+        // strtoull then starts on whitespace, finds the newline, and returns
+        // zero. This was the second of two independent reasons kernel_drops
+        // read 0 for every run this tool ever took -- fixing the read-after-
+        // close ordering alone still produced a constant, which is how this
+        // one was found: the negative self-test in wire-to-book-check.sh
+        // failed on its first run against a socket whose row said 14,202.
+        size_t len = std::strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' ||
+                           line[len - 1] == ' ' || line[len - 1] == '\t')) {
+            line[--len] = '\0';
+        }
         const char* last = std::strrchr(line, ' ');
         if (last == nullptr) continue;
         total += std::strtoull(last, nullptr, 10);
         found = true;
     }
     std::fclose(f);
-    return found ? total : 0;
+    // NOT zero. A port with no row in /proc/net/udp is a port this function
+    // cannot report on, and "no drops" is a different claim from "unreadable".
+    // Returning 0 here made kernel_known true for every run ever taken, which
+    // silently retired the exit-4 path and the kernel half of the LOSSY gate.
+    return found ? total : UINT64_MAX;
 #else
     (void)port;
     return UINT64_MAX;
@@ -828,12 +859,52 @@ int run(const Options& opt) {
         }
     });
 
+    // ---- READY, and why bind() is not the same thing -----------------------
+    //
+    // A load generator that starts when the PORT appears starts while this
+    // thread is still between bind() and here: calibrate_cycles_per_ns sleeps
+    // 50 ms, BookSet allocates its ref table, and two vectors reserve. The
+    // receiver thread above is already stamping arrivals through all of it,
+    // and nothing is draining the ring, so every message that lands in that
+    // window carries the whole remaining stall as its wire-to-book sample.
+    // It showed up as multi-millisecond samples at EVERY rate on the ladder
+    // including 1x, where the ring is nearly empty -- a stall whose DURATION
+    // did not change across the whole ladder, which is not queueing. The gap
+    // itself is the measurement: 91-102 ms across six runs, between the port
+    // appearing in /proc/net/udp and this line.
+    //
+    // Two cautions for anyone re-deriving that from an artifact. The histogram
+    // buckets are raw TSC CYCLES while every *_ns field beside them is
+    // nanoseconds, so bucket edges read ~3.6x too large if taken literally --
+    // which is the mistake made when this comment was first written, and why
+    // bench/rate-sweep.py now records "buckets_unit". And the per-rate figures
+    // move every run, so no specific one is quoted here; read them from the
+    // artifact in the tree rather than from this comment.
+    //
+    // So the consumer says when it exists. stdout, unconditionally: a marker
+    // that --quiet could suppress is a marker that goes missing exactly when
+    // the harness is driving.
+    std::printf("READY consumer\n");
+    std::fflush(stdout);
+
     receiver.join();
     bookthread.join();
-    ::close(fd);
 
+    // BEFORE close(fd), and this ordering is the entire fix. A UDP socket
+    // leaves /proc/net/udp the instant it closes, so a read taken afterwards
+    // finds no row, and kernel_drops() used to answer that with 0.
     const uint64_t drops_after = kernel_drops(opt.port);
-    const bool kernel_known = drops_before != UINT64_MAX && drops_after != UINT64_MAX;
+    ::close(fd);
+    // Three ways this can be unknowable, and all three must land in the same
+    // place: no /proc/net/udp, no row for the port, or a counter that went
+    // BACKWARDS -- kernel_drops() sums every row matching the port and the
+    // socket sets SO_REUSEADDR, so another binding can make before > after.
+    // The first version clamped that third case to 0 while leaving
+    // kernel_known true, which republished "cannot attribute" as "no drops":
+    // the exact conflation this function was just fixed to stop making.
+    const bool kernel_known = drops_before != UINT64_MAX &&
+                              drops_after != UINT64_MAX &&
+                              drops_after >= drops_before;
     const uint64_t kernel_lost = kernel_known ? drops_after - drops_before : 0;
 
     // Built after the run, not during it: filling the histogram was the last

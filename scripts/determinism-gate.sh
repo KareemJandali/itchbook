@@ -68,14 +68,31 @@ for t in wire_to_book mold_replay_udp mold_wrap book_replay; do
     if [[ ! -x "$BUILD/$t" ]]; then echo "missing $BUILD/$t" >&2; exit 2; fi
 done
 
-wait_bound() {
-    if [[ ! -r /proc/net/udp ]]; then sleep 2; return 0; fi
-    local hex; hex=$(printf '%04X' "$1")
-    for _ in $(seq 1 100); do
-        if grep -qi ":$hex " /proc/net/udp 2>/dev/null; then return 0; fi
+# ...AND THEN FOR THE CONSUMER, which is a later event than the port opening.
+#
+# Between bind() and the book thread existing, wire_to_book calibrates the TSC
+# (a 50 ms sleep), allocates its ref table and reserves two sample vectors --
+# while the receiver thread is already stamping arrivals into a ring nothing is
+# draining. Starting the generator at bind() therefore charges that whole window
+# to the first messages of the run. wire_to_book prints READY once the consumer
+# exists; wait for that instead of guessing with a sleep.
+# $1 is the file the receiver's output is redirected to, $2 its pid. BOTH are
+# needed: polling the file alone cannot tell "still starting up" from "died
+# during bind", so a port collision used to burn the full 30 s and then report
+# "never reported READY" while the real error sat unread in the file.
+wait_ready() {
+    local out="$1" pid="$2"
+    for _ in $(seq 1 300); do
+        if grep -q '^READY' "$out" 2>/dev/null; then return 0; fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "    receiver exited before it was ready:" >&2
+            cat "$out" >&2
+            return 1
+        fi
         sleep 0.1
     done
-    echo "    receiver never bound port $1" >&2
+    echo "    receiver never reported READY:" >&2
+    cat "$out" >&2
     return 1
 }
 
@@ -108,11 +125,20 @@ for ring in 12 14 16; do
     [[ -n "$TORTURE_ONLY" ]] && break
     for rate in 30000 90000; do
         port=$((port + 1))
+        # TRUNCATED IN THE PARENT, BEFORE THE FORK. The child's own redirection
+        # truncates too, but it does so after fork and the parent races straight
+        # into grep -q '^READY' -- which would match the PREVIOUS iteration's
+        # marker and start the generator early, reintroducing exactly the bug
+        # this gate was converted to avoid, inside the gate whose job is proving
+        # determinism. Same for the JSON, which is read after the run and would
+        # otherwise be last iteration's on a run that died before writing it.
+        : > "$WORK/wire.txt"
+        rm -f "$WORK/wire.json"
         "$BUILD/wire_to_book" --port "$port" --ring-log2 "$ring" --timeout-ms 4000 \
             --rcvbuf-mb 16 --expect-messages 400000 --per-symbol "$WORK/wire.csv" \
             --json "$WORK/wire.json" --quiet > "$WORK/wire.txt" 2>&1 &
         pid=$!
-        if ! wait_bound "$port"; then kill $pid 2>/dev/null; wait $pid 2>/dev/null; fail=1; continue; fi
+        if ! wait_ready "$WORK/wire.txt" "$pid"; then kill $pid 2>/dev/null; wait $pid 2>/dev/null; fail=1; continue; fi
         "$BUILD/mold_replay_udp" "$WORK/feed.pkt.gz" --host 127.0.0.1 --port "$port" \
             --rate "$rate" --quiet >/dev/null 2>&1
         wait $pid
@@ -159,7 +185,7 @@ port=$((port + 1))
     --rcvbuf-mb 16 --expect-messages 400000 --applied-out "$WORK/applied.gz" \
     --json "$WORK/torture.json" $TORTURE_EXTRA --quiet > "$WORK/torture.txt" 2>&1 &
 pid=$!
-if wait_bound "$port"; then
+if wait_ready "$WORK/torture.txt" "$pid"; then
     "$BUILD/mold_replay_udp" "$WORK/feed.pkt.gz" --host 127.0.0.1 --port "$port" \
         --rate 3000000 --quiet >/dev/null 2>&1
     wait $pid

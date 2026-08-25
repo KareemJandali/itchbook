@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -47,35 +48,53 @@ import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# The sender's qualification bar, in nanoseconds at p99.9. Mirrors
+# kSenderTailBudgetNs in tools/mold_replay_udp.cpp; it was written out twice as
+# a literal 10000 and the two copies are one edit away from disagreeing about
+# what a qualified run is.
+SENDER_BUDGET_NS = 10000
+
 
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
-def port_bound(port):
-    """Linux tells you when the receiver is listening; a fixed sleep guesses.
+def wait_ready(proc, timeout=30.0):
+    """Block until the receiver says its BOOK THREAD exists.
 
-    A datagram sent before bind() is gone with nothing to report it, and the
-    run then fails for a reason that has nothing to do with the pipeline.
+    Binding the port -- which is what this used to wait for -- happens 50 ms of
+    clock calibration and an 8.4M-entry allocation short of a consumer:
+    measured on the machine this was written on, the gap between the port
+    appearing in /proc/net/udp and READY was 91-102 ms across six runs. The
+    receiver thread stamps arrivals through all of it while nothing drains the
+    ring, so every message the generator sent into that window carried the
+    remaining stall as its wire-to-book sample, and multi-millisecond samples
+    turned up at every rate on the ladder including 1x.
+
+    A sleep would only be a guess at somebody else's allocator, so the receiver
+    is asked to say so instead.
+
+    THE DEADLINE IS ON THE PIPE, NOT ON THE LOOP. The first version tested
+    time.time() at the top of a loop whose body blocked in readline(), so a
+    receiver that neither printed nor exited -- wedged in the ref-table
+    allocation, or pinned to a core that does not exist -- hung the whole sweep
+    instead of failing one run. select() puts the timeout where the blocking is.
     """
-    try:
-        with open("/proc/net/udp") as f:
-            return f":{port:04X} " in f.read().upper()
-    except OSError:
-        return None      # not Linux: the caller falls back to sleeping
-
-
-def wait_bound(port, timeout=10.0):
     deadline = time.time() + timeout
-    while time.time() < deadline:
-        b = port_bound(port)
-        if b is None:
-            time.sleep(2.0)
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            print("    receiver never reported READY", file=sys.stderr)
+            proc.kill()
+            return False
+        if not select.select([proc.stdout], [], [], remaining)[0]:
+            continue
+        line = proc.stdout.readline()
+        if line == "":
+            return False                      # receiver died before it was ready
+        if line.startswith("READY"):
             return True
-        if b:
-            return True
-        time.sleep(0.05)
-    return False
+        print(f"    receiver: {line.rstrip()}", file=sys.stderr)
 
 
 def real_time_rate(build, feed, work):
@@ -107,9 +126,16 @@ def one_run(build, packets, rate, port, ring_log2, work, expect, cpus, rt_priori
     keep in sync.
     """
     cpu_recv, cpu_book, cpu_send = cpus
-    rj = os.path.join(work, "recv.json")
-    sj = os.path.join(work, "send.json")
-    hist = os.path.join(work, "hist.csv")
+    # PER-RUN PATHS. These were three fixed names reused by every run of a
+    # sweep -- 55 of them at the default ladder and repeat count. The hazard is
+    # not a truncated file (read_buckets catches OSError and StopIteration, and
+    # a half-written final record raises ValueError loudly): it is a COMPLETE
+    # hist.csv left by an earlier run, which is indistinguishable from this
+    # run's and is read with no error at all. The port is already unique per
+    # run; borrow it.
+    rj = os.path.join(work, f"recv-{port}.json")
+    sj = os.path.join(work, f"send-{port}.json")
+    hist = os.path.join(work, f"hist-{port}.csv")
     recv_cmd = [os.path.join(build, "wire_to_book"), "--port", str(port),
                 "--ring-log2", str(ring_log2), "--timeout-ms", "5000",
                 "--rcvbuf-mb", "16", "--expect-messages", str(expect),
@@ -118,7 +144,7 @@ def one_run(build, packets, rate, port, ring_log2, work, expect, cpus, rt_priori
         recv_cmd += ["--cpu-recv", str(cpu_recv), "--cpu-book", str(cpu_book)]
     recv = subprocess.Popen(recv_cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
-    if not wait_bound(port):
+    if not wait_ready(recv):
         recv.kill()
         recv.wait()
         return None
@@ -167,9 +193,42 @@ def best_of(runs):
     clean = [r for r in runs if r["ring_full_drops"] == 0 and r["staging_overflow"] == 0
              and r["kernel_drops"] in (0, None)]
     pool = clean if clean else runs
-    best = min(pool, key=lambda r: r["wire_to_book_ns"]["p99"])
+    # AND THE SENDER GETS ITS OWN CRITERION.
+    #
+    # Selecting one whole run by lowest receiver p99 and carrying its sender
+    # block along is a lottery for the generator: the two criteria measure
+    # different processes. Worse than a lottery, in fact -- the selection is
+    # biased TOWARD the stalled repeat, because a sender parked for 47 ms sends
+    # nothing while it is parked, and the messages it does not send are
+    # messages the receiver does not queue. The stalled run can therefore win
+    # on receiver p99 and put its own 47 ms into the sender column.
+    #
+    # So prefer runs whose generator kept its schedule, and record what the
+    # other repeats' senders did rather than discarding them.
+    ontime_pool = [r for r in pool
+                   if r["sender"]["lateness_ns"]["p999"] <= SENDER_BUDGET_NS]
+    best = min(ontime_pool if ontime_pool else pool,
+               key=lambda r: r["wire_to_book_ns"]["p99"])
     best["runs_at_this_rate"] = len(runs)
     best["clean_runs_at_this_rate"] = len(clean)
+    # OVER ALL RUNS, not over `pool`. These four numbers sit next to each other
+    # in the artifact and a reader will form ratios out of them, so they have to
+    # share a denominator; the pool-restricted list is only for the min() above.
+    #
+    # AND NOTE WHAT THIS MAKES THE QUALIFICATION MEAN. Preferring an on-time
+    # repeat is best-of-N for the sender: a rate now qualifies if ANY clean
+    # repeat's generator held its schedule, where before it depended on which
+    # repeat happened to win on receiver p99 -- a lottery that was biased
+    # toward the stalled one, since a sender parked for tens of milliseconds
+    # sends nothing while parked and so leaves the receiver less to queue.
+    # Best-of-N is the right rule for quoting a latency, because the run being
+    # quoted is the one whose generator worked. It is a LOOSER rule than the
+    # lottery it replaces, which is why the denominator is published beside it
+    # rather than left for the reader to assume.
+    best["sender_ontime_runs_at_this_rate"] = sum(
+        1 for r in runs if r["sender"]["lateness_ns"]["p999"] <= SENDER_BUDGET_NS)
+    best["sender_p999_all_runs"] = sorted(
+        r["sender"]["lateness_ns"]["p999"] for r in runs)
     return best
 
 
@@ -194,6 +253,18 @@ def main():
                          "is not running. Needs CAP_SYS_NICE -- root, or once: "
                          "sudo setcap cap_sys_nice=ep <build>/mold_replay_udp. Denial is "
                          "reported, never silent.")
+    ap.add_argument("--allow-unqualified", action="store_true",
+                    help="exit 0 even when no rate on the ladder had a sender that "
+                         "kept its 10 us schedule. For a shape test -- CI checks that "
+                         "the sweep runs end to end and produces the columns the "
+                         "report needs, on a runner that could never qualify. A "
+                         "measurement run must NOT pass this: the non-zero exit is "
+                         "what keeps an unqualified sweep from being treated as a "
+                         "result by anything that only checks the status code. "
+                         "(It is not the last line of defence -- the artifact "
+                         "records sender_qualified_rates, and phase10-report.py "
+                         "stamps the document itself -- but it is the only one a "
+                         "shell script sees.)")
     ap.add_argument("--multipliers", default="1,2,5,10,25,50,100,200,400,800",
                     help="offered rate as multiples of one times real time")
     ap.add_argument("--extend", type=int, default=6,
@@ -276,7 +347,8 @@ def main():
             # generator whose p99.9 lateness is the same order as the latency
             # under measurement has invalidated the run, and the only way to
             # know is that it measures itself.
-            row["sender_late"] = row["sender"]["lateness_ns"]["p999"] > 10000
+            row["sender_late"] = (row["sender"]["lateness_ns"]["p999"]
+                                  > SENDER_BUDGET_NS)
             row["lossy"] = lossy
             # Offered is what we asked for; achieved is what the wire carried.
             # The pipeline can only have absorbed the second one, so that is
@@ -354,6 +426,13 @@ def main():
                      "session_seconds": (timing["last_timestamp_ns"]
                                          - timing["first_timestamp_ns"]) / 1e9,
                      "real_time_msg_per_s": base},
+            # The per-row "buckets" are RAW TSC CYCLES, as histogram.hpp
+            # recorded them, while every *_ns field beside them is nanoseconds.
+            # Read naively they overstate by cycles_per_ns -- 3.6x on the box
+            # this was written on -- and appear to hold samples above the max
+            # reported two keys away. python/analysis/rate_latency.py knows;
+            # nothing in the file said so.
+            "buckets_unit": "tsc_cycles",
             "ring_slots": rows[0]["ring_slots"],
             "pinned": rows[0]["pinned_receiver"] and rows[0]["pinned_book"],
             "cpus": {"receiver": cpus[0], "book": cpus[1], "sender": cpus[2]},
@@ -424,9 +503,17 @@ def main():
             print("\nUNPINNED. These describe a scheduler as much as a pipeline; "
                   "phase 4 measured 19.3% run-to-run variance without pinning.")
         print(f"\nwrote {a.out}")
+        # AND THE EXIT CODE SAYS SO. Every refusal above this line was a
+        # print: the sweep announced that its numbers were not results and
+        # then returned 0, so pinned-run.sh carried on, the report scripts
+        # emitted a headline, and nothing downstream could tell a qualified
+        # sweep from a disqualified one without re-reading the prose.
+        if (not qualified or not out["pinned"]) and not a.allow_unqualified:
+            return 3
+        return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

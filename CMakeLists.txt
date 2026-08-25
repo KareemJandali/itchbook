@@ -96,6 +96,18 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(tsc_offset PRIVATE -fno-sanitize=all)
 endif()
 
+# Same treatment as tsc_offset and for the same reason: this measures how long a
+# thread goes without running, so a sanitiser's instrumentation would be part of
+# the measurement rather than beside it.
+add_executable(cpu_jitter tools/cpu_jitter.cpp)
+target_compile_options(cpu_jitter PRIVATE -O2)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  target_compile_options(cpu_jitter PRIVATE -fno-sanitize=all)
+  target_link_options(cpu_jitter PRIVATE -fno-sanitize=all)
+endif()
+find_package(Threads REQUIRED)
+target_link_libraries(cpu_jitter PRIVATE Threads::Threads)
+
 add_executable(book_bench tools/book_bench.cpp)
 target_compile_options(book_bench PRIVATE -O3 -fno-omit-frame-pointer)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

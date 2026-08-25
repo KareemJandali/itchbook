@@ -93,6 +93,62 @@ if (( RMEM < 16777216 )); then
 fi
 echo "  clocksource             $(cat /sys/devices/system/clocksource/clocksource0/current_clocksource 2>/dev/null || echo unknown)"
 
+# RT BANDWIDTH THROTTLING, which this script used to walk straight into.
+#
+# Below, it asks for SCHED_FIFO for the load generator. Linux caps a real-time
+# thread at sched_rt_runtime_us of every sched_rt_period_us and DEQUEUES it for
+# the remainder -- 50 ms at the defaults. The sender spins whenever the gap to
+# its next deadline is inside the spin margin, so at any rate that saturates a
+# core for longer than a period, asking for FIFO buys a 50 ms hole rather than
+# a shorter tail -- and `dmesg | grep 'RT throttling activated'` says so when it
+# fires. The flag was manufacturing the largest number in the table it was added
+# to improve.
+#
+# What IS recorded, under validation/sender-qualification/ (sender alone, this
+# machine, throttling lifted with sched_rt_runtime_us=-1 so the class is the
+# only variable): nort_c14.json at priority 0 gives p99.9 241,385 ns, rt_c14.json
+# at priority 80 gives 115,103 ns. So FIFO is worth about 2x once the throttle
+# is out of the way, and worth less than nothing while it is in.
+RT_RUNTIME=$(cat /proc/sys/kernel/sched_rt_runtime_us 2>/dev/null || echo unknown)
+RT_PERIOD=$(cat /proc/sys/kernel/sched_rt_period_us 2>/dev/null || echo 1000000)
+[[ "$RT_PERIOD" =~ ^[0-9]+$ ]] || RT_PERIOD=1000000
+echo "  sched_rt_runtime_us     $RT_RUNTIME of $RT_PERIOD"
+# FAILS CLOSED. Only a value that positively shows throttling is off earns
+# SCHED_FIFO; anything unreadable or unparseable gets priority 0. The first
+# version tested for a NUMBER and left RT_PRIORITY at 80 otherwise, so an
+# unreadable sysctl produced exactly the configuration this block exists to
+# avoid -- while the sibling probe eight lines above (net.core.rmem_max) fails
+# closed by substituting 0.
+RT_PRIORITY=0
+if [[ "$RT_RUNTIME" == "-1" ]]; then
+    RT_PRIORITY=80
+elif [[ "$RT_RUNTIME" =~ ^[0-9]+$ ]] && (( RT_RUNTIME >= RT_PERIOD )); then
+    # Throttling turned off without using -1, which is a normal way to do it.
+    echo "    ...runtime is not less than the period, so RT bandwidth throttling"
+    echo "    does not bite. Asking for real-time priority."
+    RT_PRIORITY=80
+elif [[ "$RT_RUNTIME" =~ ^[0-9]+$ ]]; then
+    echo "    ...so a saturating SCHED_FIFO thread is PARKED for"
+    echo "    $(( (RT_PERIOD - RT_RUNTIME) / 1000 )) ms of every $(( RT_PERIOD / 1000 )) ms."
+    echo "    Running the sweep WITHOUT real-time priority, which is the lesser"
+    echo "    of the two evils. To use it:"
+    echo "      sudo sysctl -w kernel.sched_rt_runtime_us=-1"
+    echo "    (and put it back afterwards -- an unthrottled runaway FIFO thread"
+    echo "     can leave you no way onto the machine)"
+else
+    echo "    ...unreadable, so real-time priority is NOT requested. A sweep that"
+    echo "    cannot check for the throttle must not walk into it."
+fi
+MEMLOCK=$(ulimit -l 2>/dev/null || echo unknown)
+echo "  ulimit -l               $MEMLOCK"
+if [[ "$MEMLOCK" != "unlimited" ]]; then
+    echo "    ...mlockall will fail with ENOMEM once the preloaded feed exceeds"
+    echo "    this, which at --messages 4000000 it does by three orders of"
+    echo "    magnitude. The generator reports what it was GRANTED, so this is"
+    echo "    visible rather than assumed -- but a major fault in the pacing"
+    echo "    loop is a millisecond no priority prevents."
+fi
+
 # ---- build, optimised, no sanitizers ----------------------------------------
 echo
 echo "--- build (Release; a sanitised build measures the sanitiser) ---"
@@ -108,6 +164,14 @@ echo "--- 1. cross-core clock offset ---"
 ./build-pinned/tsc_offset --samples 200000 --cpu-a "$CPU_RECV" --cpu-b "$CPU_BOOK" \
     --json validation/tsc-offset.json
 CLOCK_RC=$?
+# READ, not merely assigned. The heredoc below opens validation/tsc-offset.json
+# unconditionally, so a tsc_offset that died would leave the PREVIOUS run's
+# clock artifact in place and the gate would grade that instead -- in the one
+# step whose whole purpose is to be able to veto everything after it.
+if (( CLOCK_RC != 0 )); then
+    echo "tsc_offset exited $CLOCK_RC; the clock gate would grade a stale artifact." >&2
+    exit "$CLOCK_RC"
+fi
 python3 - "$FORCE_CLOCK" <<'CLOCKCHECK'
 import json, sys
 force = sys.argv[1] == "1"
@@ -187,16 +251,34 @@ echo "--- 2. rate-latency sweep (this is the long one) ---"
 # per run, so a sweep that failed to get priority cannot be mistaken for one
 # that had it.
 if command -v setcap >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1; then
-    sudo -n setcap cap_sys_nice=ep build-pinned/mold_replay_udp 2>/dev/null \
-        && echo "  CAP_SYS_NICE granted to the load generator" \
-        || echo "  could not setcap (needs a sudo password); SCHED_FIFO may be denied"
+    # CAP_IPC_LOCK TOO. cap_sys_nice alone grants the scheduling class and not
+    # the locked address space, so mlockall stayed subject to RLIMIT_MEMLOCK --
+    # 64 KB by default -- and failed silently on any feed worth measuring.
+    sudo -n setcap cap_sys_nice,cap_ipc_lock=ep build-pinned/mold_replay_udp 2>/dev/null \
+        && echo "  CAP_SYS_NICE + CAP_IPC_LOCK granted to the load generator" \
+        || echo "  could not setcap (needs a sudo password); SCHED_FIFO and mlockall may be denied"
 fi
 
 python3 bench/rate-sweep.py --build build-pinned --out validation/rate-sweep.json \
     --messages "$MESSAGES" --repeats 5 \
     --multipliers 1,2,5,10,25,50,100,200,400 --extend 6 \
-    --rt-priority 80 \
+    --rt-priority "$RT_PRIORITY" \
     --cpu-recv "$CPU_RECV" --cpu-book "$CPU_BOOK" --cpu-sender "$CPU_SEND"
+SWEEP_RC=$?
+# 3 IS NOT FAILURE, it is the sweep reporting that nothing qualified -- and the
+# artifacts and documents still get written, because deleting the evidence is
+# not the same as declining to quote it. Any OTHER non-zero means the sweep did
+# not finish, and steps 3 and 4 below regenerate docs/phase10-results.md and
+# both figures FROM validation/rate-sweep.json -- which would then be the
+# PREVIOUS run's file, graded by the closing gate as though it were this one's.
+if (( SWEEP_RC != 0 && SWEEP_RC != 3 )); then
+    echo
+    echo "The sweep exited $SWEEP_RC without finishing. validation/rate-sweep.json is"
+    echo "now either half-written or left over from an earlier run, and every"
+    echo "document below is generated from it. Stopping rather than grading the"
+    echo "wrong run." >&2
+    exit "$SWEEP_RC"
+fi
 
 # ---- 3. the reader-thread overlap, on real cores ----------------------------
 echo
@@ -211,12 +293,17 @@ python3 python/analysis/rate_latency.py validation/rate-sweep.json \
     --svg docs/figures/rate-latency.svg \
     --hist-svg docs/figures/wire-to-book-hist.svg
 python3 scripts/phase10-report.py
+REPORT_RC=$?
+if (( REPORT_RC != 0 && REPORT_RC != 3 )); then
+    echo "phase10-report.py failed ($REPORT_RC)" >&2
+    exit "$REPORT_RC"
+fi
 python3 scripts/phase10-8-report.py
 
 echo
 echo "--- what to check before quoting any of it ---"
 python3 - <<'PY'
-import json
+import json, sys
 d = json.load(open("validation/rate-sweep.json"))
 ok = True
 if not d.get("pinned"):
@@ -228,13 +315,33 @@ elif d["sender_qualified_rates"] < d["rates_tried"]:
     print(f"  {d['rates_tried'] - d['sender_qualified_rates']} of {d['rates_tried']}"
           " rates had the sender late; those rows are not quotable")
 s = d.get("max_sustainable")
-if s and s.get("is_lower_bound"):
+if s is None:
+    # The lowest rung on the ladder already dropped, so there is no sustainable
+    # rate to report. Without this the `ok` branch below subscripts None and the
+    # gate's verdict becomes a TypeError traceback printed under the heading
+    # "what to check before quoting any of it".
+    print("  NO SUSTAINABLE RATE — the lowest rung on the ladder already"
+          "\n    dropped, so the sweep never measured one"); ok = False
+elif s.get("is_lower_bound"):
     print("  max sustainable rate is a LOWER BOUND — the ladder never found the"
           "\n    cliff. Raise --extend."); ok = False
 if ok:
     print("  clean: pinned, the sender held its schedule, and the cliff was found.")
     print(f"  max sustainable {s['achieved_rate']:,.0f} msg/s achieved, "
           f"p50 {s['p50_ns']:,.0f} ns, p99.9 {s['p999_ns']:,.0f} ns")
+else:
+    # AND IT EXITS. `ok` was set and then never read: the script printed its own
+    # refusal, returned 0, and ended by suggesting a commit.
+    sys.exit(3)
 PY
+GATE_RC=$?
+if (( GATE_RC != 0 )); then
+    echo
+    echo "This run is NOT QUOTABLE for the reasons above. The artifacts and the"
+    echo "generated documents were written anyway -- deleting them would hide the"
+    echo "evidence -- and docs/phase10-results.md carries the same reasons at the"
+    echo "top of its generated block. Do not fill in the CV line from this run."
+    exit $GATE_RC
+fi
 echo
 echo "Then: git add validation docs && git commit"
