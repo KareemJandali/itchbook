@@ -49,11 +49,14 @@
 // partition_violations is what it refuses on.
 //
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include "itchbook/book/book.hpp"
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
+#include "itchbook/emit/itch_encode.hpp"
+#include "itchbook/emit/sink.hpp"
 #include "itchbook/itch/messages.hpp"
 
 namespace itchbook::replay {
@@ -92,9 +95,16 @@ public:
                                           // named one and was correctly skipped
         uint64_t aggressor_unknown_ref = 0;   // named a reference no book holds
         uint64_t partition_violations = 0;    // bit 63 set on a historical ref
+        uint64_t emitted = 0;                 // ITCH messages published
+        uint64_t unmodelled_not_emitted = 0;  // input types we do not parse, so
+                                              // cannot republish -- see emit_state
     };
 
     explicit SplitReplayer(book::BookSet& set) : set_(set) {}
+
+    // Attach the publisher. Null (the default) is phase 12.1's behaviour and
+    // costs one predictable branch per message.
+    void set_sink(emit::Sink* s) { sink_ = s; }
 
     const Counters& counters() const { return c_; }
     book::BookSet& set() { return set_; }
@@ -114,7 +124,9 @@ public:
             return aggress(p);
         }
         ++c_.state_applied;
-        return book::apply(set_, type, p);
+        const bool mutated = book::apply(set_, type, p);
+        emit_state(type, p);
+        return mutated;
     }
 
 private:
@@ -143,6 +155,133 @@ private:
 
     void note_ref(uint64_t ref) {
         if (is_strategy_ref(ref)) ++c_.partition_violations;
+    }
+
+    // ---- publishing --------------------------------------------------------
+    //
+    // The exchange republishes the mutation it just performed, RE-ENCODED from
+    // the fields it parsed rather than copied from the input bytes. That is the
+    // whole content of P1 at zero strategy orders: the emitted stream is a
+    // decode-then-re-encode round trip of the input, so a field written at the
+    // wrong offset, in the wrong endianness, or not written at all shows up
+    // either as a byte difference against the input or as a divergence in the
+    // book a consumer rebuilds from it.
+    //
+    // Match and tracking numbers are carried across rather than reissued. A
+    // reissued match number would break 'B' (Broken Trade), which names the
+    // match number of a trade that has already been published; our own
+    // numbering would make it point at a trade that never happened. It also
+    // buys the stronger gate: with the header copied and every body field
+    // re-encoded, the emitted message must come out BYTE-IDENTICAL to the
+    // input, which catches the fields a book consumer never reads.
+    //
+    // Types this project does not parse are not republished. It cannot
+    // republish what it never decoded, and inventing bytes would be worse than
+    // the gap; they are counted so the gap is visible rather than silent. They
+    // have no book effect, so the reconstructed book is unaffected -- 1.58% of
+    // a real day, per the census.
+    void emit_state(char type, const uint8_t* p) {
+        if (sink_ == nullptr) return;
+        namespace m = itchbook::itch;
+        namespace e = itchbook::emit;
+
+        uint8_t o[e::kMaxMessage];
+        const uint16_t loc = m::stock_locate(p);
+        const uint16_t trk = m::be16(p + 3);
+        const uint64_t ts = ts_of(p);
+        size_t n = 0;
+
+        switch (type) {
+            case 'S':
+                n = e::system_event(o, loc, trk, ts, m::system_event::code(p));
+                break;
+            case 'R':
+                n = e::stock_directory(o, loc, trk, ts, m::stock_directory::stock(p),
+                                       m::stock_directory::market_category(p),
+                                       m::stock_directory::financial_status(p),
+                                       m::stock_directory::round_lot_size(p));
+                // Bytes 25..38 of a Stock Directory are fields this project has
+                // never decoded -- issue classification, authenticity, the
+                // short-sale threshold, the IPO flag, the LULD tier, the ETP
+                // flags. There is exactly one right thing to do with content we
+                // do not understand and are republishing: carry it across
+                // verbatim. Zeroing it destroyed real content and showed up as
+                // 8,906 byte-differences on a real day, one per symbol.
+                //
+                // Stated plainly because it is the one place the emitter is a
+                // relay rather than an encoder: those 14 bytes are COPIED, so
+                // P1's byte-identity says nothing about them. Everything else
+                // in every message is re-encoded from a decoded field.
+                std::memcpy(o + 25, p + 25, 14);
+                break;
+            case 'A':
+                n = e::add_order(o, loc, trk, ts, m::add_order::ref(p),
+                                 m::add_order::side(p), m::add_order::shares(p),
+                                 m::add_order::stock(p), m::add_order::price(p));
+                break;
+            case 'F':
+                n = e::add_order_mpid(o, loc, trk, ts, m::add_order_mpid::ref(p),
+                                      m::add_order_mpid::side(p), m::add_order_mpid::shares(p),
+                                      m::add_order_mpid::stock(p), m::add_order_mpid::price(p),
+                                      m::add_order_mpid::attribution(p));
+                break;
+            case 'C':
+                n = e::order_executed_price(o, loc, trk, ts, m::order_executed_price::ref(p),
+                                            m::order_executed_price::executed_shares(p),
+                                            m::order_executed_price::match_number(p),
+                                            m::order_executed_price::printable(p),
+                                            m::order_executed_price::price(p));
+                break;
+            case 'X':
+                n = e::order_cancel(o, loc, trk, ts, m::order_cancel::ref(p),
+                                    m::order_cancel::canceled_shares(p));
+                break;
+            case 'D':
+                n = e::order_delete(o, loc, trk, ts, m::order_delete::ref(p));
+                break;
+            case 'U':
+                n = e::order_replace(o, loc, trk, ts, m::order_replace::original_ref(p),
+                                     m::order_replace::new_ref(p), m::order_replace::shares(p),
+                                     m::order_replace::price(p));
+                break;
+            case 'P':
+                n = e::trade(o, loc, trk, ts, m::trade::ref(p), m::trade::side(p),
+                             m::trade::shares(p), m::trade::stock(p), m::trade::price(p),
+                             m::trade::match_number(p));
+                break;
+            case 'Q':
+                n = e::cross_trade(o, loc, trk, ts, m::cross_trade::shares(p),
+                                   m::cross_trade::stock(p), m::cross_trade::price(p),
+                                   m::cross_trade::match_number(p),
+                                   m::cross_trade::cross_type(p));
+                break;
+            case 'H':
+                n = e::trading_action(o, loc, trk, ts, m::trading_action::stock(p),
+                                      m::trading_action::state(p), m::trading_action::reason(p));
+                break;
+            case 'h':
+                n = e::operational_halt(o, loc, trk, ts, m::operational_halt::stock(p),
+                                        m::operational_halt::market_code(p),
+                                        m::operational_halt::action(p));
+                break;
+            case 'W':
+                n = e::mwcb_status(o, loc, trk, ts, m::mwcb_status::breached_level(p));
+                break;
+            case 'B':
+                n = e::broken_trade(o, loc, trk, ts, m::broken_trade::match_number(p));
+                break;
+            default:
+                ++c_.unmodelled_not_emitted;
+                return;
+        }
+        sink_->on_message(o, n);
+        ++c_.emitted;
+    }
+
+    static uint64_t ts_of(const uint8_t* p) {
+        uint64_t v = 0;
+        for (int i = 0; i < 6; ++i) v = (v << 8) | p[5 + i];
+        return v;
     }
 
     // ---- 'E' as a crossing event ---------------------------------------------
@@ -183,6 +322,11 @@ private:
             // report a cleaner sheet than the feed deserves.
             ++c_.aggressor_unknown_ref;
             b.execute(ref, shares);
+            // Republished even though it named nothing: a consumer rebuilding
+            // from our feed must see the same unknown reference we did, and
+            // count it in the same place. Swallowing it would hand the consumer
+            // a cleaner book than the one the exchange actually has.
+            emit_exec(p, ref, shares);
             return true;
         }
 
@@ -208,22 +352,60 @@ private:
             if (so == nullptr) continue;
             const uint32_t take = so->shares < remaining ? so->shares : remaining;
             b.take(sref, take);
+            b.note_feed_trade(price, take);
             remaining -= take;
             c_.strategy_shares_taken += take;
+            // One 'E' per fill, all sharing the aggressor's match number --
+            // which is what a real venue does when one incoming order walks
+            // several makers. At zero strategy orders this loop does not run
+            // and the single emission below is the whole of it.
+            emit_exec(p, sref, take);
         }
 
-        // The tape saw ONE print of `shares` at the named order's resting
-        // price, however many resting orders the book split it across. Phase 9
-        // records exactly that, with the message's share count and not the
-        // clamped one — executing 250 against a 100-share order counts 250 —
-        // so the split path records it the same way, once, before the book
-        // mutation that may destroy the order it reads the price from.
-        b.note_feed_trade(price, shares);
-        if (remaining > 0) b.take(ref, remaining);
+        // ONE PRINT PER FILL, not one per message, and the difference only
+        // shows up once a strategy order is in the queue.
+        //
+        // The obvious rule is one print per input execution, since the tape saw
+        // one. It is wrong, and P1 cannot see that it is wrong: the emitted
+        // stream publishes one 'E' per fill, a consumer replaying two of them
+        // calls Book::execute twice, and record_trade does ++trades_ each time
+        // (book.hpp). The exchange's own book would have counted one where its
+        // published feed says two, and the two books would part company by one
+        // trade per split fill. Since the gate runs at zero strategy orders,
+        // where there is exactly one fill per execution, both spellings agree
+        // and the defect would have sat there until 12.7.
+        //
+        // Volume is unaffected either way -- the fills sum to the message's
+        // share count -- and so is the price, because the aggressor only ever
+        // walks the named order's own level. What changes is the trade COUNT,
+        // and a print is a trade.
+        //
+        // The message's share count is used and not the clamped one: executing
+        // 250 against a 100-share order counts 250, matching Book::execute.
+        if (remaining > 0) {
+            b.note_feed_trade(price, remaining);
+            b.take(ref, remaining);
+            emit_exec(p, ref, remaining);
+        }
         return true;
     }
 
+    // An execution the matcher performed, described as ITCH. The match number
+    // and timestamp come from the historical execution being replayed, so every
+    // fill of one aggressor shares them.
+    void emit_exec(const uint8_t* p, uint64_t ref, uint32_t shares) {
+        if (sink_ == nullptr) return;
+        namespace m = itchbook::itch;
+        uint8_t o[itchbook::emit::kMaxMessage];
+        const size_t n = itchbook::emit::order_executed(
+            o, m::stock_locate(p), m::be16(p + 3), ts_of(p), ref, shares,
+            m::order_executed::match_number(p));
+        sink_->on_message(o, n);
+        ++c_.emitted;
+    }
+
     book::BookSet& set_;
+    emit::Sink* sink_ = nullptr;
     Counters c_;
     std::vector<uint64_t> ahead_;   // reused; the walk is empty 99.8% of the time
 };

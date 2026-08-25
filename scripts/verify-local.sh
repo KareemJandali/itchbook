@@ -169,6 +169,7 @@ done
 ) || fail=1
 
 step "the regression gate"
+check ./scripts/split-replay-gate.sh >/dev/null
 check ./scripts/regression-gate.sh >/dev/null
 
 echo

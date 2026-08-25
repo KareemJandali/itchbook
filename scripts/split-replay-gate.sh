@@ -83,16 +83,86 @@ else
     exit 3
 fi
 
-# ---- 4. the real day --------------------------------------------------------
+# ---- 4. determinism, and the hash CI checks ---------------------------------
+#
+# Fixed input, byte-identical output. Twice, because a check that only compares
+# against a stored constant cannot tell "the emitter is deterministic" from "the
+# emitter is broken the same way every time"; and against the stored constant,
+# because two identical runs cannot tell "correct" from "drifted together".
+#
+# make_sample.py is the input. It regenerates from a committed script with no
+# seed to lose, it needs no licensed data, and its own docstring says it carries
+# every message type the reference book models -- which is what makes a single
+# hash meaningful rather than a hash of whichever types happened to appear.
+SAMPLE="$WORK/sample.gz"
+python3 python/make_sample.py "$SAMPLE" >/dev/null
+"$BIN/split_replay_gate" "$SAMPLE" --emit "$WORK/emit-a.itch" >/dev/null
+"$BIN/split_replay_gate" "$SAMPLE" --emit "$WORK/emit-b.itch" >/dev/null
+
+echo
+echo "=== 4. emitted-ITCH determinism ==="
+if ! cmp -s "$WORK/emit-a.itch" "$WORK/emit-b.itch"; then
+    echo "  FAIL: two runs over one input published different bytes"
+    exit 1
+fi
+echo "  two runs over one input: byte-identical"
+
+HASH=$(sha256sum "$WORK/emit-a.itch" | cut -d" " -f1)
+STORED="validation/emitted-itch-sha256.txt"
+if [[ -f "$STORED" ]]; then
+    WANT=$(cut -d" " -f1 < "$STORED")
+    if [[ "$HASH" != "$WANT" ]]; then
+        echo "  FAIL: the emitted stream changed"
+        echo "    stored $WANT"
+        echo "    got    $HASH"
+        echo "  If that change is intended, update $STORED and say why in the commit."
+        exit 1
+    fi
+    echo "  hash matches $STORED"
+else
+    echo "  $HASH"
+    echo "  (no stored hash yet -- writing one)"
+    echo "$HASH  emitted by split_replay_gate --emit from python/make_sample.py" > "$STORED"
+fi
+
+# ---- 4b. an independent decoder reads what we published ---------------------
+#
+# P1 has one structural blind spot and it is worth naming rather than working
+# around: the emitter writes at offsets taken from messages.hpp and the consumer
+# reads at offsets taken from messages.hpp, so any error in this project's MODEL
+# of the wire -- a field at the wrong offset, a length off by one -- cancels out
+# and the round trip closes anyway. make_sample.py already states the same
+# limitation about its own builders.
+#
+# The reference implementation in python/reference/ is a second, separately
+# written decoder, and it is the project's standing answer to exactly this: the
+# phase-2/3 differential exists because one implementation checking itself is
+# not a check. So the published stream is handed to it, and its daily summary
+# must match the summary it produces from the original feed.
+echo
+echo "=== 4b. the published feed, read by the Python reference decoder ==="
+gzip -cf "$WORK/emit-a.itch" > "$WORK/emit-a.gz"
+python3 python/reference/replay.py "$SAMPLE" --symbol TEST \
+        --json "$WORK/py-original.json" --quiet >/dev/null
+python3 python/reference/replay.py "$WORK/emit-a.gz" --symbol TEST \
+        --json "$WORK/py-published.json" --quiet >/dev/null
+if ! cmp -s "$WORK/py-original.json" "$WORK/py-published.json"; then
+    echo "  FAIL: the reference decoder reads a different book from the published feed"
+    diff "$WORK/py-original.json" "$WORK/py-published.json" | head -20
+    exit 1
+fi
+echo "  identical daily summary from a decoder that is not the one that wrote it"
+
+# ---- 5. the real day --------------------------------------------------------
 if [[ -n "$DAY" ]]; then
     echo
-    echo "=== 4. the real day: $DAY ==="
+    echo "=== 5. the real day: $DAY ==="
     echo "    (two BookSets over one feed; expect ~4.5 min and ~1.1 GB)"
     "$BIN/split_replay_gate" "$DAY" \
         --per-symbol-ref "$WORK/day-ref.csv" --per-symbol-split "$WORK/day-split.csv"
 else
     echo
-    echo "=== 4. the real day: SKIPPED (no feed given) ==="
+    echo "=== 5. the real day: SKIPPED (no feed given) ==="
     echo "    The generated feeds cannot show that the partition holds against real"
     echo "    NASDAQ references, because they do not contain any. Pass a day to close"
     echo "    that: ./scripts/split-replay-gate.sh data/raw/12302019.NASDAQ_ITCH50.gz"

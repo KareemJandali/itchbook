@@ -2672,6 +2672,104 @@ checked in CI the way phase 10's gate already is.
 **Done when:** P1 passes byte-for-byte on a full day; the determinism hash is in
 CI, and a deliberate one-field change is shown to break it.
 
+### 12.2 — what actually happened
+
+The exchange publishes now. `include/itchbook/emit/itch_encode.hpp` writes the
+fifteen message types this project models, `include/itchbook/emit/sink.hpp` is
+where they go, and the split replayer emits one message per mutation it
+performs. `tools/split_replay_gate.cpp` grew a third book.
+
+**P1 passes on the full day.** 268,744,780 messages in,
+**264,496,253 ITCH messages published**, and the book a
+consumer rebuilds from that published feed is identical to the phase-9 book from
+the original feed — **0 divergences after every
+message, 0 at the close**, per-symbol CSV
+byte-identical. Recorded in `validation/p1-emitted-2019-12-30.json`.
+
+**P1 was nearly vacuous, and the fix was to make it byte-level.** With zero
+strategy orders the exchange performs exactly the mutations the feed describes,
+so "the book from the published feed equals the book from the original feed"
+risks testing very little: it compares two books built by one decoder against a
+stream written by that decoder's inverse. The stronger form costs nothing —
+carry the header across, re-encode every body field, and require the published
+message to come out **byte-identical to the input**. That scores the fields a
+book consumer never reads, which is most of them: the timestamp, the tracking
+number, match numbers, the stock symbol on `A`/`F`/`P`/`Q`/`H`, the MPID, the
+halt reason. **264,496,253 of
+264,496,253 published messages are byte-identical to their
+input; 0 differ.**
+
+**The first run was not.** It reported 8,906 byte-differences, every one a Stock
+Directory message differing from offset 25 — one per symbol. Bytes 25..38 of an
+`R` carry issue classification, authenticity, the short-sale threshold, the IPO
+flag, the LULD tier and the ETP flags, none of which this project has ever
+decoded, and the encoder was zeroing them. There is one right thing to do with
+content you are republishing and do not understand, and it is to carry it
+across verbatim. Those fourteen bytes are the one place the emitter is a relay
+rather than an encoder, and P1's byte-identity therefore says nothing about
+them; everything else in every message is re-encoded from a decoded field.
+
+**A bug P1 is structurally incapable of finding, found by review instead.** The
+publisher emits one `E` per fill. The replayer recorded one print per input
+execution. Those agree at zero strategy orders — one fill per execution — and
+disagree the moment a strategy order is in the queue: the subscriber replaying
+two `E` messages calls `Book::execute` twice and `record_trade` does `++trades_`
+each time, so the exchange's own book would have counted one trade where its
+published feed described two. Volume is unaffected, which is why it is easy to
+miss. The rule is now **one print per fill**, and `test_strategy_ahead_fills` —
+written during 12.1 — had to be corrected, because it had pinned the defect
+rather than caught it.
+
+**Queue order is now a gated fact.** Nothing the gate previously compared could
+see intra-level order: `resting_orders`, `resting_shares`, `best_bid` and
+`best_ask` are all insensitive to the sequence of a level's queue, so a
+publisher that emitted two adds in the wrong order, or the two halves of a split
+fill back to front, would have passed everything and mis-ranked every queue
+position in 12.7. The comparator now hashes reference, shares and price in queue
+order for the front 16 of each side, on all three books, after every routed
+message.
+
+**An independent decoder reads what we published.** P1's remaining structural
+blind spot is that the emitter writes at offsets from `messages.hpp` and the
+consumer reads at offsets from `messages.hpp`, so an error in this project's
+*model* of the wire cancels out and the round trip closes anyway —
+`make_sample.py` states the same limitation about its own builders. The standing
+answer in this repository is the reference implementation, so the published
+stream is handed to `python/reference/replay.py` and its daily summary must
+match the summary it produces from the original feed. That is a second,
+separately written decoder rather than a proof about NASDAQ's wire, and the
+distinction is the point.
+
+**Determinism.** Fixed input, byte-identical output, checked twice over and
+against a stored hash: two runs, because a stored constant cannot tell
+deterministic from broken-the-same-way-every-time; and against the constant,
+because two identical runs cannot tell correct from drifted-together. The input
+is `make_sample.py`, which regenerates from a committed script with no seed to
+lose and carries every type the book models. The hash is in
+`validation/emitted-itch-sha256.txt`, and CI runs the gate plus a self-test that
+corrupts one byte of one published message and requires the gate to refuse.
+
+**Mutation-tested, and it found the same class of hole 12.1 did.** Six publisher
+mistakes: `C` always printable, the tracking number reissued as zero, the Stock
+Directory tail zeroed, `put32` endianness flipped, a published execution naming
+the wrong order, cancels not published. None survived — but "tracking number
+reissued as zero" survived every offline detector on the first pass, because
+`make_sample.py`'s `header()` hard-codes tracking to zero, so both generated
+feeds *and* the hand-built test messages carried zero and the mutation was a
+no-op. It is non-zero on 2.9% of a real day, so only the licensed-data run would
+ever have caught it. The round-trip test now stamps a non-zero tracking number
+on every message it builds.
+
+**What this does not establish.** P1 cannot falsify 12.0's decomposition. At
+zero strategy orders the aggressor's queue-walking path is dead code — the
+strategy-reference list is provably always empty — so the published stream is a
+mechanical re-encode of the input and the round trip closes for reasons that
+have nothing to do with whether adds-as-state and executions-as-events is the
+right split. That question is settled by 12.1's gate, not this one. The
+multi-fill emission path is covered only by `test_split_fill_emits_two`, on
+hand-built messages, and stays that way until 12.7 puts real strategy orders in
+the book. Nothing here has been through a socket.
+
 ### 12.3 — OUCH 4.2
 
 `include/itchbook/ouch/` — 4.2 is the simpler version and the choice is stated
@@ -2804,8 +2902,14 @@ disagreement categorised as unexplained is a finding and may stand; an
       `validation/split-replay-2019-12-30.json`. Two of the design doc's
       classifications corrected by measurement: `C` and `P` are state, not
       aggressors.)*
-- [ ] **12.2** — **P1:** book from the emitted feed byte-identical to the
+- [x] **12.2** — **P1:** book from the emitted feed byte-identical to the
       phase-9 book from the original feed; determinism hash green in CI.
+      *(264,496,253 messages published from a
+      268,744,780-message day, 0 book divergences
+      after every one, 264,496,253 byte-identical to their
+      input — `validation/p1-emitted-2019-12-30.json`. The emitted-ITCH hash is in
+      `validation/emitted-itch-sha256.txt` with a CI self-test that must catch
+      one corrupted message.)*
 - [ ] **12.3** — OUCH 4.2 core subset; deviations listed with evidence separated
       from spec; round-trip byte-identical.
 - [ ] **12.4** — SoupBinTCP session: heartbeats hold an idle session, a dead

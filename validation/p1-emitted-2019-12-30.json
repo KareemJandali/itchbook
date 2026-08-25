@@ -1,0 +1,21 @@
+{
+  "feed": "data/raw/12302019.NASDAQ_ITCH50.gz",
+  "messages": 268744780,
+  "state_applied": 263021956,
+  "aggressors": 5722824,
+  "aggressor_shares": 695728039,
+  "strategy_shares_taken": 0,
+  "historical_orders_ahead": 88133,
+  "aggressor_unknown_refs": 0,
+  "partition_violations": 0,
+  "per_message_divergences": 0,
+  "end_state_book_differences": 0,
+  "itch_messages_published": 264496253,
+  "unmodelled_not_published": 4248527,
+  "published_byte_identical": 264496253,
+  "published_byte_differing": 0,
+  "wrong_publish_count": 0,
+  "p1_book_divergences": 0,
+  "p1_end_state_differences": 0,
+  "per_symbol_csv_identical": true
+}

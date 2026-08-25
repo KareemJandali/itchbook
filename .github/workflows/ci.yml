@@ -452,6 +452,38 @@ jobs:
       #
       # --break-gap-markers restores the old discard behaviour and nothing else.
       # TORTURE_ONLY skips gate A, which this self-test does not exercise.
+      # Phase 12.1 and 12.2. The exchange applies historical adds as state and
+      # replays historical executions as crossing events through the matcher,
+      # then PUBLISHES ITCH describing every mutation it made. Three books run
+      # over one feed in one process -- the phase-9 path, the split replayer,
+      # and a consumer rebuilding from the published feed -- and all three are
+      # compared after every message, including a hash of the front of each
+      # side's queue, because nothing else the gate compares can see intra-level
+      # order and that is the one property 12.7 depends on.
+      #
+      # It runs on generated feeds here. The licensed-data leg is recorded in
+      # validation/p1-emitted-2019-12-30.json.
+      - name: Split replayer and P1 (the published feed rebuilds the same book)
+        run: ./scripts/split-replay-gate.sh
+
+      # ...and it has to be able to fail. One byte of one published message,
+      # inside the body so it still routes, and the gate must notice. A gate
+      # nobody has watched fail is a gate nobody should trust -- this repository
+      # shipped a receiver that returned before reading its own counters and
+      # reported a clean sheet every time.
+      - name: P1 self-test (it must catch one corrupted published message)
+        run: |
+          python3 python/make_queue_feed.py --seed 7 --messages 200000 \
+                  --locates 8 /tmp/p1self.gz >/dev/null
+          if ./build/split_replay_gate /tmp/p1self.gz --break-emitter 5000 \
+               > /tmp/p1neg.txt 2>&1; then
+            tail -20 /tmp/p1neg.txt
+            echo "FAIL: the gate passed a feed with a corrupted published message"
+            exit 1
+          fi
+          grep -q "P1 divergence at message 5000" /tmp/p1neg.txt
+          echo "the gate correctly refused a corrupted published feed"
+
       - name: Determinism gate self-test (it must catch an unannounced loss)
         run: |
           if TORTURE_ONLY=1 TORTURE_EXTRA=--break-gap-markers PORT=26700 \

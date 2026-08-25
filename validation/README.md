@@ -37,6 +37,54 @@ symbols. ALLE's low above — 95.6800, matching Databento exactly — read `0.00
 before the fix. MSFT's row did not move, which is why one graded symbol could
 never have caught it: MSFT has real auctions at both ends.
 
+## The feed the exchange publishes (phase 12.2, P1)
+
+`p1-emitted-2019-12-30.json` and `emitted-itch-sha256.txt`. The matching engine
+now emits ITCH describing its own book mutations, so the project produces the
+wire format it consumes. P1 is the check that the emission is faithful: with no
+strategy orders, a consumer rebuilding from the published feed must land on the
+same book the phase-9 path builds from the original.
+
+**268,744,780 messages in, 264,496,253 published,
+0 book divergences after every message** and
+0 at the close, with the per-symbol CSV
+byte-identical.
+
+**264,496,253 of those published messages are byte-identical
+to the input they were derived from; 0 are not.**
+That is the stronger form of P1 and it is what makes the check worth running.
+Book-to-book equality scores only the dozen or so fields a book actually reads,
+so an emitter could get the timestamp, the tracking number, every match number,
+the stock symbol, the MPID and the halt reason wrong and still pass. Carrying
+the header across and re-encoding every body field turns the whole message into
+the assertion.
+
+The first run reported 8,906 differences, one per symbol, every one a Stock
+Directory message differing from offset 25 — the fourteen bytes carrying issue
+classification, authenticity, the LULD tier and the ETP flags, which this
+project has never decoded and the encoder was zeroing. They are now relayed
+verbatim, which is the only honest thing to do with content you are
+republishing and cannot parse, and it means P1 says nothing about those
+fourteen bytes. Everything else is re-encoded from a decoded field.
+
+`4,248,527` input messages were not republished at all:
+they are types this project does not parse, they have no book effect, and
+inventing bytes for them would be worse than the gap. They are counted so the
+gap is visible.
+
+**Determinism.** `emitted-itch-sha256.txt` pins the stream published from
+`python/make_sample.py` — regenerable from a committed script, and carrying
+every message type the reference book models. The gate runs the input twice and
+requires byte-identical output, then checks the hash: two runs alone cannot tell
+correct from drifted-together, and a stored hash alone cannot tell deterministic
+from broken-the-same-way-every-time.
+
+**Read by a decoder that did not write it.** The emitter writes at offsets from
+`messages.hpp` and the consumer reads at the same offsets, so an error in this
+project's model of the wire would cancel out. The published stream is therefore
+also handed to `python/reference/replay.py`, and its daily summary must match
+the one it produces from the original feed.
+
 ## The split replayer against the phase-9 path (phase 12.1)
 
 `split-replay-2019-12-30.json`. Phase 12 drives the book two ways at once:
