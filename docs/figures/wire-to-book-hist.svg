@@ -37,7 +37,7 @@
 </style>
 <rect class="surface" width="720" height="440"/>
 <text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Wire-to-book distribution at the max sustainable rate</text>
-<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">2,096,222 msg/s (25x real time); pinned</text>
+<text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">838,489 msg/s (10x real time); pinned</text>
 <line class="grid" x1="79" y1="378.0" x2="690" y2="378.0"/>
 <text class="muted" x="71" y="382.0" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1</text>
 <line class="grid" x1="79" y1="333.7" x2="690" y2="333.7"/>
@@ -64,69 +64,72 @@
 <text class="muted" x="567.8" y="396" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10,000,000</text>
 <line class="grid" x1="690.0" y1="112" x2="690.0" y2="378"/>
 <text class="muted" x="690.0" y="396" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100,000,000</text>
-<rect class="s1" x="90.5" y="364.7" width="7.2" height="13.3" rx="2"/>
-<rect class="s1" x="99.6" y="239.2" width="7.2" height="138.8" rx="2"/>
-<rect class="s1" x="108.8" y="195.5" width="7.2" height="182.5" rx="2"/>
-<rect class="s1" x="118.0" y="179.1" width="7.2" height="198.9" rx="2"/>
-<rect class="s1" x="127.2" y="171.4" width="7.2" height="206.6" rx="2"/>
-<rect class="s1" x="136.4" y="165.6" width="7.2" height="212.4" rx="2"/>
-<rect class="s1" x="145.6" y="162.3" width="7.2" height="215.7" rx="2"/>
-<rect class="s1" x="154.8" y="158.9" width="7.2" height="219.1" rx="2"/>
-<rect class="s1" x="164.0" y="155.4" width="7.2" height="222.6" rx="2"/>
-<rect class="s1" x="173.2" y="152.1" width="7.2" height="225.9" rx="2"/>
-<rect class="s1" x="182.4" y="148.8" width="7.2" height="229.2" rx="2"/>
-<rect class="s1" x="191.6" y="145.6" width="7.2" height="232.4" rx="2"/>
-<rect class="s1" x="200.8" y="142.4" width="7.2" height="235.6" rx="2"/>
-<rect class="s1" x="210.0" y="139.1" width="7.2" height="238.9" rx="2"/>
-<rect class="s1" x="219.2" y="136.3" width="7.2" height="241.7" rx="2"/>
-<rect class="s1" x="228.4" y="133.9" width="7.2" height="244.1" rx="2"/>
-<rect class="s1" x="237.6" y="132.1" width="7.2" height="245.9" rx="2"/>
-<rect class="s1" x="246.8" y="130.2" width="7.2" height="247.8" rx="2"/>
-<rect class="s1" x="256.0" y="129.3" width="7.2" height="248.7" rx="2"/>
-<rect class="s1" x="265.2" y="130.4" width="7.2" height="247.6" rx="2"/>
-<rect class="s1" x="274.4" y="135.3" width="7.2" height="242.7" rx="2"/>
-<rect class="s1" x="283.6" y="142.3" width="7.2" height="235.7" rx="2"/>
-<rect class="s1" x="292.8" y="146.6" width="7.2" height="231.4" rx="2"/>
-<rect class="s1" x="302.0" y="148.5" width="7.2" height="229.5" rx="2"/>
-<rect class="s1" x="311.2" y="152.5" width="7.2" height="225.5" rx="2"/>
-<rect class="s1" x="320.4" y="161.0" width="7.2" height="217.0" rx="2"/>
-<rect class="s1" x="329.6" y="163.5" width="7.2" height="214.5" rx="2"/>
-<rect class="s1" x="338.8" y="164.5" width="7.2" height="213.5" rx="2"/>
-<rect class="s1" x="348.0" y="165.7" width="7.2" height="212.3" rx="2"/>
-<rect class="s1" x="357.2" y="168.1" width="7.2" height="209.9" rx="2"/>
-<rect class="s1" x="366.3" y="170.8" width="7.2" height="207.2" rx="2"/>
-<rect class="s1" x="375.5" y="174.0" width="7.2" height="204.0" rx="2"/>
-<rect class="s1" x="384.7" y="178.6" width="7.2" height="199.4" rx="2"/>
-<rect class="s1" x="393.9" y="184.5" width="7.2" height="193.5" rx="2"/>
-<rect class="s1" x="403.1" y="190.2" width="7.2" height="187.8" rx="2"/>
-<rect class="s1" x="412.3" y="198.0" width="7.2" height="180.0" rx="2"/>
-<rect class="s1" x="421.5" y="203.1" width="7.2" height="174.9" rx="2"/>
-<rect class="s1" x="430.7" y="206.3" width="7.2" height="171.7" rx="2"/>
-<rect class="s1" x="439.9" y="206.0" width="7.2" height="172.0" rx="2"/>
-<rect class="s1" x="449.1" y="209.2" width="7.2" height="168.8" rx="2"/>
-<rect class="s1" x="458.3" y="216.1" width="7.2" height="161.9" rx="2"/>
-<rect class="s1" x="467.5" y="212.1" width="7.2" height="165.9" rx="2"/>
-<rect class="s1" x="476.7" y="208.5" width="7.2" height="169.5" rx="2"/>
-<rect class="s1" x="485.9" y="206.5" width="7.2" height="171.5" rx="2"/>
-<rect class="s1" x="495.1" y="209.6" width="7.2" height="168.4" rx="2"/>
-<rect class="s1" x="504.3" y="211.4" width="7.2" height="166.6" rx="2"/>
-<rect class="s1" x="513.5" y="210.9" width="7.2" height="167.1" rx="2"/>
-<rect class="s1" x="522.7" y="210.2" width="7.2" height="167.8" rx="2"/>
-<rect class="s1" x="531.9" y="208.9" width="7.2" height="169.1" rx="2"/>
-<rect class="s1" x="541.1" y="207.9" width="7.2" height="170.1" rx="2"/>
-<rect class="s1" x="550.3" y="204.9" width="7.2" height="173.1" rx="2"/>
-<rect class="s1" x="559.5" y="198.6" width="7.2" height="179.4" rx="2"/>
-<rect class="s1" x="568.7" y="210.1" width="7.2" height="167.9" rx="2"/>
-<rect class="s1" x="577.9" y="201.4" width="7.2" height="176.6" rx="2"/>
-<rect class="s1" x="587.1" y="198.0" width="7.2" height="180.0" rx="2"/>
-<rect class="s1" x="596.3" y="300.8" width="7.2" height="77.2" rx="2"/>
+<rect class="s1" x="99.6" y="351.3" width="7.2" height="26.7" rx="2"/>
+<rect class="s1" x="108.8" y="263.6" width="7.2" height="114.4" rx="2"/>
+<rect class="s1" x="118.0" y="218.7" width="7.2" height="159.3" rx="2"/>
+<rect class="s1" x="127.2" y="199.0" width="7.2" height="179.0" rx="2"/>
+<rect class="s1" x="136.4" y="191.2" width="7.2" height="186.8" rx="2"/>
+<rect class="s1" x="145.6" y="184.1" width="7.2" height="193.9" rx="2"/>
+<rect class="s1" x="154.8" y="177.3" width="7.2" height="200.7" rx="2"/>
+<rect class="s1" x="164.0" y="172.8" width="7.2" height="205.2" rx="2"/>
+<rect class="s1" x="173.2" y="168.5" width="7.2" height="209.5" rx="2"/>
+<rect class="s1" x="182.4" y="164.8" width="7.2" height="213.2" rx="2"/>
+<rect class="s1" x="191.6" y="161.3" width="7.2" height="216.7" rx="2"/>
+<rect class="s1" x="200.8" y="158.0" width="7.2" height="220.0" rx="2"/>
+<rect class="s1" x="210.0" y="154.6" width="7.2" height="223.4" rx="2"/>
+<rect class="s1" x="219.2" y="151.4" width="7.2" height="226.6" rx="2"/>
+<rect class="s1" x="228.4" y="148.0" width="7.2" height="230.0" rx="2"/>
+<rect class="s1" x="237.6" y="144.8" width="7.2" height="233.2" rx="2"/>
+<rect class="s1" x="246.8" y="141.6" width="7.2" height="236.4" rx="2"/>
+<rect class="s1" x="256.0" y="138.4" width="7.2" height="239.6" rx="2"/>
+<rect class="s1" x="265.2" y="135.5" width="7.2" height="242.5" rx="2"/>
+<rect class="s1" x="274.4" y="133.1" width="7.2" height="244.9" rx="2"/>
+<rect class="s1" x="283.6" y="131.7" width="7.2" height="246.3" rx="2"/>
+<rect class="s1" x="292.8" y="132.5" width="7.2" height="245.5" rx="2"/>
+<rect class="s1" x="302.0" y="135.1" width="7.2" height="242.9" rx="2"/>
+<rect class="s1" x="311.2" y="137.5" width="7.2" height="240.5" rx="2"/>
+<rect class="s1" x="320.4" y="139.2" width="7.2" height="238.8" rx="2"/>
+<rect class="s1" x="329.6" y="141.4" width="7.2" height="236.6" rx="2"/>
+<rect class="s1" x="338.8" y="145.6" width="7.2" height="232.4" rx="2"/>
+<rect class="s1" x="348.0" y="150.3" width="7.2" height="227.7" rx="2"/>
+<rect class="s1" x="357.2" y="154.2" width="7.2" height="223.8" rx="2"/>
+<rect class="s1" x="366.3" y="157.8" width="7.2" height="220.2" rx="2"/>
+<rect class="s1" x="375.5" y="160.8" width="7.2" height="217.2" rx="2"/>
+<rect class="s1" x="384.7" y="163.5" width="7.2" height="214.5" rx="2"/>
+<rect class="s1" x="393.9" y="166.5" width="7.2" height="211.5" rx="2"/>
+<rect class="s1" x="403.1" y="168.4" width="7.2" height="209.6" rx="2"/>
+<rect class="s1" x="412.3" y="170.7" width="7.2" height="207.3" rx="2"/>
+<rect class="s1" x="421.5" y="172.0" width="7.2" height="206.0" rx="2"/>
+<rect class="s1" x="430.7" y="172.5" width="7.2" height="205.5" rx="2"/>
+<rect class="s1" x="439.9" y="172.0" width="7.2" height="206.0" rx="2"/>
+<rect class="s1" x="449.1" y="174.6" width="7.2" height="203.4" rx="2"/>
+<rect class="s1" x="458.3" y="177.6" width="7.2" height="200.4" rx="2"/>
+<rect class="s1" x="467.5" y="182.3" width="7.2" height="195.7" rx="2"/>
+<rect class="s1" x="476.7" y="184.9" width="7.2" height="193.1" rx="2"/>
+<rect class="s1" x="485.9" y="187.6" width="7.2" height="190.4" rx="2"/>
+<rect class="s1" x="495.1" y="190.4" width="7.2" height="187.6" rx="2"/>
+<rect class="s1" x="504.3" y="191.3" width="7.2" height="186.7" rx="2"/>
+<rect class="s1" x="513.5" y="200.0" width="7.2" height="178.0" rx="2"/>
+<rect class="s1" x="522.7" y="202.1" width="7.2" height="175.9" rx="2"/>
+<rect class="s1" x="531.9" y="203.4" width="7.2" height="174.6" rx="2"/>
+<rect class="s1" x="541.1" y="200.4" width="7.2" height="177.6" rx="2"/>
+<rect class="s1" x="550.3" y="212.2" width="7.2" height="165.8" rx="2"/>
+<rect class="s1" x="559.5" y="214.9" width="7.2" height="163.1" rx="2"/>
+<rect class="s1" x="568.7" y="221.7" width="7.2" height="156.3" rx="2"/>
+<rect class="s1" x="577.9" y="225.6" width="7.2" height="152.4" rx="2"/>
+<rect class="s1" x="587.1" y="223.7" width="7.2" height="154.3" rx="2"/>
+<rect class="s1" x="596.3" y="217.9" width="7.2" height="160.1" rx="2"/>
+<rect class="s1" x="605.5" y="213.1" width="7.2" height="164.9" rx="2"/>
+<rect class="s1" x="614.7" y="212.1" width="7.2" height="165.9" rx="2"/>
+<rect class="s1" x="623.9" y="211.0" width="7.2" height="167.0" rx="2"/>
+<rect class="s1" x="633.0" y="229.3" width="7.2" height="148.7" rx="2"/>
 <line class="axis" x1="79" y1="378" x2="690" y2="378"/>
-<line class="axis" x1="251.7" y1="106" x2="251.7" y2="378" stroke-dasharray="4 3"/>
-<text class="ink" x="251.7" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p50 25,878.689018</text>
-<line class="axis" x1="544.4" y1="106" x2="544.4" y2="378" stroke-dasharray="4 3"/>
-<text class="ink" x="544.4" y="82" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99 6,430,398.85108</text>
-<line class="axis" x1="590.2" y1="106" x2="590.2" y2="378" stroke-dasharray="4 3"/>
-<text class="ink" x="590.2" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99.9 15,239,239.650324</text>
+<line class="axis" x1="293.5" y1="106" x2="293.5" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="293.5" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p50 56,880.401626</text>
+<line class="axis" x1="541.7" y1="106" x2="541.7" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="541.7" y="82" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99 6,119,745.24208</text>
+<line class="axis" x1="627.5" y1="106" x2="627.5" y2="378" stroke-dasharray="4 3"/>
+<text class="ink" x="627.5" y="98" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">p99.9 30,792,939.506036002</text>
 <text class="muted" x="384" y="414" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">cycles, wire to book — log scale</text>
 <text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">messages — log</text>
 </svg>

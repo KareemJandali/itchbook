@@ -28,16 +28,38 @@ P3_THRESHOLD = 0.95            # overlapped >= this x sequential means refuted
 P4_FLAT_PERCENT = 10.0         # chunk-size spread below this counts as flat
 
 
+def _ceiling_verdict(d):
+    """The one paragraph that says whether P1 survived, from the numbers."""
+    over = [(c["fraction_of_ceiling"] - 1) * 100 for c in d["chunks"]]
+    if d["exceeds_model_ceiling"]:
+        scope = ("at every chunk size" if all(o > 0 for o in over)
+                 else "at its best chunk size")
+        return [f"**The measurement went straight through that ceiling** — {scope}, "
+                f"by {min(over):.0f}% to {max(over):.0f}%. A pipeline cannot beat "
+                "max(D, B), so the fault is in the decomposition, and the model's "
+                "hidden assumption is the culprit: that the work is *invariant under "
+                "the split*. It is not.", ""]
+    best = max(c["fraction_of_ceiling"] for c in d["chunks"])
+    return [f"**The measurement stayed under that ceiling**, reaching {best * 100:.0f}% "
+            f"of it at best — {d['best_speedup']:.2f}× against a {d['ceiling']:.2f}× "
+            "ceiling. The prediction is kept: nothing here beats max(D, B), so the "
+            "decomposition describes the work rather than leaking around it.", ""]
+
+
 def build(d):
     L = [BEGIN, "", "## 10.8 — decompressing on its own thread", "",
          "The prediction was that the ceiling is arithmetic: decompression costs "
          "D, the book costs B, `parse()` alternates between them on one thread, "
          "so the sequential path pays D + B and the overlapped path cannot beat "
          "max(D, B). Available speedup (D + B) / max(D, B), at most 2×.", "",
-         "**The measurement went straight through that ceiling** — at every "
-         "chunk size, by 24% to 37%. A pipeline cannot beat max(D, B), so the "
-         "fault is in the decomposition, and the model's hidden assumption is "
-         "the culprit: that the work is *invariant under the split*. It is not.", "",
+         # DERIVED AND CONDITIONAL, because this sentence used to be neither.
+         # It was prose inside build(), asserting unconditionally that the
+         # ceiling had been exceeded "by 24% to 37%" -- so when a short-feed run
+         # produced a kept prediction it sat directly above a table reading
+         # "100% of ceiling / kept" and contradicted it, and --check passed
+         # because the script reproduces its own contradiction byte for byte.
+         # A generated block that can only say one thing is not generated.
+         *_ceiling_verdict(d),
          "| | |", "|---|---:|",
          f"| feed | {d['feed_messages']:,} messages |",
          f"| D — decompress, frame, length-check, build nothing | {d['decompress_seconds']:.2f} s |",

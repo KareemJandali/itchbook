@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 V = ROOT / "validation"
 OUT = ROOT / "docs" / "phase10-results.md"
 BEGIN = "<!-- generated:begin -->"
+# Mirrors SENDER_BUDGET_NS in bench/rate-sweep.py and kSenderTailBudgetNs in
+# tools/mold_replay_udp.cpp.
+SENDER_BUDGET_NS = 10000
 END = "<!-- generated:end -->"
 
 
@@ -55,6 +58,48 @@ def build(d):
     feed = d["feed"]
     L = [BEGIN, ""]
 
+    # THE REFUSAL GOES FIRST, IN THE DOCUMENT, not in a terminal nobody keeps.
+    #
+    # This script used to read sender_qualified_rates only to print it as one
+    # row of a table, then emit max-sustainable, knee and cliff underneath as
+    # flat statements. A reader arriving at the generated block had no way to
+    # tell a measured headline from one taken on a machine whose load generator
+    # could not keep a schedule -- and the numbers most likely to be quoted
+    # were exactly the ones the sweep had disowned.
+    # ALL THREE DISQUALIFYING CONDITIONS, because scripts/pinned-run.sh refuses
+    # on all three and used to tell the operator the document had been stamped
+    # when only one of them stamped it.
+    reasons = []
+    if d.get("sender_qualified_rates", 0) == 0:
+        reasons.append(
+            f"The load generator missed its schedule at every rate: p99.9 lateness "
+            f"exceeded {n(SENDER_BUDGET_NS)} ns at all {d['rates_tried']} rungs, "
+            "which is the same order as the latency this run exists to measure. "
+            "The curve, the knee, the cliff and the max sustainable rate below "
+            "therefore cannot be attributed to this pipeline.")
+    if not d.get("pinned"):
+        reasons.append(
+            "The threads were not pinned. Phase 4 measured 19.3% run-to-run "
+            "variance on a single-threaded benchmark without pinning, and this "
+            "has three threads across two processes.")
+    ms = d.get("max_sustainable")
+    if ms and ms.get("is_lower_bound"):
+        reasons.append(
+            "The ladder never found the cliff, so the max sustainable rate below "
+            "is a LOWER BOUND — a fact about how high the sweep was told to "
+            "count, not about the pipeline.")
+    if reasons:
+        L += ["> **NOT QUOTABLE.**", ">"]
+        for r in reasons:
+            L += [f"> - {r}", ">"]
+        L += ["> Everything below is printed in full because deleting it would hide "
+              "the evidence. None of it may be quoted.", ""]
+    elif d["sender_qualified_rates"] < d["rates_tried"]:
+        L += [f"> **Partly quotable.** The sender held its schedule at "
+              f"{d['sender_qualified_rates']} of {d['rates_tried']} rates; the rows "
+              "whose verdict includes *sender late* below measure the generator as "
+              "much as the pipeline.", ""]
+
     L += ["## What was run", "",
           "| | |", "|---|---:|",
           f"| feed | {n(feed['messages'])} messages over "
@@ -71,7 +116,8 @@ def build(d):
 
     L += ["## The curve", "",
           "Kernel drops and ring drops are separate columns, never a sum. On "
-          "loopback the socket buffer overflows before the ring does, so a "
+          "loopback either can overflow first — which one does is a property "
+          "of the ring size against the socket buffer, not of loopback — so a "
           "table that added them could not tell a pipeline that is drowning "
           "from one whose water came in upstream.", "",
           "Offered is what the sender was told to send; achieved is what it "
@@ -83,8 +129,12 @@ def build(d):
     for r in d["rows"]:
         w = r["wire_to_book_ns"]
         k = r["kernel_drops"]
-        verdict = ("**lossy**" if r["lossy"]
-                   else ("sender late" if r["sender_late"] else "clean"))
+        # ADDITIVE. A row can be both, and the cliff row of the current
+        # artifact is: rendering only "**lossy**" hid the sender-late rows the
+        # banner above tells the reader to go and find.
+        verdict = ", ".join(x for x in ("**lossy**" if r["lossy"] else "",
+                                        "sender late" if r["sender_late"] else "")
+                            if x) or "clean"
         L.append(
             f"| {n(r['offered_rate'])} | {n(r.get('achieved_rate'))} | "
             f"{r['multiplier']:g}× | {n(w['p50'])} | "
@@ -135,7 +185,8 @@ def main():
     art = V / "rate-sweep.json"
     if not art.exists():
         sys.exit(f"error: missing artifact {art}")
-    block = build(json.loads(art.read_text()))
+    sweep = json.loads(art.read_text())
+    block = build(sweep)
     text = OUT.read_text()
     head, rest = text.split(BEGIN, 1)
     _, tail = rest.split(END, 1)
@@ -149,6 +200,12 @@ def main():
         return 0
     OUT.write_text(updated)
     print(f"wrote {OUT}")
+    ms = sweep.get("max_sustainable")
+    if (sweep.get("sender_qualified_rates", 0) == 0 or not sweep.get("pinned")
+            or (ms and ms.get("is_lower_bound"))):
+        print("  ...and marked it NOT QUOTABLE. The reasons are at the top of the "
+              "generated block.", file=sys.stderr)
+        return 3
     return 0
 
 

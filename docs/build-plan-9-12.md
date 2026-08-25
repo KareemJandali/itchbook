@@ -904,13 +904,22 @@ per-packet `SO_TIMESTAMPNS` is the stretch goal, and the README says which one a
 table used). `SO_RCVBUF` raised, and the achieved value verified with
 `getsockopt` — Linux silently caps it.
 
-**The part v1.0 missed:** on loopback the kernel's socket buffer overflows before
-your ring ever fills. Count only ring-full events and 10.5's story —
+**The part v1.0 missed:** on loopback the kernel's socket buffer can overflow
+before your ring ever fills. Count only ring-full events and 10.5's story —
 "backpressure degrades to graded feed gaps" — has a hole you did not look in: the
 losses are real, upstream, and invisible. Read `/proc/net/udp` drop counts and
 the `recvmmsg` error counters, and report **kernel drops and ring drops
 separately** in every table. A system that knows it is drowning has to know where
 the water came in.
+
+*Measured, and it went the other way — which is the same argument from the far
+side. At `--rcvbuf-mb 16` (32 MB granted) against a 65,536-slot ring, the sweep
+records tens of thousands of ring-full drops and ZERO kernel drops: the book is
+the bottleneck and the receiver drains the socket as fast as `recvmmsg` will go.
+Shrink the buffer to 2,304 bytes and the order reverses, which is what the
+negative self-test in `scripts/wire-to-book-check.sh` relies on. Which one
+overflows first is a property of the sizing, not of loopback — and that is
+exactly why both are reported at every rate rather than one being assumed.*
 
 ### 10.5 — The book thread, and backpressure as a gap
 
@@ -1491,17 +1500,47 @@ watched open.
       real-time and at max sustainable rate, from a TSan-clean, pinned,
       methodology-documented run.
       *(Pinned and TSan-clean, but NO RATE QUALIFIED: the load generator's p99.9
-      lateness exceeds 10 µs at every rate under a hypervisor. Needs bare metal.)*
+      lateness exceeds 10 µs at every rate under a hypervisor. The methodology's
+      own entrance exam now says so directly — the sender ALONE, against a port
+      nothing is listening on, reaches 106,002 ns at p99.9 against a 10,000 ns
+      bar, and 294,423 ns at 1× real time, which is the rate this item needs.
+      10.6× and 29× over, with no receiver in the picture.
+      `validation/sender-qualification/`. Needs bare metal.)*
 - [x] Cross-core TSC offset measured and reported, or `CLOCK_MONOTONIC_RAW` used
       and said so.
-      *(Invariant TSC, pinning real, offset **bounded under 47 ns** — smaller
-      than the ping-pong method can resolve. `validation/tsc-offset.json`.)*
+      *(Invariant TSC, pinning real, offset **bounded** — the estimate comes back
+      smaller than the ping-pong method can resolve, which is what healthy
+      hardware gives. The bound moves run to run (47, 48, 58 ns on three
+      successive runs), so the figure lives in `validation/tsc-offset.json` and
+      in the generated table, not in this sentence.)*
 - [ ] Rate–latency curve with knee and cliff annotated; max sustainable rate in
       msg/s; kernel drops and ring drops reported separately at every rate.
-      *(The curve exists with knee at 25× and cliff at 50×, and the two drop
-      kinds ARE reported separately — 9,151 ring-full against 0 kernel at the
+      *(The curve exists with knee at 10× and cliff at 25×, and the two drop
+      kinds ARE reported separately — 12,780 ring-full against 0 kernel at the
       cliff. But the latency axis is disqualified with the sweep above, so the
-      curve is shape without quotable numbers.)*
+      curve is shape without quotable numbers.*
+
+      *Those annotations moved, and not because the pipeline did. Three defects
+      in the harness were found and fixed first: the sweep started the generator
+      at `bind()`, 91–102 ms before the book thread existed; the driver passed
+      `--rt-priority 80` into RT bandwidth throttling, which parks a saturating
+      real-time thread for 50 ms and was manufacturing the largest number in the
+      table; and the run was taken at `--messages 200000`, small enough that a
+      65,536-slot ring absorbed a burst and reported it as a sustained rate. The
+      kernel-drop column was worse than wrong: it could not be non-zero. See
+      below.*
+
+      *The two headline deltas — 25× sender p99 lateness 26,603,394 → 116,005 ns,
+      and max sustainable 3,356,615 → 838,489 msg/s — come from a single
+      before/after pair in which the feed size, the rung ladder, the scheduling
+      class and `mlockall` all changed at once. Neither number isolates its own
+      fix, and the "before" artifact is not committed. They are the size of the
+      combined correction, not a controlled measurement of one cause.*
+
+      *One thing that did NOT move: the same sweep pinned to 13/14/15, with the
+      book and the sender on two hyperthreads of core 7, produced the identical
+      knee, cliff and max sustainable rate as the distinct-core run on 11/13/15.
+      SMT placement is not what limits this host.)*
 - [x] Ring-full events land as phase-7 gaps; `consumer-slow` graded, 0 WRONG.
 - [x] Below-knee output byte-identical to synchronous replay (CI gate).
 - [x] Cached-index and batched-publish measured with predictions written first;
@@ -1509,14 +1548,43 @@ watched open.
       *(And a spin-starvation hypothesis that looked like 539× died under
       best-of-5 — 812 µs vs 562 µs, indistinguishable. Reverted and recorded.)*
 - [x] Phase 9's decompression gap closed and the full-day number updated.
-      *(P1 falsified twice: 1.78× against a 1.37× ceiling in the container,
-      1.91× against 1.31× on real cores. The decomposition leaks, and better
-      hardware makes the leak bigger.)*
+      *(P1 falsified three times: 1.78× against a 1.37× ceiling in the container,
+      1.91× against 1.31× on real cores, 1.98× against 1.21× on the re-run at
+      the full 5,034,007-message feed. The decomposition leaks, and better
+      hardware makes the leak bigger. A run at `--messages 200000` KEPT P1
+      instead — D 0.03 s, B 0.04 s, T_seq 0.07 s, every timing quantised to a
+      hundredth of a second, so the ceiling was arithmetic on three rounded
+      centiseconds. Not re-derived as a finding, and not asserted as an
+      artefact either: the report script now DERIVES the verdict from
+      `exceeds_model_ceiling` and the per-chunk fractions, so whichever way a
+      run comes out, the sentence follows it.)*
 
 **Five of seven.** The two open items are the same item wearing two hats: both
 need a load generator that can hold a sub-10 µs schedule, which means bare metal
-with isolated cores. Everything else about them — the pipeline, the pinning, the
-clock, the drop accounting, the determinism gate — is done and measured.
+— *not* merely isolated cores, which this host has and which measurably do not
+help. `tools/cpu_jitter` measures the question underneath: a pinned thread on an
+idle CPU, reading a clock in a loop, is off-CPU for longer than 10 µs about
+**1,343 times a second**, worst gap 11.09 ms, and the isolated CPUs are
+marginally worse than the ones in the general pool. The kernel credits the
+thread with 19,998.7 ms of 20,000 and reports 5 involuntary context switches
+against ~27,000 such gaps, and all four CPUs stall together in the same ~300 ms
+window — the VM being descheduled, invisibly to the guest.
+`validation/cpu-jitter.json`. Everything else about the two items — the
+pipeline, the pinning, the clock, the drop accounting, the determinism gate —
+is done and measured.
+
+**One of those, the drop accounting, was not.** `wire_to_book` read
+`/proc/net/udp` *after* `close(fd)`, and a UDP socket leaves that file the
+instant it closes; `kernel_drops()` then answered the missing row with 0 rather
+than its "cannot tell you" sentinel. Fixing the ordering was not enough — the
+drops column is padded with trailing spaces, so `strrchr(line, ' ')` landed on
+the padding and `strtoull` parsed whitespace. Either bug alone was sufficient.
+So `"kernel_drops": 0` was a **constant, not a measurement**, for every run this
+tool ever took: exit 4 was unreachable, the kernel half of the LOSSY gate was
+dead code, and `max_sustainable` rested on a check that could not fail. Both are
+fixed and there is now a negative self-test that forces kernel drops with a
+2,304-byte receive buffer and fails if the counter stays at zero — which is how
+the second bug was found, on the test's first run.
 
 **CV line unlocked:** "Lock-free SPSC pipeline (hand-written ring,
 acquire/release, cache-line-isolated indices): wire-to-book p50 X ns / p99.9 Y

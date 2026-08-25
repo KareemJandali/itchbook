@@ -1,0 +1,12 @@
+{
+  "packets": 110938,
+  "messages": 5032462,
+  "bytes": 153508083,
+  "send_errors": 0,
+  "rate_msg_per_s": 200000.000,
+  "multiplier": 0.000,
+  "achieved_msg_per_s": 200000.0,
+  "send_seconds": 25.162310,
+  "lateness_ns": {"p50": 30, "p99": 34017, "p999": 241385, "max": 2840577},
+  "realtime": {"requested": false, "priority": 0, "scheduler_granted": false, "memory_locked": false, "scheduler_error": ""}
+}
