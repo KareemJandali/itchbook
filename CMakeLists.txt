@@ -63,6 +63,9 @@ add_executable(itch_slice  tools/itch_slice.cpp)
 
 # ---- Main driver (Phase 3) ----
 add_executable(book_replay tools/book_replay.cpp)
+# Phase 12.1: runs the phase-9 path and the split replayer over one feed in
+# one process and compares the book each message touched, after every message.
+add_executable(split_replay_gate tools/split_replay_gate.cpp)
 
 # ---- Benchmark (Phase 4) ----
 # Always built with optimisation: measuring a sanitiser build tells you about
@@ -116,6 +119,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
+          split_replay_gate
           calibrate_intensity as_experiment
           tsc_offset mold_replay_udp wire_to_book
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
@@ -125,7 +129,7 @@ endforeach()
 # ---- Tests ----
 enable_testing()
 foreach(t test_parser test_book test_book_set test_live_orders test_spsc_ring test_reader_thread
-          test_matcher test_fees test_queue test_ledger
+          test_matcher test_fees test_queue test_ledger test_split_replay
           test_sim test_kill_switch test_mold test_recover test_restart test_closed_loop test_as_maker test_intensity)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)

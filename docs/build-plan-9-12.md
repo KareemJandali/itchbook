@@ -2542,6 +2542,112 @@ resulting book equals the phase-9 book at every message; the partition assert is
 armed and never fires. No OUCH, no sockets, no emission yet — this step is
 gradeable entirely against machinery that already exists.
 
+### 12.1 — what actually happened
+
+Built as [`include/itchbook/replay/split.hpp`](../include/itchbook/replay/split.hpp),
+gated by [`scripts/split-replay-gate.sh`](../scripts/split-replay-gate.sh) and
+`tools/split_replay_gate.cpp`, with `tests/test_split_replay.cpp` in ctest.
+
+**The gate passes on the full day.** 268,744,780 messages of
+`12302019.NASDAQ_ITCH50.gz`, 5,722,824 executions replayed as crossing events,
+**0 per-message divergences, 0 end-state differences, per-symbol CSV
+byte-identical, 0 partition violations** — 5m18s, 1.09 GB peak RSS, recorded in
+`validation/split-replay-2019-12-30.json`. The comparison is genuinely
+per-message and not end-of-day: both paths run over one feed in one process and
+the book the current message touched is compared after every message, which is
+O(1) because a message can only change the book it is routed to. A divergence
+that appears at message 40,000,000 and heals by the close is invisible to a
+comparison of final states, and a healing divergence is the one a strategy would
+have traded through.
+
+**Two of the design document's classifications are wrong, and the feed says so.**
+`docs/phase12-design.md` §3 groups `E`, `C` and `P` together as "replayed as an
+aggressor". Asking where in its own queue each executed order was sitting at the
+instant it traded:
+
+| | at front of its level | at best price, behind others | worse price than best |
+|---|---|---|---|
+| `E` (5,722,824) | 99.82% | 10,565 (0.185%) | **0** |
+| `C` (99,917) | 17.6% | **82,376 (82.4%)** | 273 (0.27%) |
+
+`C` is Order Executed With Price — an execution that prints *away* from the
+resting price — and 82.4% of them name an order a mean 4,501 shares deep in its
+own queue. Those trades did not respect displayed price-time priority; they are
+price improvement and non-displayed interaction, and every one of the 273
+away-from-best cases happened while the book was crossed. Replaying a `C` as a
+queue-walking aggressor would hand a resting strategy order fills it would never
+have received, which is the optimistic-fill error phases 6 and 11 exist to
+prevent. `C` is applied as state. 445× is not a rounding difference.
+
+`P` is applied as state for a narrower and harder reason: it consumed
+NON-DISPLAYED liquidity, and `Book::trade()` correspondingly moves counters
+without touching a resting order. There is no displayed liquidity for it to
+walk. Whether a displayed strategy quote should have been filled ahead of the
+hidden order it actually traded against is a modelling question about display
+priority, and it is left to 12.7 rather than guessed at here.
+
+**`E` never trades through the displayed book.** Zero of 5,722,824 executions
+named an order resting at a worse price than the best on its side. That is the
+fact that makes a targeted aggressor safe, and it was worth measuring rather
+than assuming: the obvious construction — a plain marketable order priced at the
+resting order's price — would walk from the front of the best level and eat
+whatever it found there.
+
+**What the aggressor actually does.** It takes strategy shares ahead of the
+named order, then the named order, and **skips historical orders ahead of it**.
+The feed is ground truth about *which* historical order traded, so a historical
+order resting in front of the named one demonstrably did not trade here,
+whatever our reconstruction's queue says; consuming it would invent a fill that
+history contradicts. It happens 88,133 times in a day and is counted rather than
+swallowed. With zero strategy orders the walk finds nothing and the path reduces
+to exactly the phase-9 mutation, so the gate passes by construction rather than
+by luck.
+
+**One new line in `Book`.** `take()` is `execute()` minus `record_trade()` — the
+book mutation is identical and the tape statistics are not — so an aggressor
+routed through the engine leaves volume, notional, trades and OHLC at zero.
+`Book::note_feed_trade()` gives the other half back, because the replayer splits
+one historical execution across two consumers while the tape still saw ONE
+print: recording per fill would increment `trades_` twice and report a volume
+larger than the day.
+
+**The gate was mutation-tested, and it needed to be.** Five plausible
+implementation mistakes, each applied to the replayer in turn:
+
+| mutation | queue feed | bench feed | unit tests |
+|---|---|---|---|
+| drop the tape print | caught | caught | caught |
+| walk the queue naively | **missed** | caught | caught |
+| `execute()` for the remainder | caught | caught | caught |
+| clamp the print to resting size | **missed** | **missed** | caught |
+| check only `original_ref` on a replace | **missed** | **missed** | caught |
+
+None survived, but the full-day gate alone would have missed two. No
+well-formed feed — generated or real — executes more shares than the order it
+names, so `execute()`'s documented behaviour of recording the *message's* share
+count is reachable only from a hand-built message. The unit suite is a gate
+component, not a formality. And the queue feed, whose executions are always at
+the touch, cannot exercise the skip-historical-orders-ahead rule at all: the
+generated feed phase 6 built *because* it respects priority is the one that
+cannot test this, and `bench.gz`, whose executions are scattered and which is
+wrong as a market, is the one that can.
+
+**The mutation harness had the bug it was looking for.** Its first run scored
+the queue feed as catching all five. It caught none: WSL wipes `/tmp` between
+invocations, the feed was gone, the gate died on a missing file, and "nonzero
+exit" was being read as "mutation caught". A detector that reports success when
+it did not run is the failure this repository has already shipped once, in a
+receiver that returned before reading its own counters. The rerun keeps its
+artifacts somewhere that survives, requires a green baseline before any mutation
+is scored, and treats a detector that could not run as an error rather than a
+catch.
+
+**What this does not establish.** `strategy_shares_taken` is 0 and
+`historical_orders_ahead` is 88,133 across the day, which means the *skip* half
+of the rule ran 88,133 times on real data and the *fill* half ran zero times —
+it is exercised only by `test_strategy_ahead_fills`, on hand-built messages.
+Nothing here emits ITCH, and nothing here has been through a socket. P1 is 12.2.
+
 ### 12.2 — The emitting matcher, and P1
 
 Every matcher mutation produces its ITCH message — `A`/`F` on accept, `E` on
@@ -2691,8 +2797,13 @@ disagreement categorised as unexplained is a finding and may stand; an
 
 - [x] **12.0** — topology decided and written before the gateway exists.
       [`docs/phase12-design.md`](phase12-design.md).
-- [ ] **12.1** — replayer splits adds from executions; reference partition
+- [x] **12.1** — replayer splits adds from executions; reference partition
       armed; zero-order replay equals the phase-9 book.
+      *(268,744,780 messages, 0 divergences after every one, 0 partition
+      violations, per-symbol CSV byte-identical —
+      `validation/split-replay-2019-12-30.json`. Two of the design doc's
+      classifications corrected by measurement: `C` and `P` are state, not
+      aggressors.)*
 - [ ] **12.2** — **P1:** book from the emitted feed byte-identical to the
       phase-9 book from the original feed; determinism hash green in CI.
 - [ ] **12.3** — OUCH 4.2 core subset; deviations listed with evidence separated

@@ -712,6 +712,19 @@ public:
         reduce((*refs_).at(slot), shares, slot);
     }
 
+    // The feed's own print, recorded without touching a resting order.
+    //
+    // take() is execute() minus this call, which is exactly right for the
+    // matching engine -- its fills are ours and must not move statistics that
+    // describe the FEED's trades. Phase 12's replayer needs the other half back,
+    // because it splits one historical execution across two consumers: a
+    // strategy order that was ahead in the queue takes some of the shares, the
+    // named historical order takes the rest, and the book mutation is therefore
+    // two take() calls. The tape still saw ONE print of N shares at one price.
+    // Calling execute() twice would count that print twice and increment
+    // trades_ twice, which is how a volume figure ends up larger than the day.
+    void note_feed_trade(int32_t price, uint32_t shares) { record_trade(price, shares); }
+
     uint64_t shares_at(char side, int32_t price) {
         Level* lvl = (side == 'B' ? bids_ : asks_).level_at(price);
         return lvl == nullptr ? 0 : lvl->shares;

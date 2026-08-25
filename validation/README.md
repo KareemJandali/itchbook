@@ -37,6 +37,35 @@ symbols. ALLE's low above — 95.6800, matching Databento exactly — read `0.00
 before the fix. MSFT's row did not move, which is why one graded symbol could
 never have caught it: MSFT has real auctions at both ends.
 
+## The split replayer against the phase-9 path (phase 12.1)
+
+`split-replay-2019-12-30.json`. Phase 12 drives the book two ways at once:
+historical adds, cancels, replaces and deletes are APPLIED, while historical
+executions are replayed as synthesised aggressors that walk the queue, so that a
+strategy order resting ahead of the named order can take those shares first.
+With no strategy orders present the two must be the same book.
+
+**268,744,780 messages; 5,722,824 executions replayed as crossing events; 0
+divergences.** The books are compared after EVERY message, not at the close:
+both paths run over one feed in one process, and the book the current message
+touched is compared each time. A divergence that opens mid-morning and closes by
+16:00 is invisible to a comparison of final states, and it is exactly the kind a
+strategy would have traded through. The end-of-day per-symbol CSVs are also
+byte-identical, written by the single writer in `report.hpp` so the check
+compares books rather than two transcriptions of books.
+
+**0 partition violations.** Strategy order references take the high half of the
+64-bit space, and no historical NASDAQ reference on this day had bit 63 set —
+across every message that names an order, including the *new* reference of a
+replace, which is the one an original-reference-only check would miss.
+
+Two classifications in `docs/phase12-design.md` §3 were corrected by measuring
+where each executed order sat in its own queue: `C` (execute-with-price) names an
+order behind the front of its level 82.4% of the time against `E`'s 0.185%, and
+all 273 away-from-best cases happened while the book was crossed. Those trades
+bypassed displayed priority, so replaying them as queue-walking aggressors would
+manufacture strategy fills. `C` and `P` are applied as state.
+
 ## The auction prints, graded against the venue itself
 
 The daily bars above say the day reconstructs. They say nothing about the
