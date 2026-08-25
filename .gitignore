@@ -37,3 +37,12 @@ __pycache__/
 venv/
 build-verify-gcc/
 build-verify-clang/
+
+# The phase 4 A/B pair. Two book_bench builds differing only in pool chunk
+# sizing, rebuilt in seconds from the recipe in bench/README.md — the RESULTS
+# they produced live in bench/perf-counters.txt and are committed, which is the
+# part worth keeping. Anchored to the root because that is where the documented
+# `-o bench_new` puts them, and a bare name would also ignore any directory of
+# that name anywhere in the tree.
+/bench_new
+/bench_old
