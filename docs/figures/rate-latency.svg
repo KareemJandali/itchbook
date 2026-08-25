@@ -39,62 +39,62 @@
 <text class="ink" x="16" y="26" font-family="system-ui,sans-serif" font-size="15" font-weight="600">Wire-to-book latency against offered rate</text>
 <text class="muted" x="16" y="46" font-family="system-ui,sans-serif" font-size="11.5">5,032,462 messages, 83,849 msg/s at 1x real time; ring 65,536 slots; best of 5; pinned</text>
 <text class="muted" x="16" y="66" font-family="system-ui,sans-serif" font-size="11">both axes logarithmic; gridlines at decades</text>
-<line class="grid" x1="82" y1="383.1" x2="680" y2="383.1"/>
-<text class="muted" x="72" y="387.1" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10k</text>
-<line class="grid" x1="82" y1="317.2" x2="680" y2="317.2"/>
-<text class="muted" x="72" y="321.2" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100k</text>
-<line class="grid" x1="82" y1="251.3" x2="680" y2="251.3"/>
-<text class="muted" x="72" y="255.3" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1.0M</text>
-<line class="grid" x1="82" y1="185.4" x2="680" y2="185.4"/>
-<text class="muted" x="72" y="189.4" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10M</text>
-<line class="grid" x1="82" y1="119.5" x2="680" y2="119.5"/>
-<text class="muted" x="72" y="123.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100M</text>
-<line class="grid" x1="122.4" y1="92" x2="122.4" y2="394"/>
-<text class="muted" x="122.4" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100k</text>
-<line class="grid" x1="361.3" y1="92" x2="361.3" y2="394"/>
-<text class="muted" x="361.3" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1.0M</text>
-<line class="grid" x1="600.2" y1="92" x2="600.2" y2="394"/>
-<text class="muted" x="600.2" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10M</text>
-<line class="axis" x1="343.0" y1="92" x2="343.0" y2="394" stroke-dasharray="5 4"/>
-<text class="ink" x="348.0" y="106.0" font-family="system-ui,sans-serif" font-size="11">max sustainable 838,489/s (10x)</text>
-<line class="axis" x1="343.0" y1="92" x2="343.0" y2="394" stroke-dasharray="5 4"/>
-<text class="ink" x="348.0" y="121.0" font-family="system-ui,sans-serif" font-size="11">knee 838,489/s (10x)</text>
+<line class="grid" x1="82" y1="356.5" x2="680" y2="356.5"/>
+<text class="muted" x="72" y="360.5" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10k</text>
+<line class="grid" x1="82" y1="296.6" x2="680" y2="296.6"/>
+<text class="muted" x="72" y="300.6" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100k</text>
+<line class="grid" x1="82" y1="236.6" x2="680" y2="236.6"/>
+<text class="muted" x="72" y="240.6" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">1.0M</text>
+<line class="grid" x1="82" y1="176.7" x2="680" y2="176.7"/>
+<text class="muted" x="72" y="180.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">10M</text>
+<line class="grid" x1="82" y1="116.7" x2="680" y2="116.7"/>
+<text class="muted" x="72" y="120.7" text-anchor="end" font-family="ui-monospace,monospace" font-size="10.5">100M</text>
+<line class="grid" x1="121.7" y1="92" x2="121.7" y2="394"/>
+<text class="muted" x="121.7" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">100k</text>
+<line class="grid" x1="351.4" y1="92" x2="351.4" y2="394"/>
+<text class="muted" x="351.4" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">1.0M</text>
+<line class="grid" x1="581.0" y1="92" x2="581.0" y2="394"/>
+<text class="muted" x="581.0" y="412" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5">10M</text>
+<line class="axis" x1="425.2" y1="92" x2="425.2" y2="394" stroke-dasharray="5 4"/>
+<text class="ink" x="430.2" y="106.0" font-family="system-ui,sans-serif" font-size="11">max sustainable 2,096,222/s (25x)</text>
+<line class="axis" x1="425.2" y1="92" x2="425.2" y2="394" stroke-dasharray="5 4"/>
+<text class="ink" x="430.2" y="121.0" font-family="system-ui,sans-serif" font-size="11">knee 2,096,222/s (25x)</text>
 <text class="muted" x="381" y="438" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">offered rate (messages/second)</text>
 <text class="muted" transform="translate(20,243) rotate(-90)" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11">latency (nanoseconds)</text>
-<polyline class="k1" stroke-width="2" stroke-linejoin="round" points="104.1,373.2 176.1,365.8 271.1,367.0 343.0,370.0 438.1,267.0 510.0,178.7 581.9,178.3 647.1,172.7 657.9,177.2"/>
-<circle class="s1" cx="104.1" cy="373.2" r="3.5"/>
-<circle class="s1" cx="176.1" cy="365.8" r="3.5"/>
-<circle class="s1" cx="271.1" cy="367.0" r="3.5"/>
-<circle class="s1" cx="343.0" cy="370.0" r="3.5"/>
-<circle class="s1" cx="438.1" cy="267.0" r="3.5"/>
-<circle class="s1" cx="510.0" cy="178.7" r="3.5"/>
-<circle class="s1" cx="581.9" cy="178.3" r="3.5"/>
-<circle class="s1" cx="647.1" cy="172.7" r="3.5"/>
-<circle class="s1" cx="657.9" cy="177.2" r="3.5"/>
-<polyline class="k2" stroke-width="2" stroke-linejoin="round" points="104.1,325.0 176.1,311.4 271.1,297.2 343.0,236.1 438.1,115.8 510.0,163.2 581.9,166.3 647.1,157.3 657.9,165.2"/>
-<circle class="s2" cx="104.1" cy="325.0" r="3.5"/>
-<circle class="s2" cx="176.1" cy="311.4" r="3.5"/>
-<circle class="s2" cx="271.1" cy="297.2" r="3.5"/>
-<circle class="s2" cx="343.0" cy="236.1" r="3.5"/>
-<circle class="s2" cx="438.1" cy="115.8" r="3.5"/>
-<circle class="s2" cx="510.0" cy="163.2" r="3.5"/>
-<circle class="s2" cx="581.9" cy="166.3" r="3.5"/>
-<circle class="s2" cx="647.1" cy="157.3" r="3.5"/>
-<circle class="s2" cx="657.9" cy="165.2" r="3.5"/>
-<polyline class="k3" stroke-width="2" stroke-linejoin="round" points="104.1,285.9 176.1,223.3 271.1,190.0 343.0,189.9 438.1,112.8 510.0,160.1 581.9,165.3 647.1,154.4 657.9,163.1"/>
-<circle class="s3" cx="104.1" cy="285.9" r="3.5"/>
-<circle class="s3" cx="176.1" cy="223.3" r="3.5"/>
-<circle class="s3" cx="271.1" cy="190.0" r="3.5"/>
-<circle class="s3" cx="343.0" cy="189.9" r="3.5"/>
-<circle class="s3" cx="438.1" cy="112.8" r="3.5"/>
-<circle class="s3" cx="510.0" cy="160.1" r="3.5"/>
-<circle class="s3" cx="581.9" cy="165.3" r="3.5"/>
-<circle class="s3" cx="647.1" cy="154.4" r="3.5"/>
-<circle class="s3" cx="657.9" cy="163.1" r="3.5"/>
-<circle class="s3" cx="692" cy="159.1" r="4"/>
-<text class="ink" x="702" y="163.1" font-family="system-ui,sans-serif" font-size="11.5">p99.9</text>
-<circle class="s2" cx="692" cy="174.1" r="4"/>
-<text class="ink" x="702" y="178.1" font-family="system-ui,sans-serif" font-size="11.5">p99</text>
-<circle class="s1" cx="692" cy="189.1" r="4"/>
-<text class="ink" x="702" y="193.1" font-family="system-ui,sans-serif" font-size="11.5">p50</text>
+<polyline class="k1" stroke-width="2" stroke-linejoin="round" points="104.1,369.0 173.3,370.9 264.7,373.1 333.8,373.2 425.2,373.1 494.3,370.7 563.4,195.4 632.6,194.6 657.9,193.8"/>
+<circle class="s1" cx="104.1" cy="369.0" r="3.5"/>
+<circle class="s1" cx="173.3" cy="370.9" r="3.5"/>
+<circle class="s1" cx="264.7" cy="373.1" r="3.5"/>
+<circle class="s1" cx="333.8" cy="373.2" r="3.5"/>
+<circle class="s1" cx="425.2" cy="373.1" r="3.5"/>
+<circle class="s1" cx="494.3" cy="370.7" r="3.5"/>
+<circle class="s1" cx="563.4" cy="195.4" r="3.5"/>
+<circle class="s1" cx="632.6" cy="194.6" r="3.5"/>
+<circle class="s1" cx="657.9" cy="193.8" r="3.5"/>
+<polyline class="k2" stroke-width="2" stroke-linejoin="round" points="104.1,335.2 173.3,335.0 264.7,335.8 333.8,335.7 425.2,234.6 494.3,115.1 563.4,175.6 632.6,184.5 657.9,181.8"/>
+<circle class="s2" cx="104.1" cy="335.2" r="3.5"/>
+<circle class="s2" cx="173.3" cy="335.0" r="3.5"/>
+<circle class="s2" cx="264.7" cy="335.8" r="3.5"/>
+<circle class="s2" cx="333.8" cy="335.7" r="3.5"/>
+<circle class="s2" cx="425.2" cy="234.6" r="3.5"/>
+<circle class="s2" cx="494.3" cy="115.1" r="3.5"/>
+<circle class="s2" cx="563.4" cy="175.6" r="3.5"/>
+<circle class="s2" cx="632.6" cy="184.5" r="3.5"/>
+<circle class="s2" cx="657.9" cy="181.8" r="3.5"/>
+<polyline class="k3" stroke-width="2" stroke-linejoin="round" points="104.1,329.8 173.3,326.1 264.7,225.8 333.8,204.5 425.2,196.8 494.3,112.8 563.4,172.6 632.6,183.9 657.9,180.8"/>
+<circle class="s3" cx="104.1" cy="329.8" r="3.5"/>
+<circle class="s3" cx="173.3" cy="326.1" r="3.5"/>
+<circle class="s3" cx="264.7" cy="225.8" r="3.5"/>
+<circle class="s3" cx="333.8" cy="204.5" r="3.5"/>
+<circle class="s3" cx="425.2" cy="196.8" r="3.5"/>
+<circle class="s3" cx="494.3" cy="112.8" r="3.5"/>
+<circle class="s3" cx="563.4" cy="172.6" r="3.5"/>
+<circle class="s3" cx="632.6" cy="183.9" r="3.5"/>
+<circle class="s3" cx="657.9" cy="180.8" r="3.5"/>
+<circle class="s3" cx="692" cy="176.8" r="4"/>
+<text class="ink" x="702" y="180.8" font-family="system-ui,sans-serif" font-size="11.5">p99.9</text>
+<circle class="s2" cx="692" cy="191.8" r="4"/>
+<text class="ink" x="702" y="195.8" font-family="system-ui,sans-serif" font-size="11.5">p99</text>
+<circle class="s1" cx="692" cy="206.8" r="4"/>
+<text class="ink" x="702" y="210.8" font-family="system-ui,sans-serif" font-size="11.5">p50</text>
 </svg>

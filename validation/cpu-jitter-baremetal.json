@@ -1,0 +1,13 @@
+{
+  "seconds": 20.000,
+  "all_pinned": true,
+  "worst_p999_ns": 24732,
+  "worst_max_ns": 43298,
+  "holds_a_cpu": false,
+  "gaps_over_10us_per_cpu_per_second": 30.9,
+  "cpus": [
+    {"cpu": 7, "pinned": true, "samples": 1698123098, "wall_ns": 20000000005, "thread_cpu_ns": 20000125852, "unaccounted_ns": -125847, "involuntary_ctxsw": 13, "voluntary_ctxsw": 0, "gap_ns": {"p50": 15092, "p99": 18844, "p999": 24732, "p9999": 24732, "max": 24732}, "gaps_over": {"10us": 602, "100us": 0, "1ms": 0, "10ms": 0}, "ns_in_gaps_over_100us": 0, "worst": [{"at_ns": 4742467648, "len_ns": 24732}, {"at_ns": 8352471272, "len_ns": 24495}, {"at_ns": 3547467882, "len_ns": 20327}, {"at_ns": 4156465099, "len_ns": 20143}, {"at_ns": 7763467955, "len_ns": 19686}, {"at_ns": 15987465805, "len_ns": 19232}, {"at_ns": 2949471800, "len_ns": 19070}, {"at_ns": 493477305, "len_ns": 18844}, {"at_ns": 19998909463, "len_ns": 18776}, {"at_ns": 3210434348, "len_ns": 18619}]},
+    {"cpu": 6, "pinned": true, "samples": 1697074770, "wall_ns": 20000000008, "thread_cpu_ns": 20000117407, "unaccounted_ns": -117399, "involuntary_ctxsw": 15, "voluntary_ctxsw": 0, "gap_ns": {"p50": 15027, "p99": 18884, "p999": 24730, "p9999": 24730, "max": 24730}, "gaps_over": {"10us": 603, "100us": 0, "1ms": 0, "10ms": 0}, "ns_in_gaps_over_100us": 0, "worst": [{"at_ns": 4742419624, "len_ns": 24730}, {"at_ns": 8352423249, "len_ns": 24507}, {"at_ns": 3547419854, "len_ns": 20336}, {"at_ns": 4156417073, "len_ns": 20139}, {"at_ns": 7763419930, "len_ns": 19590}, {"at_ns": 15987417778, "len_ns": 19238}, {"at_ns": 2949423773, "len_ns": 19060}, {"at_ns": 19998861441, "len_ns": 18884}, {"at_ns": 493429292, "len_ns": 18754}, {"at_ns": 3210386278, "len_ns": 18586}]},
+    {"cpu": 5, "pinned": true, "samples": 1692754695, "wall_ns": 20000000007, "thread_cpu_ns": 19999178772, "unaccounted_ns": 821235, "involuntary_ctxsw": 221, "voluntary_ctxsw": 1, "gap_ns": {"p50": 3575, "p99": 16314, "p999": 20144, "p9999": 38727, "max": 43298}, "gaps_over": {"10us": 648, "100us": 0, "1ms": 0, "10ms": 0}, "ns_in_gaps_over_100us": 0, "worst": [{"at_ns": 3760388918, "len_ns": 43298}, {"at_ns": 8355414278, "len_ns": 38727}, {"at_ns": 486999908, "len_ns": 38449}, {"at_ns": 2480388988, "len_ns": 36351}, {"at_ns": 12532457822, "len_ns": 35690}, {"at_ns": 10155434680, "len_ns": 34995}, {"at_ns": 46179418, "len_ns": 33882}, {"at_ns": 3330449783, "len_ns": 29163}, {"at_ns": 18863388947, "len_ns": 28775}, {"at_ns": 4742422261, "len_ns": 24724}]}
+  ]
+}

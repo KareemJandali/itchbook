@@ -1496,16 +1496,32 @@ watched open.
 
 ### Done — Phase 10
 
-- [ ] Wire-to-book p50/p99/p99.9 **and the bucket distribution** at 1×
+- [x] Wire-to-book p50/p99/p99.9 **and the bucket distribution** at 1×
       real-time and at max sustainable rate, from a TSan-clean, pinned,
       methodology-documented run.
-      *(Pinned and TSan-clean, but NO RATE QUALIFIED: the load generator's p99.9
-      lateness exceeds 10 µs at every rate under a hypervisor. The methodology's
-      own entrance exam now says so directly — the sender ALONE, against a port
-      nothing is listening on, reaches 106,002 ns at p99.9 against a 10,000 ns
-      bar, and 294,423 ns at 1× real time, which is the rate this item needs.
-      10.6× and 29× over, with no receiver in the picture.
-      `validation/sender-qualification/`. Needs bare metal.)*
+      *(Taken on bare metal — an i7-11700K booted from a live USB into Ubuntu
+      26.04, pipeline on CPUs 7/6/5, three distinct physical cores, run as root
+      so SCHED_FIFO and `mlockall` were granted rather than denied.*
+
+      *At 1× real time (83,849 msg/s): p50 **6,189 ns**, p99 **22,696 ns**,
+      p99.9 **27,885 ns**. At max sustainable (2,096,222 msg/s): p50 **5,290 ns**,
+      p99 **1,081,195 ns**, p99.9 **4,606,539 ns**. The bucket distribution is in
+      `validation/rate-sweep.json` under `max_sustainable.buckets`, 54 buckets in
+      raw TSC cycles — divide by `cycles_per_ns`, which is what `buckets_unit`
+      in the same file exists to tell you.*
+
+      *The entrance exam is what makes those quotable. The sender alone, against
+      a port nothing is listening on, held p99.9 lateness to **46 ns** at
+      200,000 msg/s and **810 ns** at 1× — against a 10,000 ns bar, and against
+      106,002 ns and 294,423 ns for the same binary on the same silicon under
+      WSL2. `validation/sender-qualification/baremetal-*.json`.*
+
+      *One caveat that belongs with the number rather than after it: p99.9 climbs
+      to 1.5 ms at 5× and 3.4 ms at 10× on rows that are otherwise clean, with
+      peak ring occupancy of 2,318 and 5,107 of 65,536 slots. There is not enough
+      queue at those rates for queueing to explain it. p50 and p99 are stable
+      across a 25-fold rate change; the far tail below the knee is not yet
+      accounted for.)*
 - [x] Cross-core TSC offset measured and reported, or `CLOCK_MONOTONIC_RAW` used
       and said so.
       *(Invariant TSC, pinning real, offset **bounded** — the estimate comes back
@@ -1513,12 +1529,18 @@ watched open.
       hardware gives. The bound moves run to run (47, 48, 58 ns on three
       successive runs), so the figure lives in `validation/tsc-offset.json` and
       in the generated table, not in this sentence.)*
-- [ ] Rate–latency curve with knee and cliff annotated; max sustainable rate in
+- [x] Rate–latency curve with knee and cliff annotated; max sustainable rate in
       msg/s; kernel drops and ring drops reported separately at every rate.
-      *(The curve exists with knee at 10× and cliff at 25×, and the two drop
-      kinds ARE reported separately — 12,780 ring-full against 0 kernel at the
-      cliff. But the latency axis is disqualified with the sweep above, so the
-      curve is shape without quotable numbers.*
+      *(**Knee at 25×** — 2,096,222 msg/s, where p99 leaves a 22,696 ns baseline
+      and reaches 1,081,195 ns. **Cliff at 50×** — 4,192,445 msg/s, 10,516
+      ring-full drops against 0 kernel drops. **Max sustainable 2,096,222 msg/s**,
+      and `is_lower_bound` is false, so the ladder actually found the cliff
+      rather than running out of rungs. 7 of 9 rates had the sender holding its
+      schedule; the two that did not are the top rungs, where it achieved 21.6M
+      of 33.5M offered.*
+
+      *The two drop kinds are reported separately at every rate, and the kernel
+      column is now a measurement rather than a constant — see below.*
 
       *Those annotations moved, and not because the pipeline did. Three defects
       in the harness were found and fixed first: the sweep started the generator
@@ -1537,10 +1559,14 @@ watched open.
       fix, and the "before" artifact is not committed. They are the size of the
       combined correction, not a controlled measurement of one cause.*
 
-      *One thing that did NOT move: the same sweep pinned to 13/14/15, with the
-      book and the sender on two hyperthreads of core 7, produced the identical
-      knee, cliff and max sustainable rate as the distinct-core run on 11/13/15.
-      SMT placement is not what limits this host.)*
+      *One thing that did NOT move: under WSL2, the same sweep pinned to 13/14/15
+      with the book and the sender on two hyperthreads of core 7 produced the
+      identical knee, cliff and max sustainable rate as the distinct-core run on
+      11/13/15. SMT placement was not what limited that host; the hypervisor was.
+      `tools/cpu_jitter` puts a number on it — an idle pinned CPU there was
+      off-CPU longer than 10 µs about 1,343 times a second with an 11 ms worst
+      case, against 30 times a second and 43 µs on bare metal, and **zero** gaps
+      over 100 µs where the guest had ~90 a second.)*
 - [x] Ring-full events land as phase-7 gaps; `consumer-slow` graded, 0 WRONG.
 - [x] Below-knee output byte-identical to synchronous replay (CI gate).
 - [x] Cached-index and batched-publish measured with predictions written first;
@@ -1548,9 +1574,9 @@ watched open.
       *(And a spin-starvation hypothesis that looked like 539× died under
       best-of-5 — 812 µs vs 562 µs, indistinguishable. Reverted and recorded.)*
 - [x] Phase 9's decompression gap closed and the full-day number updated.
-      *(P1 falsified three times: 1.78× against a 1.37× ceiling in the container,
-      1.91× against 1.31× on real cores, 1.98× against 1.21× on the re-run at
-      the full 5,034,007-message feed. The decomposition leaks, and better
+      *(P1 falsified four times: 1.78× against a 1.37× ceiling in the container,
+      1.91× against 1.31× on real cores, 1.98× against 1.21× on the WSL2 re-run
+      at the full feed, and **1.980× against a 1.471× ceiling on bare metal**. The decomposition leaks, and better
       hardware makes the leak bigger. A run at `--messages 200000` KEPT P1
       instead — D 0.03 s, B 0.04 s, T_seq 0.07 s, every timing quantised to a
       hundredth of a second, so the ceiling was arithmetic on three rounded
@@ -1559,19 +1585,26 @@ watched open.
       `exceeds_model_ceiling` and the per-chunk fractions, so whichever way a
       run comes out, the sentence follows it.)*
 
-**Five of seven.** The two open items are the same item wearing two hats: both
-need a load generator that can hold a sub-10 µs schedule, which means bare metal
-— *not* merely isolated cores, which this host has and which measurably do not
-help. `tools/cpu_jitter` measures the question underneath: a pinned thread on an
-idle CPU, reading a clock in a loop, is off-CPU for longer than 10 µs about
-**1,343 times a second**, worst gap 11.09 ms, and the isolated CPUs are
-marginally worse than the ones in the general pool. The kernel credits the
-thread with 19,998.7 ms of 20,000 and reports 5 involuntary context switches
-against ~27,000 such gaps, and all four CPUs stall together in the same ~300 ms
-window — the VM being descheduled, invisibly to the guest.
-`validation/cpu-jitter.json`. Everything else about the two items — the
-pipeline, the pinning, the clock, the drop accounting, the determinism gate —
-is done and measured.
+**Seven of seven.** The two items that stayed open for three runs were the same
+item wearing two hats, and both closed the moment the load generator could hold
+a sub-10 µs schedule — which took bare metal, and *not* merely isolated cores.
+`isolcpus` was available under WSL2 and measurably bought nothing; the isolated
+CPUs came out marginally worse than the general pool. What the guest could not
+do was hold a CPU at all: `tools/cpu_jitter` recorded a pinned thread on an idle
+CPU off-CPU for longer than 10 µs **1,343 times a second**, worst gap 11.09 ms,
+with all four CPUs stalling together in the same ~300 ms window while the kernel
+credited them with 19,998.7 ms of 20,000 and reported 5 involuntary context
+switches. The same tool on bare metal: **30 a second, worst 43 µs, and not one
+gap over 100 µs.** `validation/cpu-jitter.json` and
+`validation/cpu-jitter-baremetal.json`.
+
+Three defects in the harness had to be fixed before any of it counted, and one
+of them had never produced a measurement at all: `kernel_drops` was a constant,
+not a number, for every run this tool ever took — `/proc/net/udp` was read after
+`close(fd)`, and the drops column is padded with trailing spaces so the parse
+returned zero even when the row was there. Either bug alone was sufficient.
+There is now a negative self-test that forces kernel drops with a 2,304-byte
+receive buffer and fails if the counter stays at zero.
 
 **One of those, the drop accounting, was not.** `wire_to_book` read
 `/proc/net/udp` *after* `close(fd)`, and a UDP socket leaves that file the
@@ -1590,6 +1623,22 @@ the second bug was found, on the test's first run.
 acquire/release, cache-line-isolated indices): wire-to-book p50 X ns / p99.9 Y
 ns, sustains Z M msg/s on loopback, with backpressure degrading to graded feed
 gaps rather than silent loss."
+
+*X, Y and Z are deliberately still blank, because the sentence as drafted wants
+one pair of latencies and one rate, and the run does not offer them at the same
+operating point:*
+
+| | p50 | p99 | p99.9 | rate |
+|---|---:|---:|---:|---:|
+| 1× real time | 6,189 ns | 22,696 ns | 27,885 ns | 83,849 msg/s |
+| max sustainable | 5,290 ns | 1,081,195 ns | 4,606,539 ns | 2,096,222 msg/s |
+
+*Taking p50/p99.9 from the first row and Z from the second reads as one claim
+and is two — the 6.2 µs median and the 2.1 M msg/s never happened together, and
+at 2.1 M the p99.9 is 4.6 ms rather than 27.9 µs. Either quote one row
+("p50 5.3 µs / p99.9 4.6 ms while sustaining 2.1 M msg/s", which is true and
+unflattering), or split the sentence so the operating point travels with each
+number. Do not merge the columns.*
 
 ---
 

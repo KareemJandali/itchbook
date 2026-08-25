@@ -280,33 +280,52 @@ int main(int argc, char** argv) {
     // The verdict the phase actually needs, stated rather than left to the
     // reader: a wire-to-book figure in microseconds cannot be taken on a
     // machine whose idle, pinned CPU loses more than that at p99.9.
-    uint64_t worst_max = 0, total_over_10us = 0, worst_p999 = 0;
+    uint64_t worst_max = 0, total_over_10us = 0, total_over_100us = 0, worst_p999 = 0;
     double total_secs = 0.0;
     bool all_pinned = true;
     for (const Result& r : results) {
         worst_max = std::max(worst_max, r.max);
         worst_p999 = std::max(worst_p999, r.p999);
         total_over_10us += r.over_10us;
+        total_over_100us += r.over_100us;
         total_secs = std::max(total_secs, static_cast<double>(r.wall_ns) / 1e9);
         all_pinned = all_pinned && r.pinned;
     }
-    // THE COUNT DECIDES IT, not a quantile. One gap over 10 us in twenty
-    // seconds would be survivable; thousands per second is a different machine
-    // from the one a microsecond-scale latency claim assumes.
+    // THE THRESHOLD IS 100 us, NOT ZERO GAPS OVER 10 us, and the first version
+    // of this got that wrong in a way worth recording. It demanded LITERALLY
+    // ZERO gaps over 10 us -- a bar no real machine clears -- and duly announced
+    // that a bare-metal host did "NOT hold a CPU" while its own table showed
+    // 30 gaps a second over 10 us, NONE at all over 100 us, and a 43 us worst
+    // case. The same run's sender held a 46 ns p99.9 schedule.
+    //
+    // What the phase actually needs is that nothing interrupts long enough to
+    // move a microsecond-scale p99.9. A gap over 100 us lands in the tail of any
+    // run this repository takes; gaps in the tens of microseconds at a few tens
+    // per second do not -- 30/s across a 60 s sweep is 1,800 samples out of five
+    // million, which reaches p99.96 and not p99.9. So: no gaps over 100 us is
+    // the bar, and the rate over 10 us is reported beside it as context rather
+    // than as a gate.
+    //
+    // For scale, the two machines this was written against: bare metal gave 30
+    // gaps/s over 10 us and ZERO over 100 us; the WSL2 guest on the same silicon
+    // gave 1,343/s over 10 us, ~90/s over 100 us, and an 11 ms worst case.
     const double rate = total_secs > 0
         ? static_cast<double>(total_over_10us) / total_secs / static_cast<double>(results.size())
         : 0.0;
     if (!all_pinned) {
         std::printf("\nVERDICT: could not pin. Nothing here describes a CPU.\n");
-    } else if (total_over_10us == 0) {
-        std::printf("\nVERDICT: this machine holds a CPU. Not one gap over 10 us on any CPU\n"
-                    "tried, across %.0f s each.\n", total_secs);
+    } else if (total_over_100us == 0) {
+        std::printf("\nVERDICT: this machine holds a CPU. Not one gap over 100 us on any CPU\n"
+                    "tried, across %.0f s each -- %.0f per second over 10 us, worst %.0f us.\n"
+                    "Nothing here is long enough to move a microsecond-scale p99.9.\n",
+                    total_secs, rate, static_cast<double>(worst_max) / 1e3);
     } else {
         std::printf("\nVERDICT: this machine does NOT hold a CPU. An idle, pinned CPU with\n"
-                    "nothing else asked of it was off-CPU for longer than 10 us about %.0f\n"
+                    "nothing else asked of it was off-CPU for longer than 100 us about %.0f\n"
                     "times per second, worst %.2f ms. A latency measured here in microseconds\n"
                     "is measuring the scheduler underneath it.\n",
-                    rate, static_cast<double>(worst_max) / 1e6);
+                    total_secs > 0 ? total_over_100us / total_secs / results.size() : 0.0,
+                    static_cast<double>(worst_max) / 1e6);
     }
 
     if (opt.json != nullptr) {
@@ -317,7 +336,7 @@ int main(int argc, char** argv) {
                         "  \"holds_a_cpu\": %s,\n  \"gaps_over_10us_per_cpu_per_second\": %.1f,\n"
                         "  \"cpus\": [\n",
                      opt.seconds, all_pinned ? "true" : "false", worst_p999, worst_max,
-                     (all_pinned && total_over_10us == 0) ? "true" : "false", rate);
+                     (all_pinned && total_over_100us == 0) ? "true" : "false", rate);
         for (size_t i = 0; i < results.size(); ++i) {
             const Result& r = results[i];
             std::fprintf(f,

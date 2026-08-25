@@ -11,150 +11,123 @@ queue, under a load that may exceed what the consumer can absorb.
 > this existed and it is the reason several decisions below look more paranoid
 > than the code needs.
 
-## Read the caveats before the numbers
+## Where these numbers come from
 
-The tables below come from a **pinned run** on an i7-11700K — eight physical
-cores, sixteen logical — with three threads on three distinct CPUs, an invariant
-TSC, and a cross-core offset small enough to be a rounding error against the
-latency being measured. The bound is in the generated table below rather than
-typed here, because it changes with every run: the artifact committed at HEAD
-reports 47 ns and the one the table below reads reports a different value, and a
-figure hand-copied into prose is a figure that is wrong by the next run.
+**Bare metal.** An i7-11700K — eight physical cores, sixteen logical — booted
+from a USB into an Ubuntu 26.04 live session, with the pipeline pinned to CPUs
+7, 6 and 5, which on this host are three distinct physical cores. The run was
+made as root, so `SCHED_FIFO` and `mlockall` were granted rather than requested
+and denied. `/proc/cpuinfo` carries no `hypervisor` flag; `tools/cpu_jitter`
+confirms what that is worth below.
 
-The topology is real and can be asked for. `/sys/devices/system/cpu/cpu*/topology/`
-is fully populated on this host: eight `core_id`s, siblings paired 0-1, 2-3, …,
-14-15, and `lscpu -e` agrees. So `--cores "11 13 15"` is CPU 11 on core 5, CPU 13
-on core 6 and CPU 15 on core 7 — three distinct physical cores, which is what
-`docs/phase10-methodology.md` §4 asks for.
+That sentence is the whole difference between this document and the three
+versions of it that came before. Every earlier attempt was made in a WSL2 guest,
+and every one of them reported `NO RATE QUALIFIED` — the load generator missed
+its own schedule at every rate on the ladder, so the numbers described the
+generator. Those runs are kept in the comparison below, because two machines
+measured the same way say more than either alone.
 
-Two things worth recording about getting there, because both are traps. The
-script's own default would have been wrong: `nproc` returns **13** here, not 16,
-because `isolcpus=13,14,15` removes those CPUs from the shell's affinity mask,
-so `scripts/pinned-run.sh`'s last-three rule yields 10, 11, 12 — and 10 and 11
-are siblings of core 5. And the isolated set is worse than the default: 13, 14
-and 15 span only cores 6 and 7, so no three-way distinct-core assignment exists
-inside it at all. A run pinned to 13/14/15 puts two of the three threads on one
-physical core while reporting all three as pinned.
+## The machine passed its entrance exam
 
-That run was made, and it is preserved as a null result: pinned to 13/14/15 with
-the book and the sender sharing core 7, the sweep produced **the same knee (10×),
-the same cliff (25×) and the same max sustainable rate (838,489 msg/s)** as the
-distinct-core run. On this host the SMT collision is not what limits anything —
-see the CPU-availability measurement below, which is.
+`docs/phase10-methodology.md` §1 asks for one thing before anything else: run
+the sender alone, against a port nothing is listening on, and see whether it can
+hold a schedule. If it cannot, nothing measured afterwards is about the
+pipeline. Recorded under `validation/sender-qualification/`:
 
-**The clock is settled.** `tsc_offset` pins two threads to two separate CPUs
-and ping-pongs 200,000 samples in each direction. The offset estimate comes
-back smaller than the method can resolve — bounded, not distinguishable
-from zero — against a wire-to-book latency in the microseconds. On the earlier
-container it reported UNMEASURABLE; on a Mac it cannot report at all, because
-Apple silicon has no thread-affinity API. This is the phase 10 done-item asking
-for the cross-core offset measured and reported, and it is met.
+| host | rate | p50 | p99 | **p99.9** | worst |
+|---|---:|---:|---:|---:|---:|
+| **bare metal** | 200,000 msg/s | 36 | 45 | **46** | 19,238 |
+| **bare metal** | 83,849 msg/s (1×) | 38 | 49 | **810** | 9,109 |
+| WSL2 | 200,000 msg/s | 30 | 22,490 | 106,002 | 1,338,978 |
+| WSL2 | 83,849 msg/s (1×) | 40 | 28,758 | 294,423 | 4,319,590 |
 
-**The sweep is still not a result, and the reason is unchanged.** `mold_replay_udp`
-measures its own lateness and reports it per rate. Its p99.9 lateness exceeded the
-10 µs bar at **every rate on the ladder**, including 1× real time, so the numbers
-below describe the load generator rather than the pipeline. The machine runs
-Linux under a hypervisor: threads pin to vCPUs, and the vCPUs are scheduled by
-something this process cannot see. Pinning inside a VM is real and insufficient.
+Nanoseconds; the bar is 10,000 at p99.9. Bare metal clears it by **217×** at
+200,000 msg/s and by **12×** at one times real time. The same binary on the same
+silicon under a hypervisor missed it by 10.6× and 29×. Nothing about the program
+changed between those rows — only what was underneath it.
 
-So one caveat has gone and one has hardened:
+Both bare-metal rows record `scheduler_granted: true`, `memory_locked: true` and
+zero send errors, and both achieved exactly the rate they were offered.
 
-1. **The sender still cannot hold its schedule** — now demonstrably a property
-   of the nested scheduler rather than of core contention, since three threads
-   had three distinct physical cores to themselves and it made no difference to
-   lateness, and neither did giving two of them the same core.
-2. **Pinning is real here**, unlike before. `pinned` reads true and `cpus`
-   records 11/13/15 — cores 5, 6 and 7. The script's default on this host would
-   have been 10/11/12, two of which share core 5, while reporting all three as
-   pinned. Nothing in the harness reads the sibling map, so the placement is the
-   operator's to get right; `--cores` is how.
-3. **The arrival and completion stamps come from the same clock family**, and
-   the offset between the two CPUs reading it is bounded well under the
-   microsecond the latency is measured in — the figure is in the generated
-   table. Their difference means something now.
+## What the hypervisor was actually costing
 
-What remains is a load generator that can hold a sub-10 µs schedule.
-`scripts/pinned-run.sh` is the run; it needs a different host.
+`tools/cpu_jitter` asks the question underneath every latency figure in this
+phase: a thread pinned to a CPU, asking for nothing, reading a monotonic clock
+in a loop. A gap between consecutive reads is time the thread was **not
+executing**, because nothing in the loop can take longer than a clock read.
 
-**`isolcpus` IS available under WSL2, and it does not help.** An earlier version
-of this section said it was unavailable. It is not: `kernelCommandLine =
-isolcpus=13,14,15` in `%USERPROFILE%\.wslconfig` puts it in `/proc/cmdline`, and
-`/sys/devices/system/cpu/isolated` then reads `13-15`. What it buys is measured
-below, and the answer is nothing.
+| host | CPU | gaps/s > 10 µs | gaps/s > 100 µs | gaps/s > 1 ms | worst gap |
+|---|---:|---:|---:|---:|---:|
+| **bare metal** | 7 | 30 | **0** | **0** | 24,732 ns |
+| **bare metal** | 6 | 30 | **0** | **0** | 24,730 ns |
+| **bare metal** | 5 | 32 | **0** | **0** | 43,298 ns |
+| WSL2 | 13 (isolated) | 1,352 | 95 | 4.6 | 10,558,100 ns |
+| WSL2 | 15 (isolated) | 1,355 | 96 | 4.4 | 11,087,271 ns |
+| WSL2 | 5 (not isolated) | 1,306 | 79 | 3.3 | 9,850,366 ns |
 
-**This machine cannot hold a CPU, and that is the obstacle.** `tools/cpu_jitter`
-exists to answer the question underneath every latency figure in the phase: a
-thread pinned to a CPU, asking for nothing, reading a monotonic clock in a loop.
-A gap between consecutive reads is time the thread was not executing, because
-nothing in the loop can take longer than a clock read. Four CPUs at once, from
-one barrier, 20 s, on an otherwise idle box — two isolated and two not, all four
-on distinct physical cores (`validation/cpu-jitter.json`):
+`validation/cpu-jitter-baremetal.json` and `validation/cpu-jitter.json`. Roughly
+**45× fewer** interruptions over 10 µs, **none at all** over 100 µs against ~90 a
+second, and a worst case **250× smaller** — 43 µs against 11 ms.
 
-| CPU | isolated | gaps/s > 10 µs | gaps/s > 1 ms | worst gap | wall lost to gaps > 100 µs |
-|---:|:--|---:|---:|---:|---:|
-| 5 | no | 1,306 | 3.3 | 9.85 ms | 2.34% |
-| 11 | no | 1,360 | 3.5 | 10.21 ms | 2.91% |
-| 13 | **yes** | 1,352 | 4.6 | 10.56 ms | 3.50% |
-| 15 | **yes** | 1,355 | 4.4 | 11.09 ms | 3.56% |
+One note on those two files. Both carry `holds_a_cpu: false`, and for the
+bare-metal one that field is wrong: the binary that wrote it gated on *literally
+zero* gaps over 10 µs, a bar no real machine clears. The tool now gates on gaps
+over 100 µs — long enough to move a microsecond-scale p99.9, where a 43 µs blip
+at 30 a second is not — and recomputing from the numbers those same files record
+gives **true** for bare metal and false for WSL2. The gap counts in the table
+above are what the tool measured and are unaffected; only the verdict field
+predates the fix.
 
-An idle, pinned CPU is off-CPU for longer than 10 µs about **1,343 times a
-second**, and the isolated CPUs are marginally *worse* than the ones in the
-general pool, not better. `isolcpus` removes a CPU from the guest scheduler's
+Three things the WSL2 side of that table settles, and they are worth keeping
+because each was a plausible theory that turned out to be wrong:
+
+**`isolcpus` bought nothing.** It is available under WSL2 —
+`kernelCommandLine = isolcpus=13,14,15` in `.wslconfig` puts it in
+`/proc/cmdline` — and the isolated CPUs came out marginally *worse* than the
+ones left in the general pool. It removes a CPU from the guest scheduler's
 load-balancing mask and has no representation on the host side at all.
 
-**And the guest does not know.** Over the same 20 seconds the kernel credited
-each thread with 19,998.7 ms of CPU against 20,000.0 ms of wall — 1.2–2.1 ms
-unaccounted — and reported **5 involuntary context switches** against roughly
-27,000 gaps longer than 10 µs. `/proc/pressure/cpu` reads 0.00 and `/proc/stat`
-steal reads 0.
+**The guest could not see what it was losing.** Over 20 seconds the kernel
+credited each thread with 19,998.7 ms of CPU against 20,000.0 ms of wall and
+reported **5 involuntary context switches** against roughly 27,000 gaps longer
+than 10 µs. `/proc/pressure/cpu` read 0.00 and `/proc/stat` steal read 0. A
+guest losing the CPU underneath the kernel cannot diagnose itself from either.
 
-**And it happens to all four at once.** The ten worst gaps on every CPU cluster
-in the same ~300 ms window (t ≈ 16.75–17.06 s), each around 10 ms, on isolated
-and non-isolated CPUs alike. That is not per-CPU scheduling; it is the whole VM
-being descheduled underneath a guest with no way to observe it. No in-guest
-setting reaches that, which is why the remedy is a different host rather than a
+**It happened to every CPU at once.** The ten worst gaps on all four clustered
+in the same ~300 ms window, each around 10 ms, isolated and non-isolated alike.
+That is the whole VM being descheduled, not per-CPU scheduling — which is why no
+in-guest setting reached it and the remedy was a different host rather than a
 different flag.
 
-**Pinning alone is not enough, and this has now been measured three times.** In
-the container, best-of-five sender lateness went from 562 µs unpinned to 39 µs
-pinned — a 14× improvement that still missed the 10 µs bar by 4×. On this host,
-with three CPUs to itself, the bar is missed at every rate anyway.
+`nproc` is worth one warning. It reports the calling shell's *affinity mask*, so
+under `isolcpus=13,14,15` it returned **13**, not 16 — and `pinned-run.sh`'s
+last-three default therefore proposed CPUs that were SMT siblings. The script now
+reads `core_id` from sysfs and says so when two of the three share a core.
 
-The third measurement is the one the methodology asks for first and that had
-never been run: **the sender alone, against a port nothing is listening on**, at
-the full 5,032,462-message feed, with RT bandwidth throttling lifted so the
-scheduling class is the only variable. Recorded under
-`validation/sender-qualification/`:
+## The clock
 
-| condition | p50 | p99 | **p99.9** | worst |
-|---|---:|---:|---:|---:|
-| CPU 14 (isolated), SCHED_OTHER | 30 | 34,017 | 241,385 | 2,840,577 |
-| CPU 14, SCHED_FIFO 80 | 30 | 15,791 | **115,103** | 1,644,831 |
-| CPU 5 (**not** isolated), SCHED_FIFO 80 | 30 | 22,490 | **106,002** | 1,338,978 |
-| CPU 14, SCHED_FIFO 80, at 1× real time | 40 | 28,758 | **294,423** | 4,319,590 |
-| CPU 14, SCHED_FIFO 80, spin margin 100 µs | 41 | 78,080 | 256,050 | 3,690,585 |
+`tsc_offset` pins two threads to two separate CPUs and ping-pongs 200,000
+samples in each direction. The offset comes back **smaller than the method can
+resolve** — bounded rather than measured, which is what healthy hardware gives —
+against a wire-to-book p50 in the microseconds. The figures are in the generated
+table below rather than typed here, because they move run to run: four
+successive runs on this hardware reported 47, 48, 58 and 73 ns of resolution. A
+figure hand-copied into prose is a figure that is wrong by the next run.
 
-Nanoseconds. The bar is 10,000. The best case is **10.6× over it** with no
-receiver, no book and nothing else running; at 1× real time — which is what the
-first open done-item requires — it is **29× over**. This machine is disqualified
-by the methodology's own entrance exam, and the sweep below is therefore a test
-of the harness rather than a measurement of the pipeline.
+## One thing these numbers do not explain
 
-Two things that table settles in passing. Lowering the spin margin makes the
-tail *worse*, not better — p99 15,791 → 78,080 ns at 100 µs — which is what the
-tool's old advice to *raise* it predicted; the advice was incomplete rather than
-backwards, because it never said that raising the margin raises the duty cycle
-and walks a SCHED_FIFO sender into RT bandwidth throttling. Nothing here tests
-above 500 µs, so the upper direction remains untested on this host and the
-methodology's own sweep (100/500/2000 µs → 96/27/21 µs) is the only evidence for
-it. And every row records `memory_locked: false`: with `ulimit -l` at 64 KB,
-`mlockall` fails once the preloaded feed is any real size, which
-`setcap cap_sys_nice` alone does not fix — it needs `cap_ipc_lock` too.
+The p99.9 column climbs to 1.5 ms at 5× and 3.4 ms at 10× on rows that are
+otherwise clean — no drops, sender holding its schedule to under a microsecond,
+peak ring occupancy of 2,318 and 5,107 slots out of 65,536. There is not enough
+queue at those rates for queueing to explain it, and `cpu_jitter` measured a
+worst gap of 43 µs on the same machine minutes earlier, so it is not obviously
+the scheduler either.
 
-The CPU, isolation and rate columns above are the `taskset` and `--rate`
-invocation, not fields in the JSON: `mold_replay_udp` records rate, lateness and
-`realtime{}` and nothing about placement. From the files alone, the scheduling
-class and the 1× rate are checkable; the rest is the run description.
+It does not invalidate the run — the sender qualified, the drop accounting is
+sound, and p50 and p99 are stable across a 25-fold rate change. But the far tail
+below the knee is not yet accounted for, and it should be understood before any
+of it is quoted as a property of the pipeline rather than of the measurement.
+
 
 ## What the sweep does
 
@@ -190,11 +163,7 @@ as zero — "no drops" and "this platform cannot tell you" are different claims.
 
 <!-- generated:begin -->
 
-> **NOT QUOTABLE.**
->
-> - The load generator missed its schedule at every rate: p99.9 lateness exceeded 10,000 ns at all 9 rungs, which is the same order as the latency this run exists to measure. The curve, the knee, the cliff and the max sustainable rate below therefore cannot be attributed to this pipeline.
->
-> Everything below is printed in full because deleting it would hide the evidence. None of it may be quoted.
+> **Partly quotable.** The sender held its schedule at 7 of 9 rates; the rows whose verdict includes *sender late* below measure the generator as much as the pipeline.
 
 ## What was run
 
@@ -204,11 +173,11 @@ as zero — "no drops" and "this platform cannot tell you" are different claims.
 | one times real time | 83,849 msg/s |
 | ring | 65,536 slots |
 | clock | rdtsc / rdtscp (per-core counter) |
-| cross-core clock offset | **bounded under 49 ns**, not measured — the estimate is smaller than the method can resolve (rdtsc / rdtscp (per-core counter)) |
+| cross-core clock offset | **bounded under 73 ns**, not measured — the estimate is smaller than the method can resolve (rdtsc / rdtscp (per-core counter)) |
 | threads pinned | yes |
 | runs per rate | 5 (best of) |
 | rates on the ladder | 9 |
-| rates where the sender held its schedule | 0 of 9 |
+| rates where the sender held its schedule | 7 of 9 |
 
 ## The curve
 
@@ -218,24 +187,24 @@ Offered is what the sender was told to send; achieved is what it managed. They a
 
 | offered | achieved | × real time | p50 ns | p99 ns | p99.9 ns | ring-full | kernel | mid-block | peak occupancy | sender p99.9 late | verdict |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:--|
-| 83,849 | 83,848 | 1× | 14,163 | 76,175 | 298,728 | 0 | 0 | 0 | 883 | 136,073 | sender late |
-| 167,698 | 167,697 | 2× | 18,330 | 122,763 | 2,662,667 | 0 | 0 | 0 | 3,089 | 954,843 | sender late |
-| 419,244 | 419,244 | 5× | 17,560 | 201,354 | 8,519,856 | 0 | 0 | 0 | 8,493 | 3,569,883 | sender late |
-| 838,489 | 838,489 | 10× | 15,803 | 1,700,240 | 8,555,158 | 0 | 0 | 0 | 12,821 | 5,498,893 | sender late |
-| 2,096,222 | 2,096,221 | 25× | 578,553 | 113,877,703 | 126,436,251 | 12,780 | 0 | 1 | 65,536 | 8,767,867 | **lossy**, sender late |
-| 4,192,445 | 4,192,410 | 50× | 12,673,989 | 21,787,653 | 24,274,673 | 30,245 | 0 | 2,719 | 65,536 | 289,648 | **lossy**, sender late |
-| 8,384,890 | 8,384,460 | 100× | 12,827,247 | 19,517,977 | 20,232,600 | 65,901 | 0 | 0 | 65,536 | 354,116 | **lossy**, sender late |
-| 16,769,780 | 15,717,107 | 200× | 15,604,404 | 26,768,048 | 29,531,689 | 88,396 | 0 | 43 | 65,536 | 33,219,262 | **lossy**, sender late |
-| 33,539,560 | 17,426,914 | 400× | 13,331,213 | 20,301,118 | 21,840,023 | 86,964 | 0 | 0 | 65,536 | 138,790,615 | **lossy**, sender late |
+| 83,849 | 83,848 | 1× | 6,189 | 22,696 | 27,885 | 0 | 0 | 0 | 426 | 715 | clean |
+| 167,698 | 167,697 | 2× | 5,745 | 22,802 | 32,106 | 0 | 0 | 0 | 850 | 563 | clean |
+| 419,244 | 419,244 | 5× | 5,296 | 22,177 | 1,512,661 | 0 | 0 | 0 | 2,318 | 486 | clean |
+| 838,489 | 838,489 | 10× | 5,272 | 22,201 | 3,434,200 | 0 | 0 | 0 | 5,107 | 615 | clean |
+| 2,096,222 | 2,096,222 | 25× | 5,290 | 1,081,195 | 4,606,539 | 0 | 0 | 0 | 16,145 | 564 | clean |
+| 4,192,445 | 4,192,444 | 50× | 5,789 | 106,403,850 | 116,071,334 | 10,516 | 0 | 0 | 65,536 | 3,184 | **lossy** |
+| 8,384,890 | 8,384,888 | 100× | 4,874,644 | 10,423,107 | 11,692,954 | 14,657 | 0 | 124 | 65,536 | 7,946 | **lossy** |
+| 16,769,780 | 16,769,702 | 200× | 5,023,418 | 7,392,616 | 7,583,896 | 53,362 | 0 | 0 | 65,536 | 12,537 | **lossy**, sender late |
+| 33,539,560 | 21,606,187 | 400× | 5,180,810 | 8,205,128 | 8,539,881 | 67,318 | 0 | 42 | 65,536 | 82,842,602 | **lossy**, sender late |
 
 ## The two annotations
 
 | | |
 |---|---|
-| max sustainable rate | 838,489 msg/s achieved (838,489 offered, 10× real time) |
-| ...at which | p50 15,803 ns, p99 1,700,240 ns, p99.9 8,555,158 ns |
-| knee | 838,489 msg/s (10× real time), p99 1,700,240 ns against a 122,763 ns baseline |
-| cliff | 2,096,222 msg/s (25×) — 12,780 ring-full, 0 kernel, 1 mid-block |
+| max sustainable rate | 2,096,222 msg/s achieved (2,096,222 offered, 25× real time) |
+| ...at which | p50 5,290 ns, p99 1,081,195 ns, p99.9 4,606,539 ns |
+| knee | 2,096,222 msg/s (25× real time), p99 1,081,195 ns against a 22,696 ns baseline |
+| cliff | 4,192,445 msg/s (50×) — 10,516 ring-full, 0 kernel, 0 mid-block |
 
 <!-- generated:end -->
 
@@ -300,15 +269,15 @@ reader of the sweep output will reach for is the same hypothesis.
 
 The prediction was that the ceiling is arithmetic: decompression costs D, the book costs B, `parse()` alternates between them on one thread, so the sequential path pays D + B and the overlapped path cannot beat max(D, B). Available speedup (D + B) / max(D, B), at most 2×.
 
-**The measurement went straight through that ceiling** — at every chunk size, by 49% to 63%. A pipeline cannot beat max(D, B), so the fault is in the decomposition, and the model's hidden assumption is the culprit: that the work is *invariant under the split*. It is not.
+**The measurement went straight through that ceiling** — at every chunk size, by 21% to 35%. A pipeline cannot beat max(D, B), so the fault is in the decomposition, and the model's hidden assumption is the culprit: that the work is *invariant under the split*. It is not.
 
 | | |
 |---|---:|
 | feed | 5,034,007 messages |
-| D — decompress, frame, length-check, build nothing | 0.58 s |
-| B — the book, by subtraction (T_seq − D) | 2.71 s |
-| D + B — the single-threaded path | 3.29 s |
-| model ceiling (D + B) / max(D, B) | 1.21× |
+| D — decompress, frame, length-check, build nothing | 0.64 s |
+| B — the book, by subtraction (T_seq − D) | 1.36 s |
+| D + B — the single-threaded path | 2.00 s |
+| model ceiling (D + B) / max(D, B) | 1.47× |
 | larger half | book |
 | runs per configuration | 5 (best of) |
 
@@ -318,34 +287,34 @@ The prediction was that the ceiling is arithmetic: decompression costs D, the bo
 
 | | |
 |---|---:|
-| frame only, no inflate | 0.15 s |
-| frame + book, no inflate | 2.44 s |
-| **B isolated** | **2.29 s** |
-| subtraction overstates the book by | 18% |
+| frame only, no inflate | 0.16 s |
+| frame + book, no inflate | 1.48 s |
+| **B isolated** | **1.32 s** |
+| subtraction overstates the book by | 3% |
 
 Two effects, both real, and neither one is overlap:
 
-1. **Inflate and the book contend.** B by subtraction is 2.71 s; the book's isolated cost is 2.29 s. zlib's 32 KB window and the book's ref map do not fit in the same cache together, so interleaving them on one core costs more than running either alone.
+1. **Inflate and the book contend.** B by subtraction is 1.36 s; the book's isolated cost is 1.32 s. zlib's 32 KB window and the book's ref map do not fit in the same cache together, so interleaving them on one core costs more than running either alone.
 
-2. **The split moves work off the consumer.** Framing alone is 0.15 s for 5,034,007 messages — two `gzread` calls and a vector resize each. In the pipeline the producer absorbs all of it and the consumer walks a contiguous chunk instead. That is a cheaper inner loop, not overlap, and it lands in the same number.
+2. **The split moves work off the consumer.** Framing alone is 0.16 s for 5,034,007 messages — two `gzread` calls and a vector resize each. In the pipeline the producer absorbs all of it and the consumer walks a contiguous chunk instead. That is a cheaper inner loop, not overlap, and it lands in the same number.
 
 Stall columns are **poll counts, not time**, and are not comparable across the two sides: a consumer's empty poll is a load and a compare, while a producer's full poll goes through `writable()`, which refreshes the consumer's cache line. Which half is slower is settled above, by time.
 
 | chunk | wall clock | speedup | % of ceiling | producer polls | consumer polls | chunks |
 |---:|---:|---:|---:|---:|---:|---:|
-| 64 KB | 1.79 s | 1.84× | 151% | 1,153,663,874 | 28,776,560 | 2,310 |
-| 256 KB | 1.82 s | 1.81× | 149% | 1,178,038,059 | 7,024,499 | 578 |
-| 1024 KB | 1.66 s | 1.98× | 163% | 842,985,317 | 6,933,801 | 145 |
+| 64 KB | 1.12 s | 1.79× | 121% | 385,341,573 | 97,788,563 | 2,310 |
+| 256 KB | 1.05 s | 1.90× | 130% | 229,349,781 | 10,985,265 | 578 |
+| 1024 KB | 1.01 s | 1.98× | 135% | 193,920,716 | 8,252,146 | 145 |
 
 ### The predictions, graded
 
 | | predicted | measured | verdict |
 |---|---|---|:--|
-| P1 the ceiling is arithmetic | measured speedup ≤ (D+B)/max(D,B) | ceiling 1.21×, best 1.98× (163%) | **falsified — the model assumed the work is invariant under the split, and it is not** |
+| P1 the ceiling is arithmetic | measured speedup ≤ (D+B)/max(D,B) | ceiling 1.47×, best 1.98× (135%) | **falsified — the model assumed the work is invariant under the split, and it is not** |
 | P2 speedup here | 1.2–1.7× | 1.98× at 1024 KB | **falsified — above the range** |
-| P3 falsification | refuted if overlapped ≥ 0.95× sequential | 0.50× sequential | **holds** |
-| P4 chunk size | FLAT | 9.6% spread across 64 KB / 256 KB / 1 MB, not ordered | **kept — flat** |
-| P5 which side stalls | producer more often (B > D) | producer 1,153,663,874, consumer 28,776,560 | **withdrawn — poll counts are not comparable across the sides; see above** |
+| P3 falsification | refuted if overlapped ≥ 0.95× sequential | 0.51× sequential | **holds** |
+| P4 chunk size | FLAT | 10.9% spread across 64 KB / 256 KB / 1 MB, monotonic | **falsified — chunk size matters** |
+| P5 which side stalls | producer more often (B > D) | producer 385,341,573, consumer 97,788,563 | **withdrawn — poll counts are not comparable across the sides; see above** |
 
 <!-- generated:overlap:end -->
 
