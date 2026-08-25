@@ -2498,12 +2498,80 @@ must be byte-identical to the phase-9 book from the *original* feed. It is
 testable on data already in hand, before OUCH or SoupBinTCP exist, and it is
 built first.
 
-### 12.1 — Protocol scope
+**The order below changed when this phase was split, and the reason is P1.**
+v1.0 ran protocol → gateway → loop → validation, with the emitting matcher in
+the middle and its P1 check as one item inside it. But P1 needs no OUCH, no
+session layer and no sockets — only data already in hand — and it is the single
+result that can invalidate the topology. Everything protocol-shaped is therefore
+sequenced *after* it. The old "12.5 — Testing" section is gone as a section: its
+four items were gates on four different steps, and a testing section at the end
+of a ten-week phase is the structure that lets them slip.
 
-`include/itchbook/ouch/` — pick one OUCH version (4.2 is simpler; state the
-choice), implement the core subset, and list deviations in the header the way
-`messages.hpp` does for ITCH, including which lengths are evidence and which are
-still just the spec. That convention now exists in this repository; use it.
+| step | what it closes | weeks |
+|---|---|---|
+| 12.1 | the replayer splits adds from executions | 1.5 |
+| 12.2 | **P1**, and the determinism gate | 1.5 |
+| 12.3 | OUCH 4.2 | 1.0 |
+| 12.4 | SoupBinTCP | 0.5 |
+| 12.5 | gateway and risk | 1.5 |
+| 12.6 | fuzz and the cross-protocol differential | 1.0 |
+| 12.7 | the closed loop | 1.5 |
+| 12.8 | tick-to-trade, decomposed | 1.0 |
+| 12.9 | replay-vs-live A/B and the results doc | 1.0 |
+
+Ten and a half against a ~10-week envelope. 12.8 is the one that cannot absorb
+the overrun, because it needs a bare-metal window rather than more hours.
+
+### 12.1 — The replayer splits: adds are state, executions are events
+
+12.0's decision, made mechanical. `A`/`F`/`U`/`X`/`D` are **applied** to the
+book through the phase-9 path you already trust. `E`/`C`/`P` are **replayed as
+synthesised aggressors** through the matcher, walking the queue and taking your
+shares if they are in front of them. An add is a fact about the book; an
+execution is a fact about a trade, and only the second is a crossing event you
+are entitled to replay as one.
+
+Reference space is partitioned in this step rather than later: strategy
+references take the high half of the 64-bit space, and the replayer **asserts**
+no historical reference enters it. A collision is a silent book corruption —
+phase 12's version of the locate trap, and it wants the same treatment the
+locate trap got, which is an assert that runs in CI rather than a comment.
+
+**Done when:** a full phase-9 day replays with zero strategy orders and the
+resulting book equals the phase-9 book at every message; the partition assert is
+armed and never fires. No OUCH, no sockets, no emission yet — this step is
+gradeable entirely against machinery that already exists.
+
+### 12.2 — The emitting matcher, and P1
+
+Every matcher mutation produces its ITCH message — `A`/`F` on accept, `E` on
+execution, `X` on partial cancel, `D` on delete, `U` on replace, `P` for
+non-displayed executions if hidden slices trade — sequenced, timestamped,
+MoldUDP64-wrapped by the existing `mold` layer, published on UDP. Your exchange
+now produces the wire format it consumes, which is the sentence that makes the
+project title honest.
+
+**This is where P1 is graded, and P1 decides the phase.** With zero strategy
+orders, the book built from the *emitted* feed must be byte-identical to the
+phase-9 book built from the *original* feed — the emitted stream graded by your
+own phase-3 machinery, so the loop grades itself. It runs on data already in
+hand, and it is built **before** OUCH and SoupBinTCP exist rather than after,
+because if it fails the topology is wrong and every line of protocol work
+written on top of it was wasted.
+
+Determinism arrives here too, because every test after this one leans on it:
+fixed seed + fixed inbound script ⇒ byte-identical emitted ITCH, hashed and
+checked in CI the way phase 10's gate already is.
+
+**Done when:** P1 passes byte-for-byte on a full day; the determinism hash is in
+CI, and a deliberate one-field change is shown to break it.
+
+### 12.3 — OUCH 4.2
+
+`include/itchbook/ouch/` — 4.2 is the simpler version and the choice is stated
+rather than assumed. Core subset, deviations listed in the header the way
+`messages.hpp` does for ITCH, **including which lengths are evidence and which
+are still just the spec.** That convention now exists in this repository; use it.
 
 - Inbound: Enter Order `O`, Replace `U`, Cancel `X`.
 - Outbound: System Event `S`, Accepted `A`, Replaced `U`, Canceled `C`,
@@ -2512,37 +2580,73 @@ still just the spec. That convention now exists in this repository; use it.
   field-offset table style, same trap-hunting mindset. The token/ref distinction
   is this protocol's version of the locate trap.
 
-**Transport:** minimal SoupBinTCP underneath — login request/accept/reject,
-sequenced data packets, client and server heartbeats, end of session. Small
-protocol (2-byte length + 1-byte type framing), and implementing it upgrades the
-claim from "parses OUCH structs" to "implements the session layer real firms log
-into." Heartbeat timeout wires into the kill switch: a dead session flattens.
+**Done when:** the field-offset tables exist with evidence separated from spec;
+encode → decode → encode is byte-identical over a corpus covering every message
+in both directions; the token↔ref distinction is cross-checked rather than
+assumed.
 
-### 12.2 — The gateway and the emitting matcher
+### 12.4 — SoupBinTCP
 
-1. `engine/gateway.hpp` — accepts a SoupBin session, validates OUCH (unknown
-   token, bad price, wrong state → `J` with reason codes), assigns exchange-side
-   refs, maintains the token↔ref map, and applies the risk layer **before** the
-   matcher: `risk/kill_switch.hpp` in-line, price collar against the current
-   book, max order rate, max position. A tripped switch rejects new flow and
-   cancels resting orders — that behaviour is a test, not a hope.
-2. **The matcher emits ITCH.** Every mutation produces its message — `A`/`F` on
-   accept, `E` on execution, `X` on partial cancel, `D` on delete, `U` on
-   replace, `P` for non-displayed executions if hidden slices trade — sequenced,
-   timestamped, MoldUDP64-wrapped by the existing `mold` layer, published on
-   UDP. Your exchange now produces the wire format it consumes, which is the
-   sentence that makes the project title honest.
-3. Determinism: fixed seed + fixed inbound script ⇒ byte-identical ITCH output.
-   Every test below leans on it.
+Minimal, and small enough to be its own step: login request/accept/reject,
+sequenced data packets, client and server heartbeats, end of session. 2-byte
+length + 1-byte type framing. Implementing it upgrades the claim from "parses
+OUCH structs" to "implements the session layer real firms log into."
 
-### 12.3 — The loop and the number
+**Done when:** accept and reject paths are both tested; a session survives an
+idle period on heartbeats alone; a peer that stops heartbeating is declared dead
+within the timeout, and that death is *observable* to a caller — 12.5 is what
+makes it flatten.
 
-Strategy process (phase-10 receiver + ring + book on the ITCH side, SoupBin
-client on the OUCH side, `InventoryStrategy` in the middle) ⇄ exchange process
-(gateway + matcher + ITCH publisher), with the historical-state replayer as the
-third process per 12.0.
+### 12.5 — The gateway and the risk layer
 
-One histogram per hop so the total decomposes — and with log buckets, a shape
+`engine/gateway.hpp` — accepts a SoupBin session, validates OUCH (unknown token,
+bad price, wrong state → `J` with reason codes), assigns exchange-side refs, and
+maintains the token↔ref map. The risk layer runs **before** the matcher:
+`risk/kill_switch.hpp` in-line, price collar against the current book, max order
+rate, max position. A tripped switch rejects new flow *and* cancels resting
+orders.
+
+The heartbeat timeout from 12.4 wires into the same switch: a dead session
+flattens.
+
+**Done when:** flatten-on-trip and flatten-on-session-death are both proven by
+tests that **count the cancels**, rather than by asserting the switch changed
+state. The switch reaching TRIPPED is not the claim; the book going flat is.
+
+### 12.6 — Fuzz, and the cross-protocol differential
+
+`tests/fuzz/fuzz_gateway.cpp` — random valid and invalid OUCH byte streams:
+malformed lengths, unknown tokens, replace-after-fill races, cancel-of-cancel.
+
+The differential is house style: every OUCH `E` has a matching ITCH `E`/`P`;
+token-level shares conserved across both streams; the book built by replaying
+the emitted ITCH equals the matcher's internal book.
+
+**Done when:** 1M ops run clean in CI under ASan/UBSan with no crash, **every
+inbound message answered exactly once**, and the OUCH↔ITCH invariants hold
+across the whole corpus.
+
+### 12.7 — The closed loop
+
+Three processes: the historical-state replayer of 12.1, the exchange (gateway +
+matcher + ITCH publisher), and the strategy (phase-10 receiver + ring + book on
+the ITCH side, SoupBin client on the OUCH side, `InventoryStrategy` in the
+middle).
+
+Two clocks, per 12.0. The market runs in **replay time** — it drives message
+timestamps and the strategy's `T − t`. Tick-to-trade is **wall clock**. Feeding
+wall clock to an A–S horizon during a 50× replay changes the strategy rather
+than the load, which is a silent experimental error and therefore wants an
+assert rather than a paragraph.
+
+**Done when:** the strategy trades against your own exchange over real sockets,
+inside a replayed historical day, under the 12.0 topology — with its own fills
+observed back through its own feed handler, not reported to it by the exchange
+side.
+
+### 12.8 — Tick-to-trade, decomposed
+
+One histogram per hop, so the total decomposes — and with log buckets, a *shape*
 per hop, not just a percentile:
 
 - **t₀** packet arrival at the strategy socket → **t₁** book updated (phase 10's
@@ -2553,46 +2657,58 @@ per hop, not just a percentile:
 - **t₃ → t₄** gateway accept; **t₄ → t₅** match + ITCH publish; **t₅ → t₆** own
   fill observed back at the strategy — the full round trip.
 
-Stacked bar at p50 and p99.9. Any hop you cannot explain, you have not finished.
+Stacked bar at p50 and p99.9.
 
-### 12.4 — The validation experiment that makes it a system
+**This step needs bare metal.** Phase 10 established that the WSL2 box cannot
+hold a core and that its noise floor sits above the numbers being measured; a
+seven-hop decomposition is strictly more sensitive to that than the one-hop
+number was, because the per-hop figures are smaller than the total. Budget the
+boot, rather than budgeting around it.
 
-**Replay-vs-live A/B.** Identical historical day, identical strategy, twice: (a)
-through the phase-6/11 backtester, (b) live through the loop, with (a)'s latency
-model set to the *measured* hop latencies from (b). Diff the fills. The
-differences are precisely the backtester's modelling error — queue
-approximation, latency-model shape, tie-breaks — and now they are enumerable.
-`docs/phase12-results.md` is built around that table.
+**Done when:** p50 and p99.9 are reported per hop and the hops sum to the total;
+**any hop you cannot explain means you have not finished.**
+
+### 12.9 — Replay-vs-live A/B, and the results document
+
+Identical historical day, identical strategy, twice: (a) through the phase-6/11
+backtester, (b) live through the loop, with (a)'s latency model set to the
+*measured* hop latencies from (b). Diff the fills. The differences are precisely
+the backtester's modelling error — queue approximation, latency-model shape,
+tie-breaks — and now they are enumerable. `docs/phase12-results.md` is built
+around that table, generated from artifacts like every other results table in
+phases 9–12.
 
 Caveats stated up front, both of them: your orders consume liquidity the
 historical participants never saw (no market impact model in either lane), and
 under the 12.0 hybrid those participants never react to you at all. Perfect
 agreement is not expected; **explained** disagreement is the bar.
 
-### 12.5 — Testing
-
-1. **Cross-protocol differential**, house style: every OUCH `E` has a matching
-   ITCH `E`/`P`; token-level shares conserved across both streams; the book
-   built by replaying the *emitted* ITCH equals the matcher's internal book — the
-   emitted feed graded by your own phase-3 machinery, so the loop grades itself.
-2. `tests/fuzz/fuzz_gateway.cpp` — random valid and invalid OUCH byte streams:
-   malformed lengths, unknown tokens, replace-after-fill races, cancel-of-cancel.
-   Invariants: no crash under ASan/UBSan, every inbound message answered exactly
-   once, ITCH/OUCH consistency holds. CI runs 1M ops.
-3. SoupBin session tests: heartbeat timeout → kill switch → flatten, proven by a
-   test that counts the cancels.
-4. Determinism gate in CI: fixed script ⇒ byte-identical emitted ITCH.
+**Done when:** the A/B is published and every disagreement is categorised. A
+disagreement categorised as unexplained is a finding and may stand; an
+*uncategorised* one is an unfinished phase.
 
 ### Done — Phase 12
 
-- [ ] Strategy trades against your own exchange over real sockets, inside a
-      replayed historical day, under the 12.0 topology.
-- [ ] Tick-to-trade p50/p99.9 reported and decomposed per hop; every hop
-      explained.
-- [ ] Cross-protocol differential and gateway fuzz (≥1M ops) clean in CI;
-      deterministic emitted-ITCH gate green.
-- [ ] Kill-switch flatten-on-trip and flatten-on-session-death proven by tests.
-- [ ] Replay-vs-live A/B published with every disagreement categorised.
+- [x] **12.0** — topology decided and written before the gateway exists.
+      [`docs/phase12-design.md`](phase12-design.md).
+- [ ] **12.1** — replayer splits adds from executions; reference partition
+      armed; zero-order replay equals the phase-9 book.
+- [ ] **12.2** — **P1:** book from the emitted feed byte-identical to the
+      phase-9 book from the original feed; determinism hash green in CI.
+- [ ] **12.3** — OUCH 4.2 core subset; deviations listed with evidence separated
+      from spec; round-trip byte-identical.
+- [ ] **12.4** — SoupBinTCP session: heartbeats hold an idle session, a dead
+      peer is detected within the timeout.
+- [ ] **12.5** — kill-switch flatten-on-trip and flatten-on-session-death proven
+      by tests that count the cancels.
+- [ ] **12.6** — cross-protocol differential and gateway fuzz (≥1M ops) clean in
+      CI.
+- [ ] **12.7** — strategy trades against your own exchange over real sockets,
+      inside a replayed historical day, under the 12.0 topology.
+- [ ] **12.8** — tick-to-trade p50/p99.9 reported and decomposed per hop; every
+      hop explained. **Needs bare metal.**
+- [ ] **12.9** — replay-vs-live A/B published with every disagreement
+      categorised.
 
 **CV line unlocked:** "Protocol-complete exchange system: OUCH 4.2 over
 SoupBinTCP into my own matching engine, which publishes ITCH 5.0 consumed by my
