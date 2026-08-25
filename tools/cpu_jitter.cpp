@@ -41,9 +41,11 @@
 //
 // Usage:
 //   cpu_jitter [--cpus 13,14,15] [--seconds 15] [--json out.json]
-#include <sched.h>
 #include <pthread.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -101,7 +103,14 @@ struct Result {
     std::vector<Gap> worst;      // the ten largest, with timestamps
 };
 
+// -1 means "this platform does not tell you", which is not zero. A context
+// switch count of 0 and a count that could not be read are different claims,
+// and the second one must not be able to masquerade as the first.
 long read_status_long(const char* key) {
+#if !defined(__linux__)
+    (void)key;
+    return -1;
+#else
     std::FILE* f = std::fopen("/proc/thread-self/status", "r");
     if (f == nullptr) return -1;
     char line[256];
@@ -115,14 +124,32 @@ long read_status_long(const char* key) {
     }
     std::fclose(f);
     return v;
+#endif
 }
 
 void spin(int cpu, double seconds, std::atomic<bool>* go, Result* out) {
     out->cpu = cpu;
+    // LINUX ONLY, AND THE NON-LINUX PATH REFUSES RATHER THAN QUIETLY SUCCEEDING
+    // -- the same rule mold_replay_udp's go_realtime() follows, and for the same
+    // reason. macOS has no thread-affinity API, so a thread there is wherever
+    // the scheduler put it this microsecond. Reporting `pinned` true on such a
+    // platform would put gap counts in a table under a heading they do not
+    // belong to: this tool's whole claim is "one thread, one CPU, nothing else
+    // asked of it", and without the pinning it measures a thread wandering
+    // between cores instead. The verdict below already refuses when `pinned` is
+    // false on any CPU, so the refusal costs nothing extra here.
+    //
+    // Unguarded, this cost a macOS CI build -- which is exactly the job that
+    // exists to catch Linux-only calls compiling green on every runner that
+    // matters until they do not.
+#if defined(__linux__)
     cpu_set_t set;
     CPU_ZERO(&set);
     CPU_SET(cpu, &set);
     out->pinned = pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0;
+#else
+    out->pinned = false;
+#endif
 
     // Reserve before the clock starts. A reallocation inside the loop would be
     // recorded as a gap, and it would be this program's gap.
