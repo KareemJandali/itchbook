@@ -28,6 +28,7 @@
 #
 # Usage:
 #   scripts/pinned-run.sh [--cores "2 3 4"] [--messages N] [--force-clock]
+#                         [--skip-build]
 #
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -35,11 +36,13 @@ cd "$(dirname "$0")/.."
 CORES="${CORES:-}"
 MESSAGES=4000000
 FORCE_CLOCK=0
+SKIP_BUILD=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cores)       CORES="$2"; shift 2 ;;
         --messages)    MESSAGES="$2"; shift 2 ;;
         --force-clock) FORCE_CLOCK=1; shift ;;
+        --skip-build)  SKIP_BUILD=1; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -65,6 +68,53 @@ if [[ -z "$CORES" ]]; then
 fi
 read -r CPU_RECV CPU_BOOK CPU_SEND <<<"$CORES"
 echo "cores: receiver=$CPU_RECV book=$CPU_BOOK sender=$CPU_SEND (of $NPROC)"
+
+# ---- ...AND ARE THEY THREE CORES? -------------------------------------------
+#
+# Nothing here used to ask. The header above argues at length that pinning two
+# of three threads is worse than pinning none, because the output says "pinned"
+# while the floating thread owns the tail -- and then the script accepted any
+# three CPU numbers, including two hyperthreads of one physical core, which has
+# the same shape of problem: it reports three pinned threads while two of them
+# share a core's execution resources.
+#
+# It is not hypothetical. On the host this was written for, `isolcpus=13,14,15`
+# spans only cores 6 and 7, so NO three-way distinct-core assignment exists
+# inside the isolated set, and a run pinned to those three put the book and the
+# sender on the two threads of core 7. sysfs knows; the script did not ask.
+#
+# A WARNING RATHER THAN A REFUSAL, because on that same host the collision made
+# no measurable difference -- the knee, the cliff and the max sustainable rate
+# came out identical either way -- and a machine with fewer cores than threads
+# may have no better option. The point is that the run says so.
+core_of() {
+    cat "/sys/devices/system/cpu/cpu$1/topology/core_id" 2>/dev/null || echo "?"
+}
+CORE_RECV=$(core_of "$CPU_RECV"); CORE_BOOK=$(core_of "$CPU_BOOK"); CORE_SEND=$(core_of "$CPU_SEND")
+if [[ "$CORE_RECV" == "?" ]]; then
+    echo "  physical cores          unknown (no topology in sysfs)"
+else
+    echo "  physical cores          receiver=$CORE_RECV book=$CORE_BOOK sender=$CORE_SEND"
+    if [[ "$CORE_RECV" == "$CORE_BOOK" || "$CORE_RECV" == "$CORE_SEND" \
+          || "$CORE_BOOK" == "$CORE_SEND" ]]; then
+        echo "    ...TWO OF THESE SHARE A PHYSICAL CORE. They are SMT siblings, so"
+        echo "    two of the three threads are competing for one core's execution"
+        echo "    resources while the output below reports all three as pinned."
+        echo "    One CPU per physical core, from sysfs on THIS machine:"
+        # Over every CPU sysfs knows about, not over nproc: nproc reports the
+        # calling shell's AFFINITY MASK, so on a box with isolcpus set it
+        # silently excludes exactly the CPUs you are most likely to want. That
+        # is the same trap as the default-core rule above.
+        for d in /sys/devices/system/cpu/cpu[0-9]*; do
+            c=${d##*/cpu}
+            id=$(cat "$d/topology/core_id" 2>/dev/null) || continue
+            [[ -n "$id" ]] && printf '%s %s %s\n' "$id" "$c" \
+                "$(cat "$d/topology/thread_siblings_list" 2>/dev/null)"
+        done | sort -n -u -k1,1 | while read -r id c sib; do
+            echo "      core $id: use cpu$c   (siblings $sib)"
+        done
+    fi
+fi
 
 # ---- the environment, reported rather than assumed --------------------------
 #
@@ -152,9 +202,29 @@ fi
 # ---- build, optimised, no sanitizers ----------------------------------------
 echo
 echo "--- build (Release; a sanitised build measures the sanitiser) ---"
-cmake -S . -B build-pinned -DCMAKE_BUILD_TYPE=Release >/dev/null
-cmake --build build-pinned -j >/dev/null
-echo "  ok"
+if (( SKIP_BUILD )); then
+    # FOR THE MACHINE THIS SCRIPT EXISTS FOR, which by construction is not the
+    # machine you develop on. A live USB has no compiler and may have no
+    # network, and installing a toolchain is not always possible on a box
+    # borrowed for twenty minutes. Statically linked binaries dropped into
+    # build-pinned/ run there with nothing installed at all:
+    #
+    #   g++ -O2 -std=c++20 -static -I include -o build-pinned/<t> tools/<t>.cpp -lz -lpthread
+    #
+    # The binaries are still Release and still unsanitised, which is what the
+    # heading above is actually about.
+    for t in wire_to_book mold_replay_udp mold_wrap itch_census tsc_offset; do
+        if [[ ! -x "build-pinned/$t" ]]; then
+            echo "  --skip-build given but build-pinned/$t is missing." >&2
+            exit 2
+        fi
+    done
+    echo "  skipped; using the binaries already in build-pinned/"
+else
+    cmake -S . -B build-pinned -DCMAKE_BUILD_TYPE=Release >/dev/null
+    cmake --build build-pinned -j >/dev/null
+    echo "  ok"
+fi
 
 mkdir -p validation out
 
