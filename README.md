@@ -3,15 +3,17 @@
 A limit-order-book reconstructor, matching engine, and queue-position-aware
 backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20.
 
-> **Status:** Phases 1–9 complete, with one verification-breadth clause still
-> open and carried as open in the plan rather than quietly dropped: running
-> `check_cross.py` on each graded symbol, which needs official auction prices
-> read off a page rather than taken from a transcript. Phase 10,
-> the wire-to-book pipeline, is **five of seven** — the two open items are one
-> item wearing two hats, and it wants bare metal rather than more code. Phase
-> 11, the paper, is **five of six**: its results are **run and graded**, and the
-> one open item is a review by someone who did not write it. Phase 12 is
-> designed and unbuilt.
+> **Status:** Phases 1–9 complete, with one verification clause still open and
+> carried as open in the plan rather than quietly dropped: `check_cross.py`
+> passes on five graded symbol-days and **fails on one**, MSFT's 2019-08-30
+> opening cross, where the published figure is a consolidated open and ours is
+> the NASDAQ cross print — two different quantities, and the volumes prove it
+> (23,940,100 shares against 9,674,474). Phase 10, the wire-to-book pipeline, is
+> **seven of seven**: taken on bare metal, wire-to-book p50 holds at 5.3–6.2 µs
+> from real-time rates to 25× real time, sustaining 2.1 M msg/s before the first
+> drop. Phase 11, the paper, is **five of six**: its results are **run and
+> graded**, and the one open item is a review by someone who did not write it.
+> Phase 12 is designed and unbuilt.
 >
 > Every claim below is measured on a real
 > NASDAQ trading day, 30 December 2019 — the whole feed where it says so, and
@@ -722,9 +724,18 @@ ungraded.
 python3 python/reference/replay.py data/sliced/MSFT.gz --symbol MSFT \
     --interval-ms 1000 --utc-day 2019-12-30 --json data/sliced/MSFT.json
 
-# 2. grade it against Databento's published bar for the same venue and day
-pip install databento
-export DATABENTO_API_KEY=db-...          # never commit this
+# 2. grade it against Databento's published bar for the same venue and day.
+#    A bare `pip install` no longer works on a current Debian/Ubuntu: the system
+#    Python is PEP 668 externally-managed and ships no pip at all, so this needs
+#    a venv rather than a global install.
+sudo apt install -y python3-venv        # once
+python3 -m venv ~/dbenv && ~/dbenv/bin/pip install databento
+export PATH="$HOME/dbenv/bin:$PATH"
+
+export DATABENTO_API_KEY=db-...          # never commit this; prefix the line
+                                         # with a space to keep it out of bash
+                                         # history, and rotate it if it ever
+                                         # lands in one
 python3 python/analysis/validate.py data/sliced/MSFT.json \
     --symbol MSFT --date 2019-12-30
 

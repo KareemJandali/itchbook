@@ -573,19 +573,54 @@ write its sibling. No number reaches a document by being retyped.
       differential both hold, which is what 9.12 asked for in the first place.)*
 - [ ] ≥5 symbols exact vs Databento; `check_cross.py` run on each; repeated on a
       second day.
-      *(**One symbol, one day.** `validation/README.md` carries a single graded
-      row — MSFT, 2019-12-30, all five fields exact — and `check_cross.py`
-      matched the official close to the cent on it. Four more symbols and a
-      second day are outstanding. This is the done-list item with a cash cost:
-      it spends Databento credits.
+      *(**Two of the three clauses are closed. The third has one failure left,
+      and it is a failure of the oracle rather than of the book.**
 
-      **Everything that does not need the key is done.** The basket spans the
-      spectrum the item asks for and is reconstructed on both days, oracle and
-      C++ agreeing on every one: MSFT (mega-cap), QQQ (ETF), ALLE (mid-cap),
-      AQB (illiquid), and a symbol that genuinely halted on each day — MKD, 16
-      halts on 2019-12-30, and ELTK, 3 halts on 2019-08-30, MKD having not yet
-      listed in August. Ten `validation/<SYM>_<DAY>.json` reconstructions are
-      committed and waiting to be graded; grading each is one command.
+      **≥5 symbols, repeated on a second day: DONE.** Ten symbol-days are graded
+      against Databento `XNAS.ITCH` `ohlcv-1d` and all five fields are exact on
+      every one — five symbols on 2019-08-30 (ALLE, AQB, ELTK, MSFT, QQQ) and
+      five on 2019-12-30 (ALLE, AQB, MKD, MSFT, QQQ), each oracle response
+      committed beside its row as `databento-<SYM>-<DATE>.json` so the verdict
+      re-checks offline. The basket spans the spectrum the item asks for: a
+      mega-cap, an ETF, a mid-cap, something barely traded, and something that
+      genuinely halted — MKD with 16 halts in December, ELTK with 3 in August,
+      MKD having not yet listed then. **The whole basket cost $0.0000156.** This
+      item was carried for the life of the project as "the one with a cash
+      cost"; the cash was a rounding error and what actually blocked it was the
+      reconstructions not existing yet.
+
+      **`check_cross.py` on each: 5 graded, 1 failed, 3 skipped.** ALLE is
+      absent by design rather than oversight — it is NYSE-listed and has no
+      NASDAQ auction to reconstruct. AQB on both days and MKD in December are
+      skipped for want of a usable published figure: AQB was split 1:20 in 2024
+      so no free source quotes its 2019 prices unadjusted, and MKD has since
+      delisted.
+
+      **The failure is MSFT 2019-08-30's opening cross, and the oracle is the
+      wrong universe.** Our `O` cross print is 139.1000; the published open is
+      139.15. The closing cross matches to the cent on both days, and the same
+      code matched the December opening cross exactly, so the parse is not
+      obviously wrong — and the volumes say why. Yahoo reports 23,940,100 shares
+      against our 9,674,474 and Databento's identical 9,674,474: **2.47×**,
+      because Yahoo is consolidated across every US venue and `XNAS.ITCH` is
+      NASDAQ alone. Yahoo's high is *lower* than ours, 139.18 against 139.35,
+      which cannot happen between two views of the same tape.
+
+      So three different quantities are in play and only two are the same thing:
+      138.62 is the first NASDAQ trade in the window, 139.10 is the NASDAQ
+      opening cross, and 139.15 is the consolidated regular-session open. The
+      closing cross agrees everywhere because for a NASDAQ-listed name the
+      closing cross **is** the official consolidated close; the opening cross
+      carries no such guarantee, and December agreed only because the cross
+      happened to be the first consolidated print that day. **Which means the
+      four passing opening-cross rows are luck rather than method** — the same
+      category error, four times it came out right.
+
+      What closes this properly is a same-universe oracle: Databento's
+      `XNAS.ITCH` trades, which carry the cross print itself. That is one
+      priced query away and needs the key. Until then the row stays FAIL rather
+      than being reasoned down to "not comparable", because a failure explained
+      away by its author is the thing this whole basket exists to prevent.
 
       **Preparing them found a bug that would have failed the grading**, which
       is the argument for the outside oracle made concrete. An auction that did
