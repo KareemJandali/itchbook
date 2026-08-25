@@ -70,18 +70,33 @@ echo "=== 2. queue feed — every execution at the front of the touch ==="
 "$BIN/split_replay_gate" "$QUEUE" \
     --per-symbol-ref "$WORK/queue-ref.csv" --per-symbol-split "$WORK/queue-split.csv"
 
-if [[ -f data/raw/bench.gz ]]; then
-    echo
-    echo "=== 3. bench feed — executions scattered across the book ==="
-    "$BIN/split_replay_gate" data/raw/bench.gz \
-        --per-symbol-ref "$WORK/bench-ref.csv" --per-symbol-split "$WORK/bench-split.csv"
-else
-    echo
-    echo "!! data/raw/bench.gz is missing, so the ONE detector for the naive-queue-walk"
-    echo "!! mistake among the feeds did not run. This is a weaker gate than it looks."
-    echo "!! Regenerate it with python/make_bench_feed.py."
+# The bench feed is the ONLY one of the two that catches a naive queue walk,
+# because the queue feed executes at the touch and never puts an order ahead of
+# the one being executed. It is generated rather than assumed present:
+# data/raw is gitignored, so on a fresh clone or a CI runner it does not exist,
+# and the first CI run of this gate refused for exactly that reason. Refusing
+# was correct -- running without that detector is a weaker gate than it looks --
+# but a gate that can only run on a developer's own machine is not a gate.
+BENCH="data/raw/bench.gz"
+if [[ ! -f "$BENCH" ]]; then
+    BENCH="$WORK/bench.gz"
+    if [[ ! -f "$BENCH" ]]; then
+        echo
+        echo "=== generating the bench feed (executions scattered across the book) ==="
+        python3 python/make_bench_feed.py --seed 3 --messages 1000000 "$BENCH" >/dev/null
+    fi
+fi
+if [[ ! -f "$BENCH" ]]; then
+    echo "!! no bench feed and none could be generated, so the ONE detector for the"
+    echo "!! naive-queue-walk mistake among the feeds did not run. This is a weaker"
+    echo "!! gate than it looks, and it refuses rather than reporting a pass."
     exit 3
 fi
+
+echo
+echo "=== 3. bench feed — executions scattered across the book ==="
+"$BIN/split_replay_gate" "$BENCH" \
+    --per-symbol-ref "$WORK/bench-ref.csv" --per-symbol-split "$WORK/bench-split.csv"
 
 # ---- 4. determinism, and the hash CI checks ---------------------------------
 #
