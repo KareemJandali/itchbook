@@ -63,13 +63,39 @@ public:
     // Matcher. That is right for a trading day and badly wrong for a test that
     // builds hundreds of thousands of small books.
     explicit Matcher(int32_t tick = 100, size_t refs_capacity = 1u << 20)
-        : book_(tick, 20, refs_capacity) {}
+        : owned_(tick, 20, refs_capacity), book_(&owned_) {}
+
+    // Borrowing: match against a book somebody else owns and mutates.
+    //
+    // docs/phase12-design.md section 4 requires exactly ONE order book per
+    // symbol, holding historical and strategy orders in the same price levels
+    // and the same queue. Phase 12.1's replayer mutates books belonging to a
+    // BookSet; a Matcher that always built its own private Book would have the
+    // gateway quoting into, and measuring a price collar against, a book
+    // containing only the strategy's own orders -- which is the two-book
+    // topology the design doc rules out by name: "Two books ... would put your
+    // order in a queue of one and hand it a fill rate nothing in reality
+    // supports."
+    //
+    // The book must outlive the Matcher. Nothing here checks that, for the
+    // same reason Book's own borrowing constructors do not check that their
+    // Storage outlives them: the owner is a BookSet or a test scope that
+    // encloses both, and a lifetime this direct is better stated than
+    // instrumented.
+    explicit Matcher(book::Book& borrowed, int32_t tick = 100)
+        : owned_(tick, 20, 1), book_(&borrowed) {}
 
     // ---- submission ---------------------------------------------------------
 
     Result submit(const Request& req) {
         Result r;
         r.first_fill = fills_.size();
+        // One match number per aggression, shared by every fill it produces --
+        // the rule split.hpp already follows when it replays a historical
+        // execution across several makers, and the join key the 12.6
+        // cross-protocol differential needs to pair an OUCH Executed with the
+        // ITCH E describing the same trade.
+        ++match_no_;
 
         Reject bad = validate(req);
         if (bad != Reject::None) {
@@ -116,21 +142,85 @@ public:
         return true;
     }
 
+    // ---- a fill somebody else performed against one of our orders -----------
+    //
+    // The phase-12.1 aggressor walks the shared book and takes shares from a
+    // strategy order resting ahead of the historical order the feed named. It
+    // used to call book.take() directly, which left Meta stale, the client
+    // uninformed, and -- measured -- conserves_shares() returning true across
+    // the whole divergence, because that invariant only checks Meta against
+    // itself and never against the book.
+    //
+    // Returns the shares actually applied, which is the caller's single source
+    // of truth: clamping against Meta::resting here rather than against
+    // book::Order::shares means a Meta/book desync surfaces as a wrong return
+    // value instead of propagating silently.
+    //
+    // Deliberately does NOT fire stops. A stop elected here would re-enter
+    // run()/match() on the shared book in the middle of the replayer's
+    // in-flight aggressor walk, and could consume the very historical order
+    // the feed named. Stops are armed (last_trade_) and fired later, from
+    // pump_stops(), at a quiescent point.
+    uint32_t apply_external_fill(uint64_t id, uint32_t shares, int32_t price) {
+        if (shares == 0) return 0;
+        auto it = orders_.find(id);
+        if (it == orders_.end()) return 0;
+        Meta& m = it->second;
+        // Each guard is load-bearing. A parked stop is unreachable from the
+        // replayer (it is not in the book at all), but a direct mis-call would
+        // break conserves_shares()'s !entered branch rather than being caught.
+        if (!m.entered || is_terminal(m.state) || !m.in_book || m.resting == 0) return 0;
+        // BEFORE take(): a take() on a reference the book does not hold bumps
+        // Book::unknown_ref_, and the phase-12.2 gate compares that counter
+        // field-by-field against the phase-9 book.
+        if (book_->find(id) == nullptr) return 0;
+
+        const uint32_t qty = shares < m.resting ? shares : m.resting;
+
+        book_->take(id, qty);
+        m.resting -= qty;
+        m.filled += qty;
+        filled_total_ += qty;        // ONE side is ours; the aggressor is not
+        external_filled_ += qty;
+        fills_.push_back(Fill{0, id, 0, m.req.owner, price, qty, m.sequence,
+                              match_no_, true});
+        last_trade_ = price;
+        has_last_trade_ = true;
+
+        if (m.resting == 0) {
+            m.in_book = false;
+            if (m.hidden > 0) refresh_iceberg(m);
+            else transition(m.state, State::Filled);
+        } else {
+            transition(m.state, State::PartiallyFilled);
+        }
+        return qty;
+    }
+
+    // Stops elected by external fills, fired at a quiescent point. See
+    // apply_external_fill's comment for why never inline.
+    bool pump_stops() { return fire_stops(); }
+
+    // The match number the NEXT aggression will carry. The replayer stamps its
+    // own synthesised aggressor with one of these so both sides of the
+    // differential can be joined.
+    uint64_t begin_external_match() { return ++match_no_; }
+
     // ---- queries ------------------------------------------------------------
 
     const std::vector<Fill>& fills() const { return fills_; }
     const std::unordered_map<uint64_t, Meta>& orders() const { return orders_; }
-    book::Book& book() { return book_; }
-    const book::Book& book() const { return book_; }
+    book::Book& book() { return *book_; }
+    const book::Book& book() const { return *book_; }
 
     const Meta* find(uint64_t id) const {
         auto it = orders_.find(id);
         return it == orders_.end() ? nullptr : &it->second;
     }
 
-    bool best_bid(int32_t* out) const { return book_.best_bid(out); }
-    bool best_ask(int32_t* out) const { return book_.best_ask(out); }
-    bool crossed() const { return book_.crossed(); }
+    bool best_bid(int32_t* out) const { return book_->best_bid(out); }
+    bool best_ask(int32_t* out) const { return book_->best_ask(out); }
+    bool crossed() const { return book_->crossed(); }
 
     // ---- invariant accounting ----------------------------------------------
     //
@@ -141,7 +231,11 @@ public:
     // Counts both sides of every trade, so it balances against shares_submitted.
     // For traded volume in the usual sense, halve it.
     uint64_t shares_filled() const { return filled_total_; }
-    uint64_t volume_traded() const { return filled_total_ / 2; }
+    // Internal fills credit both sides, external fills only ours, so the
+    // halving applies to the internal part alone.
+    uint64_t volume_traded() const {
+        return (filled_total_ - external_filled_) / 2 + external_filled_;
+    }
     uint64_t shares_cancelled() const { return cancelled_total_; }
 
     uint64_t shares_resting() const {
@@ -157,6 +251,30 @@ public:
     // resting — per order, and in aggregate. The per-order half is the stronger
     // check: a global total can balance while two individual orders are wrong
     // in opposite directions.
+    // Meta agrees with the BOOK.
+    //
+    // conserves_shares() checks Meta against itself and is necessary but
+    // demonstrably not sufficient: it returned true while a strategy order had
+    // been removed from the book by the replayer's aggressor and Meta still
+    // claimed 100 shares resting. This is the predicate that sees that class
+    // of bug, and it is cheap enough to assert after every fuzz operation.
+    //
+    // Only the orders this engine owns are checked. On a shared book the
+    // historical orders have no Meta by design, so the reverse sweep -- every
+    // resting order is known to us -- is false here and belongs to a caller
+    // that knows which references are ours.
+    bool agrees_with_book() const {
+        for (const auto& [id, m] : orders_) {
+            const book::Order* o = book_->find(id);
+            if (m.in_book) {
+                if (o == nullptr || o->shares != m.resting) return false;
+            } else if (o != nullptr) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool conserves_shares() const {
         uint64_t filled = 0;
         uint64_t cancelled = 0;
@@ -283,7 +401,7 @@ private:
     }
 
     bool has_liquidity(const Request& req) {
-        return book_.best_order(to_char(opposite(req.side))) != nullptr;
+        return book_->best_order(to_char(opposite(req.side))) != nullptr;
     }
 
     // How much of this order could trade right now. Used only by fill-or-kill,
@@ -291,7 +409,7 @@ private:
     uint32_t available(const Request& req, Type type) {
         uint32_t total = 0;
         std::vector<book::LevelView> levels;
-        book_.top(to_char(opposite(req.side)), 64, &levels);
+        book_->top(to_char(opposite(req.side)), 64, &levels);
         for (const auto& lv : levels) {
             if (!crosses(req, type, lv.price)) break;
             total += static_cast<uint32_t>(lv.shares);
@@ -305,13 +423,44 @@ private:
         const char other = to_char(opposite(taker.req.side));
 
         while (remaining > 0) {
-            const book::Order* front = book_.best_order(other);
+            const book::Order* front = book_->best_order(other);
             if (front == nullptr) break;
             if (!crosses(taker.req, type, front->price)) break;
 
             uint64_t maker_id = front->ref;
             auto mit = orders_.find(maker_id);
-            if (mit == orders_.end()) break;   // not ours; cannot happen in-engine
+
+            // A maker this engine does not own.
+            //
+            // While the Matcher had a private book this could not happen, and
+            // the code said so. Phase 12.5 gave it a book shared with the
+            // phase-12.1 replayer, per docs/phase12-design.md section 4, and
+            // "not ours" became the ORDINARY case: most resting orders are
+            // historical and have no Meta. Breaking out here meant a
+            // marketable strategy order did not fill at all -- it rested
+            // through the opposite side and left the book crossed, measured
+            // and confirmed before this was written.
+            //
+            // So an external maker trades normally. What it does NOT get is
+            // Meta bookkeeping (there is none), a state transition, or an
+            // iceberg refresh (its hidden quantity, if any, belongs to
+            // whoever owns it). The book reduction and the Fill are the whole
+            // of it, and the Fill is marked external so a consumer can tell
+            // the counterparty is outside this engine.
+            if (mit == orders_.end()) {
+                const uint32_t qty = remaining < front->shares ? remaining : front->shares;
+                const int32_t price = front->price;
+                book_->take(maker_id, qty);
+                taker.filled += qty;
+                filled_total_ += qty;        // ONE side is ours, not two
+                external_filled_ += qty;
+                remaining -= qty;
+                fills_.push_back(Fill{taker.req.id, maker_id, taker.req.owner, 0,
+                                      price, qty, 0, match_no_, true});
+                last_trade_ = price;
+                has_last_trade_ = true;
+                continue;
+            }
             Meta& maker = mit->second;
 
             // Self-trade prevention, decided before any shares move.
@@ -335,7 +484,7 @@ private:
             const uint32_t qty = remaining < front->shares ? remaining : front->shares;
             const int32_t price = front->price;   // the resting order sets it
 
-            book_.take(maker_id, qty);
+            book_->take(maker_id, qty);
             maker.resting -= qty;
             maker.filled += qty;
             taker.filled += qty;
@@ -343,7 +492,8 @@ private:
             remaining -= qty;
 
             fills_.push_back(Fill{taker.req.id, maker_id, taker.req.owner,
-                                  maker.req.owner, price, qty, maker.sequence});
+                                  maker.req.owner, price, qty, maker.sequence,
+                                  match_no_, false});
             last_trade_ = price;
             has_last_trade_ = true;
 
@@ -367,7 +517,7 @@ private:
         m.hidden -= slice;
         m.resting = slice;
         m.sequence = ++seq_;   // priority is lost, and the sequence records it
-        book_.add(m.req.id, to_char(m.req.side), m.req.price, slice);
+        book_->add(m.req.id, to_char(m.req.side), m.req.price, slice);
         m.in_book = true;
         transition(m.state, State::PartiallyFilled);
     }
@@ -377,14 +527,14 @@ private:
             (m.req.display > 0 && m.req.display < remaining) ? m.req.display : remaining;
         m.resting = slice;
         m.hidden = remaining - slice;
-        book_.add(m.req.id, to_char(m.req.side), m.req.price, slice);
+        book_->add(m.req.id, to_char(m.req.side), m.req.price, slice);
         m.in_book = true;
     }
 
     void cancel_meta(Meta& m) {
         const uint32_t gone = m.resting + m.hidden;
         if (m.in_book) {
-            book_.remove(m.req.id);
+            book_->remove(m.req.id);
             m.in_book = false;
         }
         m.resting = 0;
@@ -460,14 +610,22 @@ private:
         return any;
     }
 
-    book::Book book_;
+    // owned_ is the book in the owning case and an inert 1-slot placeholder in
+    // the borrowing one -- a Book has no default constructor and making it
+    // optional would put a branch on every access to the hottest structure in
+    // the engine. One wasted RefMap slot is the cheaper trade.
+    book::Book owned_;
+    book::Book* book_;
     std::unordered_map<uint64_t, Meta> orders_;
     std::vector<Fill> fills_;
     std::vector<uint64_t> pending_stops_;
 
     uint64_t seq_ = 0;
+    uint64_t match_no_ = 0;
     uint64_t submitted_ = 0;
-    uint64_t filled_total_ = 0;     // counts both sides of every fill
+    uint64_t filled_total_ = 0;     // both sides of an internal fill, one side
+                                    // of an external one
+    uint64_t external_filled_ = 0;  // the one-sided part of the above
     uint64_t cancelled_total_ = 0;
     int32_t last_trade_ = 0;
     bool has_last_trade_ = false;

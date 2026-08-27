@@ -3036,6 +3036,112 @@ flattens.
 tests that **count the cancels**, rather than by asserting the switch changed
 state. The switch reaching TRIPPED is not the claim; the book going flat is.
 
+### 12.5 — what actually happened
+
+`include/itchbook/engine/gateway.hpp`, plus a borrowing constructor on
+`Matcher` and the OUCH reason-code tables in `ouch/messages.hpp`. 13 tests in
+`tests/test_gateway.cpp`; 24/24 in ctest.
+
+**The design review found a blocker that reached past this sub-phase, and it
+was right.** `Matcher` owned a private `book::Book`; the phase-12.1 replayer
+mutates `book::BookSet` books. Different objects. A price collar built on that
+would have measured only the strategy's own orders, and — worse —
+`docs/phase12-design.md` §4 rules the arrangement out by name: *"Two books —
+a 'market' book the matcher consults and a 'mine' book it owns — would put
+your order in a queue of one and hand it a fill rate nothing in reality
+supports."* The queue-position claim the whole phase rests on was quietly
+false. Fixed here with a borrowing `Matcher(book::Book&, tick)` constructor;
+purely additive, so all 23 pre-existing tests (including the property fuzzer)
+were the regression check and none changed. A strategy order submitted
+through the gateway now rests **third in the shared queue behind two
+historical orders**, which is the property §4 exists to guarantee and the
+first test in the file.
+
+**"J with reason codes" turned out to be implementable after all.** 12.3 had
+left the Rejected and Canceled reason lists as bare characters, because the
+explanation columns had not been extracted; the review correctly pointed out
+that a gateway cannot answer with codes whose meanings are unknown, and that
+anything written there would be invented. The font-aware extraction from
+12.3 still had both tables in full. So `ouch::reject_reason` and
+`ouch::cancel_reason` now carry the spec's own codes, and every rejection
+this gateway sends is one NASDAQ defines for that situation — `'X'` invalid
+price, `'S'` invalid stock, `'Z'` shares exceed the safety threshold, `'H'`
+halted, and for a flatten, `'Z'` *"System cancel. This order was cancelled by
+the system."* Nothing invented.
+
+**Six blockers, each fixed and each pinned by a test:**
+
+- **Flatten keyed on `tick()` cannot see two of the four deaths.**
+  `ServerSession::tick()` reaches only `Dead` and `LoginTimedOut`; `Ended`
+  (the client's own Logout Request) and `ProtocolViolation` are set inside
+  `on_bytes()`. A client that logs out politely while holding resting orders
+  is the ordinary case, and the obvious design never flattens it. Now
+  level-triggered on `is_terminal(state())` with a latch — the latch, not the
+  edge, is what makes it exactly once. Tested through all three reachable
+  paths.
+- **Flatten's own cancels must not feed the kill switch.**
+  `max_messages_per_second` is documented as *our outbound* traffic and its
+  window buckets by 100 ms, so flattening a large book in one instant would
+  trip the rate limit with the risk layer's own remediation, latch the wrong
+  `Trip` reason, force an operator reset, and — since the flatten is itself
+  triggered by a trip — recurse. Remediation is not the thing that limit
+  bounds. Tested: eight cancels in one instant against a limit of four, switch
+  still live.
+- **Counting cancels cannot prove flatness.** `Matcher::cancel_meta()` zeroes
+  `resting`/`hidden`/`in_book` whether or not `Book::remove()` found the
+  reference, so every Meta-side assertion after a flatten is self-confirming;
+  a buggy flatten can emit N cancels and leave N orders resting. Flatness is
+  asserted against the **book**, and independently by submitting a marketable
+  order and requiring zero fills — the one check that depends on neither
+  layer's bookkeeping.
+- **`Request::id`, the published Reference Number, and the token map must be
+  one integer.** `Matcher::rest()` writes `Request::id` into
+  `book::Order::ref`, and `split.hpp`'s aggressor walk classifies each resting
+  order by `is_strategy_ref(q->ref)`. Had the published reference differed
+  from the id, the 12.1 partition would have stopped working silently — the
+  strategy's own orders counted as historical and never filled.
+- **A per-gateway reference counter collides permanently.** `Matcher::orders_`
+  is never erased from, so a duplicate id is not transient: `validate()`
+  returns `DuplicateId` for it forever. References now come from one
+  venue-scoped `RefSource`.
+- **Replace has no atomic path in the engine**, and `cancel_meta()` is
+  irreversible. Every check on the replacement therefore runs to completion
+  *before* the original is touched; a rejected replacement leaves the original
+  resting and its token still usable.
+
+Two more the review caught that a first draft would have got wrong: **flatten
+filters on `!is_terminal(state)`, not on resting shares** — a stop order
+parked awaiting its trigger has `resting == 0`, survives a shares-based
+filter, leaves the book flat, passes a count-the-cancels test, and stays armed
+— and **the kill switch gates on intent, not message type**: Enter and Replace
+both create exposure and both fail closed, while Cancel is never gated,
+because a tripped gateway that refuses inbound cancels blocks the only client
+action that reduces risk.
+
+**Mutation-tested: 10 mutations, 0 survived — but only after the mutation test
+found two of the tests were asserting the wrong thing.** The parked-stop test
+cancelled through `Matcher::cancel()` directly, which exercises the matcher
+rather than `Gateway::flatten()`'s filter, so reverting the filter left it
+green. And the two-gateway test only checked that two references differ —
+which two independent per-gateway counters also satisfy, since both allocate
+in the same order. Both now assert the claim that matters: the stop is driven
+through the gateway's own flatten and then through its trigger price to prove
+it cannot come back, and the reference test asserts the shared counter
+advanced across both gateways and that a *third*, later gateway does not
+reissue an earlier one's reference.
+
+**What this does not establish.** Nothing here has been through a socket —
+`on_ouch()` takes a payload `ServerSession` already stripped, and no transport
+exists yet. Authentication is the caller's decision, passed in as a boolean:
+SoupBinTCP describes a scheme for carrying credentials, not a policy for
+judging them, and this gateway does not invent a credential store. The
+pre-trade position check duplicates `sim::RiskLimits::blocks()` rather than
+sharing it — that type lives inside the backtester header and is typed on a
+different `Side` enum — which is a real divergence risk at the boundary and is
+recorded here rather than hidden. And `adopt_for_test()` exists on `Gateway`
+for exactly one reason, named as such: OUCH 4.2's core subset has no stop
+type, so the parked-stop case cannot be reached through the wire path at all.
+
 ### 12.6 — Fuzz, and the cross-protocol differential
 
 `tests/fuzz/fuzz_gateway.cpp` — random valid and invalid OUCH byte streams:
@@ -3048,6 +3154,117 @@ the emitted ITCH equals the matcher's internal book.
 **Done when:** 1M ops run clean in CI under ASan/UBSan with no crash, **every
 inbound message answered exactly once**, and the OUCH↔ITCH invariants hold
 across the whole corpus.
+
+### 12.6 — what actually happened
+
+`tests/fuzz/fuzz_gateway.cpp`, plus the five things that had to exist first
+before it could test anything. 25/25 in ctest; **1,199,994 operations clean
+under ASan/UBSan in 2m02s**.
+
+**The sub-phase opened by finding that the exchange could not trade.** Two
+defects, each demonstrated with a running program before a line was written to
+fix it, and both created by 12.5's shared book rather than present all along:
+
+    // strategy sends a marketable buy at $100.01 into a $100.00 offer
+    before: filled=0 resting=200  crossed=1     <- book left CROSSED
+    after : filled=200 resting=0  crossed=0     <- offer down to 300
+
+`Matcher::match()` broke out of its loop whenever the resting order at the
+front had no `Meta`, with a comment reading *"not ours; cannot happen
+in-engine"*. That was true while the Matcher owned a private book. 12.5 gave
+it a book shared with the replayer, and "not ours" became the ordinary case —
+most resting orders are historical. A marketable strategy order did not fill
+at all; it rested through the opposite side and left the book crossed. This
+was raised in the 12.1 review as the "external makers" question and correctly
+set aside then, because that design did not route the aggressor through the
+Matcher. 12.5 made it apply.
+
+    // the aggressor takes a strategy order resting ahead of the named one
+    before: matcher STILL thinks our order rests 100   <- gone from the book
+    after : matcher thinks our order rests 0           <- fill recorded
+
+The other direction. `SplitReplayer::aggress()` called `book.take()` directly,
+so a strategy order it consumed vanished from the book while `Meta::resting`
+stayed stale and the client was never told it had filled. **`conserves_shares()`
+returned true across the entire divergence**, because it checks `Meta` against
+itself and never against the book — which is why 12.6 also adds
+`agrees_with_book()`, the predicate that can see this class of bug at all.
+
+**The arithmetic that makes an external fill different.** `filled_total_`
+counts *both* sides of an internal fill, because both sides are `Meta`s and
+both get `m.filled += qty`. An external fill has exactly one side in this
+engine, so it must add `qty`, not `2 * qty`, or `conserves_shares()`'s
+`filled == filled_total_` fails immediately. That in turn breaks
+`volume_traded()`, which halves the total — hence a companion
+`external_filled_` counter so the halving applies only to the internal part.
+
+**Three more gaps had to close before the differential could mean anything.**
+Nothing published ITCH for any matcher mutation, so a subscriber rebuilding
+from the feed could not even hold the order the replayer then executed — it
+would count that execution as an unknown reference. `ouch::encode::executed`
+had **zero call sites in the repository**, so "every OUCH Executed has a
+matching ITCH E" was vacuously true at zero Executed messages. And
+`engine::Fill` carried no match number, so the join key pairing the two
+streams did not exist. All three now do, driven off one cursor over
+`Matcher::fills()` — because a fill reaches the gateway two ways, our order
+crossing (inside our own `submit`) and our resting order being hit (during the
+replayer's `apply`, with no call of ours on the stack), and only a cursor sees
+both.
+
+**Two tests were passing for the wrong reason, and the fixes exposed them.**
+The collar test's first order sat *above* the historical ask — marketable —
+and only rested because the engine could not trade; once it could, it consumed
+the ask and left nothing for the collar to measure. Two more assertions asked
+"what was the last wire message" when they meant "was the order accepted",
+which were the same question only while orders never filled. Both rewritten,
+the collar test with an additional just-inside-the-collar case so it cannot
+pass by rejecting everything.
+
+**The differential caught a modelling error in its own harness within 103
+iterations.** The first version routed only the *gateway's* ITCH to the
+subscriber. A real subscriber sees one feed — the union of what the replayer
+publishes for historical mutations and what the gateway publishes for the
+engine's — so the aggressor's executions against strategy orders never
+arrived and the subscriber held those orders at full size. With both wired the
+check also got stronger: the subscriber's book is now compared to the
+exchange's **in full and in both directions**, so a feed that invents orders
+fails as surely as one that omits them.
+
+**Coverage is asserted, not assumed.** The binary exits non-zero if a run
+never reached the two fill paths the phase exists to differentiate, because
+both were completely broken before this sub-phase and a run that misses them
+is not evidence of anything. Over the million-operation CI run:
+
+| | |
+|---|---|
+| strategy crossed historical liquidity | 77,542 |
+| aggressor hit a resting strategy order | 1,689 |
+| OUCH Executed / ITCH published | 271,678 / 805,026 |
+| malformed / duplicate / unknown-token | 84,470 / 31,481 / 83,854 |
+
+**Built with sanitizers, against the local precedent.** `fuzz_matcher` opts
+out with `-fno-sanitize=all` and a comment estimating ASan at ten times the
+wall clock. That was a throughput decision for a 200,000-sequence run, not a
+claim that sanitizers are unaffordable — measured here at ~110k ops/s under
+ASan/UBSan, so the phase's million operations take two minutes. The
+done-condition says ASan/UBSan explicitly and a sanitizer-free binary would
+not satisfy it.
+
+**The gate was watched failing.** Suppressing the ITCH delete the gateway
+publishes on a cancel makes the subscriber's book drift, and the differential
+refuses on iteration 1 with "subscriber holds a different amount than the
+exchange". That negative test runs in CI beside the positive one.
+
+**What this does not establish.** Still no socket: `on_ouch()` takes a payload
+`ServerSession` already stripped, and the two sides are wired in-process. The
+kill-switch and flatten paths are reachable in the fuzz but the generator does
+not currently drive the switch to trip, so those two counters read zero — the
+unit suite covers them and the fuzz does not, which the coverage report shows
+rather than hides. The price collar is disabled in the fuzz config, because
+with it on most generated traffic is rejected and the interesting paths go
+unexercised; it is unit-tested instead. And `pump_stops()` is called after each
+historical execution, which is the right place, but no generated sequence yet
+parks a stop that a later external fill elects.
 
 ### 12.7 — The closed loop
 
@@ -3150,10 +3367,27 @@ disagreement categorised as unexplained is a finding and may stand; an
       and Sequenced Data payloads dropped on the floor entirely. 8 mutations
       against the review's own findings, 7 caught, 1 traced to genuinely
       inert code rather than forced. 19 tests, ASan/UBSan, gcc + clang.)*
-- [ ] **12.5** — kill-switch flatten-on-trip and flatten-on-session-death proven
-      by tests that count the cancels.
-- [ ] **12.6** — cross-protocol differential and gateway fuzz (≥1M ops) clean in
+- [x] **12.5** — kill-switch flatten-on-trip and flatten-on-session-death proven
+      by tests that assert the BOOK, not the cancel count.
+      *(Design review before any code found a blocker reaching past this
+      sub-phase: Matcher owned a private book, which `phase12-design.md` §4
+      forbids by name. Fixed with a borrowing constructor — additive, all 23
+      prior tests unchanged — and a strategy order now rests third in the
+      shared queue behind two historical orders. Six blockers fixed in all.
+      The OUCH reason-code tables were recovered from the 12.3 extraction, so
+      no reject code is invented. 10 mutations, 0 survived — after the
+      mutation test found two tests asserting the wrong thing.)*
+- [x] **12.6** — cross-protocol differential and gateway fuzz (≥1M ops) clean in
       CI.
+      *(1,199,994 ops under ASan/UBSan in 2m02s. Opened by proving the exchange
+      could not trade at all: `match()` refused makers it did not own, leaving
+      a marketable order unfilled and the book crossed, and the replayer's
+      aggressor reduced strategy orders behind the engine's back while
+      `conserves_shares()` reported true. Five blockers fixed — external-maker
+      matching, `apply_external_fill`, ITCH emission for engine mutations, OUCH
+      Executed, and match numbers — before the differential could mean
+      anything. Coverage is asserted: the binary fails if a run never reaches
+      either fill path. Watched failing on a suppressed ITCH delete.)*
 - [ ] **12.7** — strategy trades against your own exchange over real sockets,
       inside a replayed historical day, under the 12.0 topology.
 - [ ] **12.8** — tick-to-trade p50/p99.9 reported and decomposed per hop; every

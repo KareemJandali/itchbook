@@ -55,6 +55,7 @@
 #include "itchbook/book/book.hpp"
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
+#include "itchbook/engine/matcher.hpp"
 #include "itchbook/emit/itch_encode.hpp"
 #include "itchbook/emit/sink.hpp"
 #include "itchbook/itch/messages.hpp"
@@ -105,6 +106,13 @@ public:
     // Attach the publisher. Null (the default) is phase 12.1's behaviour and
     // costs one predictable branch per message.
     void set_sink(emit::Sink* s) { sink_ = s; }
+
+    // Attach the engine that owns the strategy orders on this book, so a
+    // strategy order the aggressor takes shares from is reduced THROUGH the
+    // Matcher rather than behind its back. Optional: with no Matcher the
+    // replayer behaves exactly as it did for 12.2's P1 gate, which is what
+    // keeps that gate a valid regression check on this change.
+    void set_matcher(engine::Matcher* m) { matcher_ = m; }
 
     const Counters& counters() const { return c_; }
     book::BookSet& set() { return set_; }
@@ -348,10 +356,20 @@ private:
         uint32_t remaining = shares;
         for (const uint64_t sref : ahead_) {
             if (remaining == 0) break;
-            const book::Order* so = b.find(sref);
-            if (so == nullptr) continue;
-            const uint32_t take = so->shares < remaining ? so->shares : remaining;
-            b.take(sref, take);
+            uint32_t take = 0;
+            if (matcher_ != nullptr) {
+                // The return value is the single source of truth for how much
+                // moved: clamping here against Meta::resting rather than
+                // against book::Order::shares means a Meta/book desync
+                // surfaces as a wrong quantity instead of propagating.
+                take = matcher_->apply_external_fill(sref, remaining, price);
+                if (take == 0) continue;   // terminal, or gone since the walk
+            } else {
+                const book::Order* so = b.find(sref);
+                if (so == nullptr) continue;
+                take = so->shares < remaining ? so->shares : remaining;
+                b.take(sref, take);
+            }
             b.note_feed_trade(price, take);
             remaining -= take;
             c_.strategy_shares_taken += take;
@@ -406,6 +424,7 @@ private:
 
     book::BookSet& set_;
     emit::Sink* sink_ = nullptr;
+    engine::Matcher* matcher_ = nullptr;
     Counters c_;
     std::vector<uint64_t> ahead_;   // reused; the walk is empty 99.8% of the time
 };

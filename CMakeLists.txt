@@ -130,7 +130,7 @@ endforeach()
 enable_testing()
 foreach(t test_parser test_book test_book_set test_live_orders test_spsc_ring test_reader_thread
           test_matcher test_fees test_queue test_ledger test_split_replay test_ouch
-          test_soupbin
+          test_soupbin test_gateway
           test_sim test_kill_switch test_mold test_recover test_restart test_closed_loop test_as_maker test_intensity)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
@@ -158,6 +158,18 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(fuzz_matcher PRIVATE -fno-sanitize=all)
 endif()
 add_test(NAME fuzz_matcher COMMAND fuzz_matcher --iterations 200000)
+
+# ---- Gateway fuzz + cross-protocol differential (Phase 12.6) ----
+# Built WITH sanitizers, unlike fuzz_matcher above. That opt-out is a
+# throughput decision for a 200,000-sequence run; the cost here was measured
+# rather than inherited -- ~110k ops/s under ASan/UBSan, so the phase's
+# million-operation done-condition takes about two minutes. The ctest run is
+# smaller; the CI job does the full million.
+add_executable(fuzz_gateway tests/fuzz/fuzz_gateway.cpp)
+target_link_libraries(fuzz_gateway PRIVATE itchbook)
+target_include_directories(fuzz_gateway PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(fuzz_gateway PRIVATE -O2)
+add_test(NAME fuzz_gateway COMMAND fuzz_gateway --iterations 3000)
 
 add_executable(fuzz_queue tests/fuzz/fuzz_queue.cpp)
 target_link_libraries(fuzz_queue PRIVATE itchbook)

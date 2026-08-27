@@ -463,6 +463,48 @@ jobs:
       #
       # It runs on generated feeds here. The licensed-data leg is recorded in
       # validation/p1-emitted-2019-12-30.json.
+      # Phase 12.6. A million operations of random OUCH order entry
+      # interleaved with historical ITCH traffic against the SAME shared book,
+      # under ASan/UBSan, with the cross-protocol differential checked at the
+      # end of every sequence: the book a subscriber rebuilds from the
+      # published feed must equal the exchange's own book, in both directions.
+      #
+      # Built with sanitizers deliberately, unlike fuzz_matcher -- that
+      # opt-out is a throughput decision, and the cost here was measured at
+      # ~110k ops/s, so a million operations is about two minutes.
+      #
+      # The binary FAILS if it never reached the two fill paths the phase
+      # exists to differentiate (the strategy crossing historical liquidity,
+      # and the aggressor hitting a resting strategy order). Both were
+      # completely broken before 12.6, so a run that does not reach them is
+      # not evidence of anything.
+      - name: Gateway fuzz and cross-protocol differential (1M ops, ASan/UBSan)
+        run: |
+          g++ -std=c++20 -O2 -g -Wall -Wextra -Wpedantic -Werror \
+              -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+              -Iinclude -I. tests/fuzz/fuzz_gateway.cpp -o /tmp/fuzz_gateway -lz
+          /tmp/fuzz_gateway --iterations 30000
+
+      # ...and it has to be able to fail. Suppressing the ITCH delete the
+      # gateway publishes when an order is cancelled makes the subscriber's
+      # book drift from the exchange's, which is exactly the class of bug the
+      # differential exists to catch.
+      - name: Differential self-test (it must catch a divergent feed)
+        run: |
+          cp include/itchbook/engine/gateway.hpp /tmp/gw.bak
+          sed -i 's|if (was_in_book) emit_itch_delete(id);|(void)was_in_book;|' \
+              include/itchbook/engine/gateway.hpp
+          g++ -std=c++20 -O2 -Wall -Wextra -Iinclude -I. \
+              tests/fuzz/fuzz_gateway.cpp -o /tmp/fuzz_neg -lz
+          cp /tmp/gw.bak include/itchbook/engine/gateway.hpp
+          if /tmp/fuzz_neg --iterations 500 > /tmp/neg.txt 2>&1; then
+            cat /tmp/neg.txt
+            echo "FAIL: the differential passed a feed that omits deletes"
+            exit 1
+          fi
+          grep -q "different amount than the exchange" /tmp/neg.txt
+          echo "the differential correctly refused a divergent feed"
+
       - name: Split replayer and P1 (the published feed rebuilds the same book)
         run: ./scripts/split-replay-gate.sh
 

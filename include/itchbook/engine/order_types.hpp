@@ -147,6 +147,17 @@ struct Fill {
     // price level these must come out strictly increasing — that is price-time
     // priority, stated in a form a property test can check.
     uint64_t maker_sequence = 0;
+    // One number per aggression, shared by every fill it produces. This is the
+    // join key the phase-12.6 cross-protocol differential uses to pair an OUCH
+    // Executed with the ITCH E describing the same trade -- without it the two
+    // streams cannot be matched up at all.
+    uint64_t match_number = 0;
+    // True when the counterparty is not in this engine: a historical order on
+    // the shared book, or the phase-12.1 aggressor. Exactly one side of such a
+    // fill is ours, which is why filled_total_ moves by qty rather than 2*qty.
+    // Not inferable from taker == 0: validate() has no rule against an order
+    // whose id is legitimately zero.
+    bool external = false;
 };
 
 struct Result {

@@ -250,6 +250,51 @@ inline uint64_t          match_number(const uint8_t* p)    { return be64(p + 32)
 }  // namespace executed
 inline constexpr size_t kExecutedLen = 40;
 
+// ---- the reason codes, from the spec's own tables ------------------------------
+//
+// Sections 3.5.1 (Cancel Order Reasons) and 3.10.1 (Rejected Order Reasons).
+// 12.3 shipped these as bare character lists, because the tables' explanations
+// had not been extracted at the time and a list of legal characters with no
+// meanings is not something a gateway can answer with. They are enumerated
+// here so that 12.5's gateway rejects with the code NASDAQ defines for the
+// situation rather than one this project made up.
+//
+// Same evidence class as every other value in this file: read from the vendor
+// PDF, never seen on a live session. Only the subset a venue built on this
+// project can actually produce is given a named constant -- the rest of each
+// table is real and simply not reachable from here (a NASDAQ supervisory
+// terminal, a Service Bureau authorisation, the opening cross's price
+// protection). The full character lists stay in the accessor comments below
+// so nothing is silently dropped.
+namespace reject_reason {
+inline constexpr char kNasdaqClosed        = 'C';  // "NASDAQ is closed"
+inline constexpr char kInvalidDisplayType  = 'D';
+inline constexpr char kRiskFatFinger       = 'e';  // "Risk: Fat Finger"
+inline constexpr char kHalted              = 'H';  // trading halt in this stock
+inline constexpr char kRiskMaxShares       = 'm';  // "Risk: Max Shares Exceeded"
+inline constexpr char kInvalidMinQuantity  = 'N';
+inline constexpr char kRiskMaxNotional     = 'n';  // "Risk: Max Notional Exceeded"
+inline constexpr char kOther               = 'O';  // "Other"
+inline constexpr char kInvalidStock        = 'S';  // "must be a valid issue"
+inline constexpr char kRiskAggregate       = 'v';  // "Risk: Aggregate Exposure Exceeded"
+inline constexpr char kInvalidPrice        = 'X';  // "Invalid price"
+inline constexpr char kSafetyThreshold     = 'Z';  // "Shares exceeds configured
+                                                   //  safety threshold"
+}  // namespace reject_reason
+
+namespace cancel_reason {
+inline constexpr char kUserRequested = 'U';  // "Sent in response to a Cancel Order
+                                             //  Message or a Replace Order Message"
+inline constexpr char kIoc           = 'I';  // immediate-or-cancel remainder
+inline constexpr char kTimeout       = 'T';  // "The Time In Force ... has expired"
+inline constexpr char kSelfMatch     = 'Q';  // self-match prevention
+inline constexpr char kSystemCancel  = 'Z';  // "System cancel. This order was
+                                             //  cancelled by the system."
+inline constexpr char kMarketCollars = 'K';  // "cannot be executed because of
+                                             //  Market Collars"
+inline constexpr char kHalted        = 'H';
+}  // namespace cancel_reason
+
 // ---- outbound: Rejected Message ('J', 24 bytes) -------------------------------------
 namespace rejected {
 inline uint64_t         timestamp(const uint8_t* p)  { return be64(p + 1); }
