@@ -526,6 +526,50 @@ jobs:
           grep -q "P1 divergence at message 5000" /tmp/p1neg.txt
           echo "the gate correctly refused a corrupted published feed"
 
+      # Phase 12.7. Two OS processes and two real sockets: the exchange
+      # publishes MoldUDP64 over UDP and speaks OUCH over SoupBinTCP, and a
+      # separate strategy process rebuilds the book from those datagrams,
+      # quotes over TCP, and reports the fills it can see ON ITS OWN FEED.
+      #
+      # Three arms, and the third is the one that carries the claim. Arm 1 is a
+      # required green baseline. Arm 2 has the exchange withhold exactly the
+      # ITCH executions naming a strategy reference: the strategy must fall
+      # silent WHILE the exchange still reports the fills happened, because a
+      # detector that cannot see its input must report nothing. Arm 3 deletes
+      # every OUCH Executed inside the strategy: the fills must survive, since
+      # they never came from there.
+      #
+      # Every arm also cross-checks the shares the exchange's aggressor took
+      # against the shares the strategy counted off the tape. Those two numbers
+      # are computed in different address spaces from different inputs and
+      # there is no path by which a bug in one produces the other.
+      - name: Closed loop (two processes, UDP feed, TCP order entry)
+        run: ./scripts/closed-loop-check.sh
+
+      # ...and it has to be able to fail. Five mutations were run against this
+      # gate locally and all five were caught; this is the cheapest of them,
+      # and the only one that fits in a CI step: the strategy reports the OUCH
+      # count where it means the feed count. One wrong variable inverts the
+      # entire claim, and arms 2 and 3 both refuse it.
+      - name: Closed-loop self-test (it must catch OUCH reported as the feed)
+        run: |
+          cp tools/strategy.cpp /tmp/strategy.bak
+          sed -i 's|belief.maker_fills, belief.maker_fills_in_book, belief.maker_fill_shares,|ouch_executed_received, belief.maker_fills_in_book, ouch_executed_shares,|' \
+              tools/strategy.cpp
+          grep -q "ouch_executed_received, belief.maker_fills_in_book" tools/strategy.cpp
+          cmake --build build --target strategy -j 2
+          cp /tmp/strategy.bak tools/strategy.cpp
+          if TCP_PORT=27801 UDP_PORT=27802 ./scripts/closed-loop-check.sh \
+               > /tmp/cl-neg.txt 2>&1; then
+            tail -30 /tmp/cl-neg.txt
+            echo "FAIL: the gate passed a strategy reporting OUCH as feed fills"
+            cmake --build build --target strategy -j 2
+            exit 1
+          fi
+          grep -q "FAIL" /tmp/cl-neg.txt
+          cmake --build build --target strategy -j 2
+          echo "the gate correctly refused fills that came from OUCH"
+
       - name: Determinism gate self-test (it must catch an unannounced loss)
         run: |
           if TORTURE_ONLY=1 TORTURE_EXTRA=--break-gap-markers PORT=26700 \

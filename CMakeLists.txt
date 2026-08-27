@@ -92,6 +92,12 @@ add_executable(restart_check tools/restart_check.cpp)
 add_executable(mold_replay_udp tools/mold_replay_udp.cpp)
 add_executable(wire_to_book tools/wire_to_book.cpp)
 
+# Phase 12.7's two halves. They are separate PROCESSES on purpose -- the whole
+# claim is that the feed leaves one address space and is understood in another
+# -- so they are two targets rather than two modes of one binary.
+add_executable(exchange tools/exchange.cpp)
+add_executable(strategy tools/strategy.cpp)
+
 add_executable(tsc_offset tools/tsc_offset.cpp)
 target_compile_options(tsc_offset PRIVATE -O2)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -121,7 +127,7 @@ endif()
 foreach(t itch_dump itch_census itch_slice book_replay book_bench queue_sim queue_backtest
           split_replay_gate
           calibrate_intensity as_experiment
-          tsc_offset mold_replay_udp wire_to_book
+          tsc_offset mold_replay_udp wire_to_book exchange strategy
           latency_sweep mold_wrap mold_replay mold_damage restart_check)
   target_link_libraries(${t} PRIVATE itchbook)
 endforeach()

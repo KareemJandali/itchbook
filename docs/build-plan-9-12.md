@@ -3284,6 +3284,84 @@ inside a replayed historical day, under the 12.0 topology — with its own fills
 observed back through its own feed handler, not reported to it by the exchange
 side.
 
+### 12.7 — what actually happened
+
+`tools/exchange.cpp`, `tools/strategy.cpp`, `include/itchbook/mold/publisher.hpp`
+and `scripts/closed-loop-check.sh`. **Two processes, not three.** On the real
+day, MSFT 2019-12-30: 1,221,484 messages, 27,082 datagrams, **zero sequencer
+gaps**, 1,200 orders over TCP, and **2,102 maker fills recognised from the
+strategy's own feed, every one of them naming an order resting in the book the
+strategy had built from that feed.** 104,286 shares — the same number the
+exchange reports its aggressor took, computed in another address space from
+another input. Recorded in `validation/closed-loop-2019-12-30.json`.
+
+**Two processes rather than the three the plan asked for.** The plan separates
+the historical replayer from the exchange. They cannot separate:
+`SplitReplayer::aggress()` calls `Matcher::apply_external_fill()` synchronously,
+on a hot path, over a pointer-linked book that 12.5 made them share. Splitting
+them means either an IPC round trip inside the aggressor walk or two copies of
+the book that must agree — and "two books that must agree" is the failure this
+phase exists to rule out, not a topology to adopt on the way to ruling it out.
+So the split that carries the claim is the one between the exchange and the
+strategy, and every byte between those two crosses a real socket.
+
+**Only MAKER fills can be seen this way, and that is not a limitation to work
+around.** ITCH describes what happens to RESTING orders; a strategy order that
+crosses the spread is never named on the tape. "It traded" is therefore not
+evidence for the done-condition, and the first run showed exactly why:
+
+    quote 1   bid=1597300 ask=1570000 px=1597100
+    order 1   px=1597100  exchange book bid=1580800 ask=1570200
+
+All 500 orders traded, all as takers, and `ITCH published` exceeded `applied` by
+exactly the execution count and nothing else — no Add was ever published,
+because nothing ever rested. The generated bench feed maintains no coherent
+touch (its bid sits $2.72 above its offer), so a buy priced behind the bid is
+still far above the offer. Capping a buy below the best offer — which a quoting
+strategy must do on any book — took the run from 0 maker fills to 28. Moving the
+quote two ticks back, tried first, changed nothing at all, and a change that
+makes no difference is a signal that the variable being changed is the wrong
+one.
+
+**OUCH stays load-bearing for identity, and saying otherwise would be false.**
+The only way the strategy learns which ITCH reference belongs to its token is
+the Accepted message's reference number. The clause forbids the fill EVENT
+arriving over OUCH, not the token-to-reference binding.
+
+**A race between two transports, found by two numbers that had never been
+compared.** On the real day the strategy counted 103,210 shares of fills and
+derived a position of 101,860. The 1,350-share gap was orders whose ITCH Add
+arrived on UDP *before* the OUCH Accepted naming them arrived on TCP — nothing
+orders those two against each other, and market data outrunning the
+acknowledgement is the ordinary condition a co-located strategy is built for,
+not a harness artifact. The side is now read from the strategy's own book,
+which holds it whether or not the ack has landed; `adds_before_ack` counts the
+race directly (10 on that day) so the next one announces itself instead of
+hiding in the difference between two figures nobody compared.
+
+**The gate is three arms, and the third earns its place.** Arm 1 is a required
+green baseline. Arm 2 has the exchange withhold exactly the ITCH executions
+naming a strategy reference: the strategy must fall silent *while the exchange
+still reports the fills happened*, because a detector that cannot see its input
+must report nothing. Arm 3 deletes every OUCH Executed inside the strategy: the
+fills must survive. Five mutations were run against the gate — **5 caught, 0
+missed, 0 errors** — and mutation 5, a strategy that counts a feed fill only
+once OUCH has confirmed one, passes arms 1 and 2 exactly like correct code and
+is caught by arm 3 alone.
+
+**Three defects the phase found in code that already ran.** A leaked session and
+gateway (84,756 bytes in 1,606 allocations, LeakSanitizer, first Debug run) — a
+leak that would have kept this gate out of the sanitised build, which is the one
+place two-process socket code gets its bounds checked at all. A session
+constructed with `app_in = nullptr`, which compiles perfectly and silently drops
+every inbound order. And `kLocate` as a hardcoded 1, correct for every generated
+feed here and wrong for every real one — MSFT is stock_locate 5291, and with the
+constant the gateway binds an empty book and the run reports zero fills for a
+reason that has nothing to do with the engine.
+
+30 checks green under ASan/UBSan in 5 seconds; 25/25 in ctest; `verify-local`
+PASSED.
+
 ### 12.8 — Tick-to-trade, decomposed
 
 One histogram per hop, so the total decomposes — and with log buckets, a *shape*
@@ -3388,7 +3466,7 @@ disagreement categorised as unexplained is a finding and may stand; an
       Executed, and match numbers — before the differential could mean
       anything. Coverage is asserted: the binary fails if a run never reaches
       either fill path. Watched failing on a suppressed ITCH delete.)*
-- [ ] **12.7** — strategy trades against your own exchange over real sockets,
+- [x] **12.7** — strategy trades against your own exchange over real sockets,
       inside a replayed historical day, under the 12.0 topology.
 - [ ] **12.8** — tick-to-trade p50/p99.9 reported and decomposed per hop; every
       hop explained. **Needs bare metal.**

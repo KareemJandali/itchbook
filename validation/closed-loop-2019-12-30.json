@@ -1,0 +1,52 @@
+{
+  "what": "phase 12.7 closed loop: two OS processes, ITCH over UDP as MoldUDP64, OUCH over SoupBinTCP, strategy fills recognised from its own feed",
+  "feed": "data/sliced/MSFT.gz",
+  "source": "data/raw/12302019.NASDAQ_ITCH50.gz",
+  "symbol": "MSFT",
+  "stock_locate": 5291,
+  "date": "2019-12-30",
+  "exchange": {
+    "messages_read": 1221484,
+    "applied": 1221484,
+    "aggressors": 34739,
+    "strategy_shares_taken": 104286,
+    "partition_violations": 0,
+    "itch_published": 1222900,
+    "mold_packets": 27080,
+    "datagrams_sent": 27082,
+    "ouch_accepted": 1200,
+    "ouch_executed": 2154,
+    "gateway_position": 108532,
+    "conserves_shares": true,
+    "agrees_with_book": true
+  },
+  "strategy": {
+    "datagrams_received": 27082,
+    "feed_messages_applied": 1222835,
+    "sequencer_gaps": 0,
+    "messages_lost": 0,
+    "orders_sent": 1200,
+    "ouch_accepted": 1200,
+    "ouch_rejected": 0,
+    "own_adds_seen_on_feed": 1148,
+    "adds_that_beat_their_ack": 10,
+    "maker_fills_from_feed": 2102,
+    "maker_fills_resting_in_own_book": 2102,
+    "maker_fill_shares": 104286,
+    "position_from_feed": 104286,
+    "ouch_executed_received": 2154,
+    "ouch_executed_shares": 108532
+  },
+  "cross_checks": {
+    "shares_agree_across_processes": true,
+    "every_fill_was_resting_in_the_strategys_book": true,
+    "position_equals_fill_shares": true,
+    "taker_shares_invisible_to_itch": 4246
+  },
+  "notes": [
+    "The two share counts are computed in different address spaces from different inputs: the exchange's from the matcher's own Meta bookkeeping, the strategy's by parsing ITCH out of a UDP datagram.",
+    "taker_shares_invisible_to_itch is not an error. ITCH describes what happens to RESTING orders, so a strategy order that crosses is never named on the tape and cannot be seen this way. It is the difference between what OUCH reported and what the feed could show.",
+    "adds_that_beat_their_ack counts orders whose ITCH Add arrived on UDP before the OUCH Accepted naming them arrived on TCP. Nothing orders the two transports against each other. The strategy reads an order's side from the book it built from the feed rather than from a map keyed on having seen the ack first, so the race costs it nothing.",
+    "The three-arm gate that establishes the fills came from the feed and not from OUCH runs on generated feeds in CI: scripts/closed-loop-check.sh. Five mutations were run against it and all five were caught."
+  ]
+}
