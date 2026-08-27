@@ -19,6 +19,8 @@
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/engine/gateway.hpp"
 #include "itchbook/ouch/encode.hpp"
+#include "itchbook/emit/sink.hpp"
+#include "itchbook/replay/split.hpp"
 #include "itchbook/soupbin/session.hpp"
 #include "tests/check.hpp"
 
@@ -28,11 +30,18 @@ namespace eng = itchbook::engine;
 namespace ouch = itchbook::ouch;
 namespace sb = itchbook::soupbin;
 namespace bk = itchbook::book;
+namespace rp = itchbook::replay;
 
 constexpr uint64_t SEC = 1'000'000'000ULL;
 constexpr int32_t PX = 1000000;      // $100.0000
 constexpr uint16_t LOCATE = 7;
 int32_t probe_ask_ = 0;
+
+class ItchCapture : public itchbook::emit::Sink {
+public:
+    std::vector<std::vector<uint8_t>> msgs;
+    void on_message(const uint8_t* p, size_t n) override { msgs.emplace_back(p, p + n); }
+};
 
 class VecSink : public sb::Sink {
 public:
@@ -58,6 +67,7 @@ struct Venue {
         // Drive the session to LoggedIn so the gateway's emissions go out.
         uint8_t lr[sb::kLoginRequestWireBytes];
         sb::encode::login_request(lr, "U", "P", "", "1");
+        replayer.set_matcher(&matcher);
         session.on_bytes(lr, sizeof(lr), 0);
         gw.decide_login(true, "SESS1", "1", 0);
         wire.clear();
@@ -74,6 +84,22 @@ struct Venue {
     void historical(uint64_t ref, char side, int32_t px, uint32_t sh) {
         book.add(ref, side, px, sh);
     }
+
+    // A historical execution naming `ref`, replayed through the real
+    // SplitReplayer so the aggressor path is the one under test.
+    void aggress(uint64_t ref, uint32_t shares, uint64_t match) {
+        std::vector<uint8_t> e(31, 0);
+        e[0] = 'E';
+        e[1] = uint8_t(LOCATE >> 8);
+        e[2] = uint8_t(LOCATE);
+        for (int i = 0; i < 8; ++i) e[11 + i] = uint8_t(ref >> (56 - 8 * i));
+        e[19] = uint8_t(shares >> 24); e[20] = uint8_t(shares >> 16);
+        e[21] = uint8_t(shares >> 8);  e[22] = uint8_t(shares);
+        for (int i = 0; i < 8; ++i) e[23 + i] = uint8_t(match >> (56 - 8 * i));
+        replayer.apply('E', e.data());
+    }
+
+    rp::SplitReplayer replayer{set};
 };
 
 std::vector<uint8_t> enter(const char* token, char side, uint32_t shares,
@@ -579,6 +605,97 @@ void test_flatten_does_not_feed_the_rate_limit() {
     CHECK(v.kill.live());
 }
 
+// ---- 14. the two clocks are genuinely separate -------------------------------
+//
+// docs/phase12-design.md section 6 requires two independent time bases. One
+// member served both the ITCH tape (replay time, and a 48-bit wire field) and
+// the SoupBinTCP session's heartbeat bookkeeping (wall clock), so whichever
+// was passed, one of them was silently wrong.
+void test_two_clocks_are_separate() {
+    Venue v;
+    // Replay time: a plausible mid-session nanoseconds-past-midnight.
+    const uint64_t replay = 34200ULL * 1000000000ULL;   // 09:30:00
+    v.gw.set_replay_now(replay);
+    CHECK_EQ(v.gw.replay_now(), replay);
+
+    ItchCapture itch;
+    v.gw.set_itch_sink(&itch);
+    const auto m = enter("T1", 'B', 100, "TEST    ", PX);
+    // A wall clock far larger than any 48-bit value -- which is what a real
+    // wall clock looks like, and what would have overflowed the tape.
+    v.gw.on_ouch(m.data(), m.size(), 1787000000000000000ULL);
+
+    CHECK(!itch.msgs.empty());
+    if (!itch.msgs.empty()) {
+        // The published timestamp is the REPLAY clock, and fits the field.
+        const uint8_t* p = itch.msgs.back().data();
+        uint64_t ts = 0;
+        for (int i = 0; i < 6; ++i) ts = (ts << 8) | p[5 + i];
+        CHECK_EQ(ts, replay);
+        CHECK(ts < (uint64_t{1} << 48));
+    }
+}
+
+// ---- 15. a passive fill moves the position ------------------------------------
+//
+// The replayer's aggressor hitting a resting strategy order produces a Fill
+// whose taker is 0. Resolving the TAKER for both sides made find(0) return
+// null, the delta zero, and the position never move -- for exactly the fill
+// class 12.7 exists to demonstrate.
+void test_passive_fill_moves_position() {
+    Venue v;
+    v.gw.set_replay_now(34200ULL * 1000000000ULL);
+
+    // Our order rests first, so it is ahead in the queue.
+    const auto m = enter("T1", 'B', 300, "TEST    ", PX);
+    v.gw.on_ouch(m.data(), m.size(), SEC);
+    CHECK_EQ(v.gw.position(), int64_t{0});          // nothing traded yet
+    const uint64_t ref = ouch::accepted::reference_number(v.wire.messages.back().data() + 3);
+
+    // A historical order joins behind ours at the same price.
+    v.historical(5000, 'B', PX, 100);
+
+    // The feed executes the historical order; per 12.1 the aggressor takes the
+    // strategy shares resting ahead of it first.
+    v.aggress(5000, 200, 77);
+
+    v.gw.pump_fills(2 * SEC);
+    CHECK_EQ(v.gw.position(), int64_t{200});        // we bought 200
+    const eng::Matcher::Meta* meta = v.matcher.find(ref);
+    CHECK(meta != nullptr);
+    if (meta != nullptr) CHECK_EQ(meta->resting, uint32_t{100});
+    CHECK(v.matcher.agrees_with_book());
+}
+
+// ---- 16. the two streams join on a passive fill --------------------------------
+//
+// The OUCH Executed and the ITCH 'E' for the same passive fill must carry the
+// same match number, or 12.6's differential cannot pair them. Before the fix
+// the passive fill inherited whatever match number the last order entry left
+// behind.
+void test_passive_fill_join_key() {
+    Venue v;
+    v.gw.set_replay_now(34200ULL * 1000000000ULL);
+    const auto m = enter("T1", 'B', 300, "TEST    ", PX);
+    v.gw.on_ouch(m.data(), m.size(), SEC);
+    v.historical(5000, 'B', PX, 100);
+    v.wire.clear();
+
+    constexpr uint64_t kFeedMatch = 987654321ULL;
+    v.aggress(5000, 200, kFeedMatch);
+    v.gw.pump_fills(2 * SEC);
+
+    // The OUCH Executed the client received carries the FEED's match number.
+    bool found = false;
+    for (const auto& msg : v.wire.messages) {
+        if (msg.size() > 3 && static_cast<char>(msg[3]) == 'E') {
+            CHECK_EQ(ouch::executed::match_number(msg.data() + 3), kFeedMatch);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
 }  // namespace
 
 int main() {
@@ -595,5 +712,8 @@ int main() {
     test_flatten_leaves_nothing_to_trade_against();
     test_parked_stop_is_cancelled_by_flatten();
     test_flatten_does_not_feed_the_rate_limit();
+    test_two_clocks_are_separate();
+    test_passive_fill_moves_position();
+    test_passive_fill_join_key();
     return REPORT();
 }

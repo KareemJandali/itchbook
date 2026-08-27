@@ -362,7 +362,8 @@ private:
                 // moved: clamping here against Meta::resting rather than
                 // against book::Order::shares means a Meta/book desync
                 // surfaces as a wrong quantity instead of propagating.
-                take = matcher_->apply_external_fill(sref, remaining, price);
+                take = matcher_->apply_external_fill(
+                    sref, remaining, price, m::order_executed::match_number(p));
                 if (take == 0) continue;   // terminal, or gone since the walk
             } else {
                 const book::Order* so = b.find(sref);

@@ -161,7 +161,12 @@ public:
     // in-flight aggressor walk, and could consume the very historical order
     // the feed named. Stops are armed (last_trade_) and fired later, from
     // pump_stops(), at a quiescent point.
-    uint32_t apply_external_fill(uint64_t id, uint32_t shares, int32_t price) {
+    // `match` is the match number the FEED gave this execution. Passing it in
+    // rather than issuing one here is what lets the OUCH Executed this fill
+    // produces and the ITCH 'E' the replayer publishes for it carry the same
+    // value, which is the only thing that makes the two streams joinable.
+    uint32_t apply_external_fill(uint64_t id, uint32_t shares, int32_t price,
+                                 uint64_t match) {
         if (shares == 0) return 0;
         auto it = orders_.find(id);
         if (it == orders_.end()) return 0;
@@ -183,7 +188,7 @@ public:
         filled_total_ += qty;        // ONE side is ours; the aggressor is not
         external_filled_ += qty;
         fills_.push_back(Fill{0, id, 0, m.req.owner, price, qty, m.sequence,
-                              match_no_, true});
+                              match, true});
         last_trade_ = price;
         has_last_trade_ = true;
 
@@ -200,11 +205,6 @@ public:
     // Stops elected by external fills, fired at a quiescent point. See
     // apply_external_fill's comment for why never inline.
     bool pump_stops() { return fire_stops(); }
-
-    // The match number the NEXT aggression will carry. The replayer stamps its
-    // own synthesised aggressor with one of these so both sides of the
-    // differential can be joined.
-    uint64_t begin_external_match() { return ++match_no_; }
 
     // ---- queries ------------------------------------------------------------
 

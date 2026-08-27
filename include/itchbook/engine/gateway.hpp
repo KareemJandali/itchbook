@@ -176,6 +176,24 @@ public:
     // the pre-12.6 behaviour and keeps every earlier test unchanged.
     void set_itch_sink(emit::Sink* s) { itch_ = s; }
 
+    // The market's clock, advanced by whatever is driving the replay, and
+    // distinct from the wall clock every entry point carries.
+    //
+    // docs/phase12-design.md section 6: replay time "drives message timestamps
+    // and the strategy's (T - t)" while tick-to-trade "has nothing to do with
+    // replay time and must never be derived from message timestamps". A single
+    // clock cannot serve both -- wall clock on the tape overflows the 48-bit
+    // ITCH timestamp field and publishes a wrapped value, and replay time on
+    // the SoupBinTCP session makes a 50x replay time itself out fifty times
+    // too fast. The assert is the design doc's own request for one.
+    void set_replay_now(uint64_t replay_ns) {
+        assert(replay_ns < (uint64_t{1} << 48) &&
+               "replay clock does not fit the 48-bit ITCH timestamp -- wall clock?");
+        replay_ns_ = replay_ns;
+    }
+
+    uint64_t replay_now() const { return replay_ns_; }
+
     // ---- the inbound path -----------------------------------------------------
     //
     // Called with the payload of one Unsequenced Data packet, already stripped
@@ -185,7 +203,7 @@ public:
     // rejection. There may be no token to echo in a J, so a J is not available
     // as an answer here.
     bool on_ouch(const uint8_t* p, size_t len, uint64_t now_ns) {
-        now_ns_ = now_ns;
+        wall_ns_ = now_ns;
         have_clock_ = true;
 
         // Check 0, before any field is read: is this even a message?
@@ -217,7 +235,7 @@ public:
     // Level-triggered with a latch rather than edge-triggered: see the banner.
     // Returns true on the call that performs the flatten, exactly once.
     bool poll(uint64_t now_ns) {
-        now_ns_ = now_ns;
+        wall_ns_ = now_ns;
         have_clock_ = true;
         if (flattened_) return false;
         if (!soupbin::is_terminal(session_->state())) return false;
@@ -234,7 +252,7 @@ public:
     // does not invent one.
     void decide_login(bool ok, const char* session_id, const char* sequence_number,
                       uint64_t now_ns) {
-        now_ns_ = now_ns;
+        wall_ns_ = now_ns;
         have_clock_ = true;
         if (session_->state() != soupbin::State::LoginReceived) return;
         if (ok) session_->accept_login(session_id, sequence_number, now_ns);
@@ -254,7 +272,7 @@ public:
     // Call after anything that could have traded. Idempotent: the cursor only
     // moves forward, so calling it twice publishes nothing twice.
     void pump_fills(uint64_t now_ns) {
-        now_ns_ = now_ns;
+        wall_ns_ = now_ns;
         have_clock_ = true;
         const std::vector<Fill>& fills = matcher_->fills();
         for (; fills_cursor_ < fills.size(); ++fills_cursor_) {
@@ -287,8 +305,8 @@ public:
             if (maker_ours) send_executed(id_token(f.maker), f.shares, f.price, f.match_number);
 
             // Position moves for every share of ours that traded.
-            if (taker_ours) position_ += taker_delta(f);
-            if (maker_ours) position_ -= taker_delta(f);
+            if (taker_ours) position_ += delta_for(f.taker, f.shares);
+            if (maker_ours) position_ += delta_for(f.maker, f.shares);
             if (maker_ours) drop_if_dead(f.maker);
             if (taker_ours) drop_if_dead(f.taker);
         }
@@ -443,7 +461,7 @@ private:
         send_accepted(tok, side, res.resting > 0 ? res.resting : shares,
                       stock, price, r.id,
                       is_terminal(res.state) ? 'D' : 'L');
-        pump_fills(now_ns_);
+        pump_fills(wall_ns_);
         const Matcher::Meta* meta = matcher_->find(r.id);
         if (meta != nullptr && meta->in_book) {
             emit_itch_add(r.id, side, meta->resting, r.price);
@@ -524,7 +542,7 @@ private:
         if (!is_terminal(res.state)) live_.insert(r.id);
         send_replaced(fresh, existing, side, res.resting > 0 ? res.resting : shares,
                       price, r.id, is_terminal(res.state) ? 'D' : 'L');
-        pump_fills(now_ns_);
+        pump_fills(wall_ns_);
         const Matcher::Meta* fresh_meta = matcher_->find(r.id);
         if (fresh_meta != nullptr && fresh_meta->in_book) {
             emit_itch_add(r.id, side, fresh_meta->resting, r.price);
@@ -595,7 +613,7 @@ private:
     void emit_itch_add(uint64_t ref, char side, uint32_t shares, int32_t price) {
         if (itch_ == nullptr || shares == 0) return;
         uint8_t f[emit::kMaxMessage];
-        const size_t n = emit::add_order(f, matcher_->book().locate(), 0, now_ns_,
+        const size_t n = emit::add_order(f, matcher_->book().locate(), 0, replay_ns_,
                                          ref, side, shares, cfg_stock_wire(), price);
         itch_->on_message(f, n);
         ++itch_sent_;
@@ -604,7 +622,7 @@ private:
     void emit_itch_executed(uint64_t maker_ref, uint32_t shares, uint64_t match) {
         if (itch_ == nullptr) return;
         uint8_t f[emit::kMaxMessage];
-        const size_t n = emit::order_executed(f, matcher_->book().locate(), 0, now_ns_,
+        const size_t n = emit::order_executed(f, matcher_->book().locate(), 0, replay_ns_,
                                               maker_ref, shares, match);
         itch_->on_message(f, n);
         ++itch_sent_;
@@ -613,7 +631,7 @@ private:
     void emit_itch_delete(uint64_t ref) {
         if (itch_ == nullptr) return;
         uint8_t f[emit::kMaxMessage];
-        const size_t n = emit::order_delete(f, matcher_->book().locate(), 0, now_ns_, ref);
+        const size_t n = emit::order_delete(f, matcher_->book().locate(), 0, replay_ns_, ref);
         itch_->on_message(f, n);
         ++itch_sent_;
     }
@@ -624,16 +642,22 @@ private:
         // any table this project extracted, so it is written as a single
         // unsourced local choice rather than dressed up as a NASDAQ code --
         // the same treatment ouch/messages.hpp gives Cross Type.
-        ouch::encode::executed(f, now_ns_, tok.b, shares, price, 'R', match);
+        ouch::encode::executed(f, replay_ns_, tok.b, shares, price, 'R', match);
         emit(f, sizeof(f));
         ++executes_sent_;
     }
 
-    int64_t taker_delta(const Fill& f) const {
-        const Matcher::Meta* m = matcher_->find(f.taker);
+    // Each side's own position change, computed from ITS OWN side.
+    //
+    // The first version resolved the TAKER for both, which is zero for a fill
+    // the replayer's aggressor performed against one of our resting orders --
+    // find(0) returns null, the delta is zero, and the gateway's position
+    // never moved for precisely the passive fills 12.7 exists to demonstrate.
+    int64_t delta_for(uint64_t ref, uint32_t shares) const {
+        const Matcher::Meta* m = matcher_->find(ref);
         if (m == nullptr) return 0;
-        return (m->req.side == Side::Buy) ? static_cast<int64_t>(f.shares)
-                                          : -static_cast<int64_t>(f.shares);
+        return (m->req.side == Side::Buy) ? static_cast<int64_t>(shares)
+                                          : -static_cast<int64_t>(shares);
     }
 
     void drop_if_dead(uint64_t ref) {
@@ -647,14 +671,16 @@ private:
         // that is gone gets no further traffic, and the cancel counts that
         // matter are taken at the matcher, not at the sink.
         if (session_->state() != soupbin::State::LoggedIn) return;
-        session_->send_sequenced(frame, n, now_ns_);
+        // WALL clock, deliberately: this timestamp is the SoupBinTCP
+        // session's own send-idle bookkeeping, not the tape.
+        session_->send_sequenced(frame, n, wall_ns_);
     }
 
     void send_accepted(const Token& tok, char side, uint32_t shares,
                        const uint8_t* stock, int32_t price, uint64_t ref,
                        char order_state) {
         uint8_t f[ouch::kAcceptedLen];
-        ouch::encode::accepted(f, now_ns_, tok.b, side, shares, stock, price, 0,
+        ouch::encode::accepted(f, replay_ns_, tok.b, side, shares, stock, price, 0,
                                blank_firm_, 'Y', ref, 'A', 'N', 0, ' ',
                                order_state, ' ');
         emit(f, sizeof(f));
@@ -665,7 +691,7 @@ private:
                        uint32_t shares, int32_t price, uint64_t ref,
                        char order_state) {
         uint8_t f[ouch::kReplacedLen];
-        ouch::encode::replaced(f, now_ns_, fresh.b, side, shares, cfg_stock_wire(),
+        ouch::encode::replaced(f, replay_ns_, fresh.b, side, shares, cfg_stock_wire(),
                                price, 0, blank_firm_, 'Y', ref, 'A', 'N', 0, ' ',
                                order_state, previous.b, ' ');
         emit(f, sizeof(f));
@@ -673,14 +699,14 @@ private:
 
     void send_canceled(const Token& tok, uint32_t decrement, char reason) {
         uint8_t f[ouch::kCanceledLen];
-        ouch::encode::canceled(f, now_ns_, tok.b, decrement, reason);
+        ouch::encode::canceled(f, replay_ns_, tok.b, decrement, reason);
         emit(f, sizeof(f));
         ++cancels_sent_;
     }
 
     void send_reject(const Token& tok, char reason) {
         uint8_t f[ouch::kRejectedLen];
-        ouch::encode::rejected(f, now_ns_, tok.b, reason);
+        ouch::encode::rejected(f, replay_ns_, tok.b, reason);
         emit(f, sizeof(f));
         ++rejects_sent_;
     }
@@ -723,7 +749,9 @@ private:
     uint64_t itch_sent_ = 0;
     size_t fills_cursor_ = 0;
     emit::Sink* itch_ = nullptr;
-    uint64_t now_ns_ = 0;
+    // TWO CLOCKS, never one. See the banner addition above set_replay_now().
+    uint64_t wall_ns_ = 0;      // session bookkeeping: heartbeats, dead peers
+    uint64_t replay_ns_ = 0;    // the tape: ITCH and OUCH message timestamps
     bool have_clock_ = false;
     bool flattened_ = false;
     bool in_flatten_ = false;
