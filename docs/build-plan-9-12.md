@@ -2885,6 +2885,141 @@ idle period on heartbeats alone; a peer that stops heartbeating is declared dead
 within the timeout, and that death is *observable* to a caller — 12.5 is what
 makes it flatten.
 
+### 12.4 — what actually happened
+
+`include/itchbook/soupbin/messages.hpp` (decode), `encode.hpp` (encode), and
+`session.hpp` — a transport-agnostic `ClientSession` / `ServerSession` state
+machine, in `tests/test_soupbin.cpp`, 19 tests, ctest.
+
+**Verified three independent ways, and the second pass found the first
+pass's PDF extraction was already unusually clean — a genuine surprise
+worth recording rather than smoothing over.** Unlike OUCH's PDF, which drew
+five field-name labels through an embedded font a naive extractor rendered
+as garbage, this document's tables came through intact on the first read: no
+dropped labels, no garbled text, every offset present. A second,
+independently-written extraction and a third pass with `pdftotext -layout`
+both reproduced identical offsets and lengths for all ten packet types. The
+one genuine anomaly found — Logout Request's own Packet Length field says
+"Binary" where every other one of the nine remaining tables says "Integer"
+for the same field — was traced to the source PDF itself via its raw
+coordinate data, not to any extraction artifact.
+
+**The state machine, not the wire format, is where the real risk lived, and
+adversarial review ran against a design description BEFORE any of
+`session.hpp` existed.** It found six blocker/major defects, none
+hypothetical:
+
+- **Clock non-monotonicity.** A backward or repeated `now_ns` — a clock
+  hiccup, two threads, a test harness replaying ticks out of order — either
+  wraps a naive unsigned subtraction to ~584 years (instant false Dead) or,
+  guarded the wrong way, suppresses detection forever. Fixed:
+  `elapsed = now > last ? now - last : 0`, unconditionally, everywhere a
+  `SilenceTracker` is read.
+- **A 15-second timeout silently pre-empting a 30-second one.** The
+  spec draws two distinct timeout ideas — the server's steady-state
+  client-dead threshold (15s, "typically") and its awaiting-login threshold
+  (30s, "typically") — and a design that checks both at once during
+  `AwaitingLogin` makes the shorter one always win, silently discarding the
+  longer allowance. Fixed by construction: exactly one timeout is ever
+  active per phase — `login_timeout_ns` during `AwaitingLogin`, the
+  steady-state threshold only once `LoggedIn`.
+- **`tick()`'s calling-cadence contract, found independently by two of the
+  three review lenses.** A peer that has genuinely gone silent, by
+  definition, never makes a socket readable again — if `tick()` is only
+  called from an I/O-readable handler, dead-peer detection can never fire.
+  Documented as a required usage contract in the file's own banner, in the
+  same register as a `static_assert`: not a suggestion.
+- **Malformed framing folded into the same `Dead` an ordinary silent peer
+  reaches.** An operator debugging "why did my session die" cannot tell a
+  decode failure from a dropped cable if both produce the identical value.
+  Fixed with a distinct `ProtocolViolation` state, entered synchronously
+  from `on_bytes()` — never from the time-driven `tick()` — on an
+  unrecognized packet type, a fixed-size packet whose declared length
+  disagrees with its own type, or a declared length past
+  `max_frame_bytes`.
+- **A polled, sticky `Dead` state re-triggering a flatten on every poll
+  forever.** `risk::KillSwitch` (`include/itchbook/risk/kill_switch.hpp`)
+  gets this right by being idempotent about an action that is safe to
+  repeat ("stop trading"); flattening resting orders is not obviously safe
+  to repeat, and the review named this transferred assumption explicitly.
+  Fixed: `on_bytes()` and `tick()` both return `true` exactly on the call
+  that changes `state()`, never again while the same terminal state holds.
+- **"Never got in" and "was alive and went dark" reaching the identical
+  `Dead`.** A caller cannot decide whether a connect-retry or a genuine
+  order-flattening trigger is warranted without knowing which. Fixed with a
+  distinct `LoginTimedOut`.
+
+**One asymmetry the review's three lenses did not name, found while
+resolving the findings above and confirmed from the spec's own text.** A
+naive design applies the 1-second heartbeat-send obligation identically to
+both roles. Section 2.2.1 states Login Accepted "will always be the first
+non-debug packet sent by the server" — a Server Heartbeat is not a Debug
+packet, so sending one before login resolves would violate that sentence.
+`ClientSession` has no analogous constraint; nothing blocks a heartbeat
+before its already-immediate Login Request. So `ServerSession`'s
+send-obligation clock starts only once `accept_login()`/`reject_login()`
+runs; `ClientSession`'s starts at construction. Verified in both directions:
+`test_server_heartbeat_gated_until_logged_in` confirms zero heartbeats
+escape during `AwaitingLogin`/`LoginReceived`, however long the wait;
+`test_client_heartbeat_unconditional_from_construction` confirms the client
+emits one within the first second even before any reply arrives.
+
+**A second gap, found only by writing the implementation rather than by
+review: a well-formed packet that makes no sense in the current state was
+silently swallowed, not flagged.** Nothing in the review's literal ask
+covered a second Login Accepted arriving after the session is already
+`LoggedIn` — but conflating that with ordinary background noise is exactly
+the debuggability failure `ProtocolViolation` exists to prevent, so both
+classes check "is this type expected in my CURRENT state," not merely "is
+it ever legal for my role."
+
+**A third gap, found only by writing the test suite: `dispatch()`'s first
+draft counted Sequenced Data packets and dropped their contents on the
+floor**, which silently defeated the entire reason the packet type exists —
+carrying the OUCH message the whole session is built to move.
+`test_application_payload_round_trips_both_directions` is the test that
+would have caught this eventually and the fix that closes it now: both
+classes take an `app_in` sink, and Sequenced/Unsequenced Data payloads
+surface there, header stripped, byte-identical.
+
+**A fourth gap, found only by the tests actually running: `on_bytes()` had
+no way to know "now."** The first working draft reset the receive-idle
+clock using a cached `activity_now_` member set by whichever `tick()` last
+ran — stale, or zero if `tick()` had never yet been called.
+`test_clock_backward_safety` caught it directly: a session ticked with a
+deliberately backward clock (to prove the monotonicity guard) went `Dead`
+on the very next call regardless, because `on_bytes()` had anchored the
+receive-idle tracker at time zero. Fixed by threading an explicit `now_ns`
+through every entry point that touches a `SilenceTracker` —
+`on_bytes()`, `send_unsequenced()`, `send_logout()`, `accept_login()`,
+`send_sequenced()` — removing the cache entirely rather than trying to keep
+it fresh.
+
+**Mutation-tested against the review's own findings, not a generic list: 8
+mutations, 7 caught, 1 genuinely inert.** The survivor removed a guard
+against resetting the receive-idle clock after a session reaches a terminal
+state — and tracing through why it survived rather than forcing a test to
+catch it: `tick()` already returns unconditionally the instant
+`is_terminal(state_)` is true, before it ever reads that clock again, so the
+guard's removal changes no observable behavior. The guard stays, for
+clarity and as a defense against a future refactor of `tick()`'s own
+ordering; no test was written to manufacture a catch for dead code, which
+would have tested the guard's existence rather than any real system
+property.
+
+**What this does not establish.** No real socket exists anywhere in this
+file — `on_bytes()`/`tick()` are driven entirely by hand-fed bytes and a
+caller-supplied clock, which is what makes the exhaustive timing tests
+possible without a real second elapsing, and it is exactly the limitation a
+transport adapter closes later. `ServerSession`'s accept/reject decision is
+deliberately left to the caller — SoupBinTCP's own text describes an
+authentication *scheme*, not a *policy* this class enforces — so nothing
+here has validated a real username/password against anything; that is
+12.5's gateway. And the same evidence ceiling as OUCH applies without
+exception: no live SoupBinTCP session exists or will exist for this
+project, so every offset remains spec-only, however many independent
+extractions agree on it.
+
 ### 12.5 — The gateway and the risk layer
 
 `engine/gateway.hpp` — accepts a SoupBin session, validates OUCH (unknown token,
@@ -3003,8 +3138,18 @@ disagreement categorised as unexplained is a finding and may stand; an
       5/5 mutations caught — no real-day gate exists for OUCH, so this is the
       whole defense. Every offset remains spec-only; no live OUCH session
       exists or will exist for this project.)*
-- [ ] **12.4** — SoupBinTCP session: heartbeats hold an idle session, a dead
+- [x] **12.4** — SoupBinTCP session: heartbeats hold an idle session, a dead
       peer is detected within the timeout.
+      *(Field tables triangulated three independent ways, one genuine
+      spec-drafting slip found. Adversarial design review before any code
+      existed found 6 blocker/major defects — clock non-monotonicity, a
+      15s/30s timeout conflict, an undocumented tick()-cadence requirement,
+      malformed framing folded into Dead, a re-triggering flatten signal, and
+      LoginTimedOut vs Dead conflated — all fixed. Two more gaps found only
+      by implementing and testing: an out-of-state packet silently swallowed,
+      and Sequenced Data payloads dropped on the floor entirely. 8 mutations
+      against the review's own findings, 7 caught, 1 traced to genuinely
+      inert code rather than forced. 19 tests, ASan/UBSan, gcc + clang.)*
 - [ ] **12.5** — kill-switch flatten-on-trip and flatten-on-session-death proven
       by tests that count the cancels.
 - [ ] **12.6** — cross-protocol differential and gateway fuzz (≥1M ops) clean in

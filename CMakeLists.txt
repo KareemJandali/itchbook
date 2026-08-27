@@ -130,6 +130,7 @@ endforeach()
 enable_testing()
 foreach(t test_parser test_book test_book_set test_live_orders test_spsc_ring test_reader_thread
           test_matcher test_fees test_queue test_ledger test_split_replay test_ouch
+          test_soupbin
           test_sim test_kill_switch test_mold test_recover test_restart test_closed_loop test_as_maker test_intensity)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE itchbook)
