@@ -531,13 +531,17 @@ jobs:
       # separate strategy process rebuilds the book from those datagrams,
       # quotes over TCP, and reports the fills it can see ON ITS OWN FEED.
       #
-      # Three arms, and the third is the one that carries the claim. Arm 1 is a
-      # required green baseline. Arm 2 has the exchange withhold exactly the
-      # ITCH executions naming a strategy reference: the strategy must fall
-      # silent WHILE the exchange still reports the fills happened, because a
-      # detector that cannot see its input must report nothing. Arm 3 deletes
-      # every OUCH Executed inside the strategy: the fills must survive, since
-      # they never came from there.
+      # Four arms. Arm 1 is a required green baseline. Arm 2 has the exchange
+      # withhold exactly the ITCH executions naming a strategy reference: the
+      # strategy must fall silent WHILE the exchange still reports the fills
+      # happened, because a detector that cannot see its input must report
+      # nothing. Arm 3 deletes every OUCH Executed inside the strategy: the
+      # fills must survive, since they never came from there. Arm 4 holds every
+      # acknowledgement 250ms while the feed runs at full speed -- nothing
+      # orders TCP against UDP, and a fill arriving before the ack that names it
+      # cost 202 shares on the real day before it was found. The arm requires
+      # both that the race happened and that it cost nothing, because a delay
+      # that changed no ordering would otherwise pass by exercising nothing.
       #
       # Every arm also cross-checks the shares the exchange's aggressor took
       # against the shares the strategy counted off the tape. Those two numbers
@@ -546,8 +550,8 @@ jobs:
       - name: Closed loop (two processes, UDP feed, TCP order entry)
         run: ./scripts/closed-loop-check.sh
 
-      # ...and it has to be able to fail. Five mutations were run against this
-      # gate locally and all five were caught; this is the cheapest of them,
+      # ...and it has to be able to fail. Six mutations were run against this
+      # gate locally and all six were caught; this is the cheapest of them,
       # and the only one that fits in a CI step: the strategy reports the OUCH
       # count where it means the feed count. One wrong variable inverts the
       # entire claim, and arms 2 and 3 both refuse it.

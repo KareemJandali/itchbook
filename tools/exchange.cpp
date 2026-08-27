@@ -19,24 +19,30 @@
 // done-condition actually names are between the STRATEGY and the exchange, and
 // those are real.
 //
-// THE EVENT LOOP IS SINGLE-THREADED, AND tick() COMES FROM A timerfd.
+// THE EVENT LOOP IS SINGLE-THREADED, AND tick() IS NOT A BRANCH OF THE poll().
 // soupbin/session.hpp is explicit that tick() must come from an independent
-// periodic timer and not from socket readability, because a peer that has gone
-// silent never makes a socket readable again. A bare epoll_wait timeout is the
+// periodic source and not from socket readability, because a peer that has gone
+// silent never makes a socket readable again. A bare wait-timeout branch is the
 // same bug wearing a different hat: under a busy feed the loop returns early on
 // the replay deadline every iteration and the timeout branch never runs, so
 // tick() ends up gated behind activity after all -- just the feed's activity
-// instead of the peer's. A timerfd fires on its own schedule and its readiness
-// is an event the loop cannot skip.
+// instead of the peer's.
+//
+// So the tick is an unconditional deadline test at the top of every iteration,
+// against the same monotonic clock it is about, with the poll timeout clamped
+// so the loop cannot sleep past it. That is stronger than the timerfd this
+// replaced, which still needed its descriptor to be reported ready; no path
+// through this loop can skip it. poll() rather than epoll because epoll is
+// Linux-only, it broke the macOS build, and its advantage is O(1) readiness
+// over thousands of descriptors where there are two.
 //
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/epoll.h>
+#include <poll.h>
 #include <sys/socket.h>
-#include <sys/timerfd.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -230,17 +236,7 @@ int main(int argc, char** argv) {
     if (::listen(lfd, 4) != 0) { std::perror("listen"); return 1; }
     set_nonblock(lfd);
 
-    const int tfd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-    itimerspec its{};
-    its.it_interval.tv_nsec = static_cast<long>(kTickPeriodNs);
-    its.it_value.tv_nsec = static_cast<long>(kTickPeriodNs);
-    ::timerfd_settime(tfd, 0, &its, nullptr);
-
-    const int ep = ::epoll_create1(0);
-    epoll_event evl{}; evl.events = EPOLLIN; evl.data.fd = lfd;
-    ::epoll_ctl(ep, EPOLL_CTL_ADD, lfd, &evl);
-    epoll_event evt{}; evt.events = EPOLLIN; evt.data.fd = tfd;
-    ::epoll_ctl(ep, EPOLL_CTL_ADD, tfd, &evt);
+    uint64_t next_tick_ns = wall_now_ns() + kTickPeriodNs;
 
     // ---- the exchange ----------------------------------------------------------
     bk::BookSet set{1u << 22, 100, 20, 512};
@@ -291,23 +287,37 @@ int main(int argc, char** argv) {
         // The replayer is a deadline, not an fd.
         int timeout_ms = 0;
         if (feed_done) timeout_ms = 20;
+        else if (opt.wait_for_client && !client_ready) timeout_ms = 20;
         else if (opt.multiplier > 0.0 && first_replay_ts != 0) {
             const uint64_t elapsed_replay =
                 static_cast<uint64_t>(double(wall_now_ns() - wall_start) * opt.multiplier);
             const uint64_t due = first_replay_ts + elapsed_replay;
             timeout_ms = last_replay_ts > due ? 1 : 0;
         }
+        // ...and never sleep past the tick.
+        const uint64_t before = wall_now_ns();
+        const int to_tick = next_tick_ns > before
+            ? static_cast<int>((next_tick_ns - before) / 1'000'000ULL) : 0;
+        if (to_tick < timeout_ms) timeout_ms = to_tick;
 
-        epoll_event ev[8];
-        const int n = ::epoll_wait(ep, ev, 8, timeout_ms);
+        pollfd pfd[2];
+        nfds_t nfd = 0;
+        pfd[nfd].fd = lfd;  pfd[nfd].events = POLLIN; pfd[nfd].revents = 0; ++nfd;
+        if (cfd >= 0) {
+            pfd[nfd].fd = cfd; pfd[nfd].events = POLLIN; pfd[nfd].revents = 0; ++nfd;
+        }
+        const int n = ::poll(pfd, nfd, timeout_ms);
         const uint64_t wall = wall_now_ns();
 
-        for (int k = 0; k < n; ++k) {
-            if (ev[k].data.fd == tfd) {
-                uint64_t exp = 0;
-                while (::read(tfd, &exp, sizeof(exp)) == sizeof(exp)) {}
-                if (session != nullptr) { session->tick(wall); gw->poll(wall); }
-            } else if (ev[k].data.fd == lfd) {
+        // Unconditional, not a branch of the poll result -- see the banner.
+        if (wall >= next_tick_ns) {
+            next_tick_ns = wall + kTickPeriodNs;
+            if (session != nullptr) { session->tick(wall); gw->poll(wall); }
+        }
+
+        for (nfds_t k = 0; n > 0 && k < nfd; ++k) {
+            if (pfd[k].revents == 0) continue;
+            if (pfd[k].fd == lfd) {
                 const int c = ::accept(lfd, nullptr, nullptr);
                 if (c >= 0) {
                     set_nonblock(c);
@@ -324,10 +334,11 @@ int main(int argc, char** argv) {
                     ouch_in.gw = gw;
                     ouch_in.book = &book;
                     ouch_in.trace = opt.trace;
-                    epoll_event ec{}; ec.events = EPOLLIN; ec.data.fd = cfd;
-                    ::epoll_ctl(ep, EPOLL_CTL_ADD, cfd, &ec);
+                    // Nothing to register: the poll set is rebuilt from cfd
+                    // every iteration, so the new client is watched from the
+                    // next one.
                 }
-            } else if (ev[k].data.fd == cfd && session != nullptr) {
+            } else if (pfd[k].fd == cfd && session != nullptr) {
                 uint8_t rb[8192];
                 for (;;) {
                     const ssize_t r = ::read(cfd, rb, sizeof(rb));
@@ -448,14 +459,14 @@ int main(int argc, char** argv) {
                 "{\n  \"messages_read\": %" PRIu64 ",\n  \"applied\": %" PRIu64 ",\n"
                 "  \"aggressors\": %" PRIu64 ",\n  \"strategy_shares_taken\": %" PRIu64 ",\n"
                 "  \"partition_violations\": %" PRIu64 ",\n  \"itch_published\": %" PRIu64 ",\n"
-                "  \"itch_suppressed\": %" PRIu64 ",\n  \"mold_packets\": %" PRIu64 ",\n"
+                "  \"itch_suppressed\": %" PRIu64 ",\n  \"mold_packets\": %" PRIu64 ",\n  \"mold_heartbeats\": %" PRIu64 ",\n"
                 "  \"datagrams_sent\": %" PRIu64 ",\n  \"ouch_accepted\": %" PRIu64 ",\n"
                 "  \"ouch_executed\": %" PRIu64 ",\n  \"gateway_position\": %" PRId64 ",\n"
                 "  \"conserves_shares\": %s,\n  \"agrees_with_book\": %s,\n"
                 "  \"wall_ns\": %" PRIu64 "\n}\n",
                 read, applied, rc.aggressors, rc.strategy_shares_taken,
                 rc.partition_violations, feed.published, feed.suppressed,
-                pub.packets(), udp.datagrams,
+                pub.packets(), pub.heartbeats(), udp.datagrams,
                 gw ? gw->accepts_sent() : 0, gw ? gw->executes_sent() : 0,
                 gw ? gw->position() : 0,
                 matcher.conserves_shares() ? "true" : "false",

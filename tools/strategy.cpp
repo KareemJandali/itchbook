@@ -46,9 +46,8 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/epoll.h>
+#include <poll.h>
 #include <sys/socket.h>
-#include <sys/timerfd.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -56,6 +55,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -97,6 +97,7 @@ struct Opt {
     uint64_t quote_every = 200;       // feed messages between quotes
     uint64_t max_orders = 200;
     bool drop_ouch_executed = false;  // the positive arm
+    uint64_t ack_delay_ms = 0;        // hold Accepted this long; see the banner
     std::string json;
     uint64_t trace = 0;
 };
@@ -109,17 +110,44 @@ struct OutQueue : sb::Sink {
 // Everything this process believes, built only from bytes that arrived on a
 // socket. Nothing here is shared with the exchange -- it is a different address
 // space, and that is the point.
+// What the feed told us about a reference before we were told it was ours.
+// See the banner: the ack is not ordered against the datagrams.
+struct Parked {
+    struct Exec { uint32_t shares; bool in_book; char side; };
+    bool saw_add = false;
+    std::vector<Exec> execs;
+};
+
 struct Belief {
     bk::BookSet set{1u << 22, 100, 20, 512};
     std::unordered_set<uint64_t> my_refs;      // from OUCH Accepted
+    std::unordered_map<uint64_t, Parked> parked;
     uint64_t applied = 0;
     uint64_t own_adds_seen = 0;
     uint64_t adds_before_ack = 0;   // the feed beat the acknowledgement
+    uint64_t execs_before_ack = 0, execs_before_ack_shares = 0;
     uint64_t maker_fills = 0, maker_fill_shares = 0;
     uint64_t maker_fills_in_book = 0;   // ...and it was resting in OUR book
     int64_t position = 0;
     uint16_t locate = 0;                       // learned from the feed
     bool have_locate = false;
+
+    // The Accepted for `ref` has just landed. Anything the feed already said
+    // about it counts now, exactly as it would have counted then.
+    void retire(uint64_t ref) {
+        const auto it = parked.find(ref);
+        if (it == parked.end()) return;
+        if (it->second.saw_add) ++own_adds_seen;
+        for (const Parked::Exec& e : it->second.execs) {
+            ++maker_fills;
+            maker_fill_shares += e.shares;
+            if (e.in_book) {
+                ++maker_fills_in_book;
+                position += (e.side == 'B') ? int64_t(e.shares) : -int64_t(e.shares);
+            }
+        }
+        parked.erase(it);
+    }
 };
 
 // The Sequencer's Handler. It is where PUBLISH -> TRANSPORT -> CONSUME lands:
@@ -158,6 +186,21 @@ struct FeedHandler {
         // a few lines later would find nothing and report zero fills.
         if (type == 'E' && len >= 31) {
             const uint64_t ref = m::order_executed::ref(p);
+            if (b->my_refs.count(ref) == 0 && itchbook::replay::is_strategy_ref(ref)) {
+                // A fill for an order in the strategy partition whose Accepted
+                // has not crossed TCP yet. Park everything the feed knows right
+                // now -- including whether it was resting in our book, which
+                // cannot be asked again once book::apply has run -- and retire
+                // it when the ack lands. Dropping it silently lost 202 shares.
+                const uint32_t sh = m::order_executed::executed_shares(p);
+                const bk::Book* mb = b->have_locate ? b->set.peek(b->locate) : nullptr;
+                const bk::Order* po = mb != nullptr ? mb->find(ref) : nullptr;
+                b->parked[ref].execs.push_back(
+                    {sh, po != nullptr,
+                     po != nullptr ? static_cast<char>(po->side) : ' '});
+                ++b->execs_before_ack;
+                b->execs_before_ack_shares += sh;
+            }
             if (b->my_refs.count(ref) != 0) {
                 const uint32_t sh = m::order_executed::executed_shares(p);
                 ++b->maker_fills;
@@ -182,8 +225,10 @@ struct FeedHandler {
             if (b->my_refs.count(ref) != 0) {
                 ++b->own_adds_seen;
             } else if (itchbook::replay::is_strategy_ref(ref)) {
-                // Ours by the feed's own partition, but the Accepted that
-                // names it has not arrived yet. Counted, not acted on.
+                // Ours by the feed's own partition, but the Accepted that names
+                // it has not arrived yet. Parked, and counted as own_adds_seen
+                // when it does.
+                b->parked[ref].saw_add = true;
                 ++b->adds_before_ack;
             }
         }
@@ -221,6 +266,7 @@ int main(int argc, char** argv) {
         else if (a == "--quote-every") opt.quote_every = std::strtoull(next("--quote-every"), nullptr, 10);
         else if (a == "--max-orders") opt.max_orders = std::strtoull(next("--max-orders"), nullptr, 10);
         else if (a == "--drop-ouch-executed") opt.drop_ouch_executed = true;
+        else if (a == "--ack-delay-ms") opt.ack_delay_ms = std::strtoull(next("--ack-delay-ms"), nullptr, 10);
         else if (a == "--json") opt.json = next("--json");
         else if (a == "--trace") opt.trace = std::strtoull(next("--trace"), nullptr, 10);
         else { std::fprintf(stderr, "error: unknown option %s\n", a.c_str()); return 2; }
@@ -257,19 +303,11 @@ int main(int argc, char** argv) {
     ::setsockopt(tcp, IPPROTO_TCP, TCP_NODELAY, &nod, sizeof(nod));
     set_nonblock(tcp);
 
-    const int tfd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-    itimerspec its{};
-    its.it_interval.tv_nsec = static_cast<long>(kTickPeriodNs);
-    its.it_value.tv_nsec = static_cast<long>(kTickPeriodNs);
-    ::timerfd_settime(tfd, 0, &its, nullptr);
-
-    const int ep = ::epoll_create1(0);
-    epoll_event eu{}; eu.events = EPOLLIN; eu.data.fd = ufd;
-    ::epoll_ctl(ep, EPOLL_CTL_ADD, ufd, &eu);
-    epoll_event et{}; et.events = EPOLLIN; et.data.fd = tcp;
-    ::epoll_ctl(ep, EPOLL_CTL_ADD, tcp, &et);
-    epoll_event ett{}; ett.events = EPOLLIN; ett.data.fd = tfd;
-    ::epoll_ctl(ep, EPOLL_CTL_ADD, tfd, &ett);
+    // tick() is a deadline rather than a descriptor: soupbin/session.hpp needs
+    // it to fire independently of socket readability, and an unconditional test
+    // at the top of the loop cannot be skipped by any path through it. poll()
+    // rather than epoll because epoll is Linux-only and there are two fds.
+    uint64_t next_tick_ns = wall_now_ns() + kTickPeriodNs;
 
     Belief belief;
     FeedHandler handler;
@@ -291,6 +329,7 @@ int main(int argc, char** argv) {
     // never used to move the position: the positive arm drops these entirely
     // and the run must still observe fills.
     struct OuchIn : sb::Sink {
+        Belief* belief = nullptr;
         std::unordered_set<uint64_t>* refs = nullptr;
         uint64_t* accepted = nullptr;
         uint64_t* rejected = nullptr;
@@ -298,12 +337,22 @@ int main(int argc, char** argv) {
         uint64_t* execs = nullptr;
         uint64_t* exec_shares = nullptr;
         bool drop_executed = false;
+        uint64_t delay_ns = 0;
+        uint64_t now = 0;                                  // set before on_bytes
+        std::deque<std::pair<uint64_t, uint64_t>>* late = nullptr;   // due_ns, ref
         void on_message(const uint8_t* p, size_t n) override {
             if (n < 1) return;
             switch (static_cast<char>(p[0])) {
                 case 'A':
                     if (n >= ouch::kAcceptedLen) {
-                        refs->insert(ouch::accepted::reference_number(p));
+                        const uint64_t r = ouch::accepted::reference_number(p);
+                        if (delay_ns != 0 && late != nullptr) {
+                            late->emplace_back(now + delay_ns, r);
+                        } else {
+                            refs->insert(r);
+                            // Anything the feed already said about r counts now.
+                            if (belief != nullptr) belief->retire(r);
+                        }
                         ++*accepted;
                     }
                     break;
@@ -319,6 +368,7 @@ int main(int argc, char** argv) {
             }
         }
     } ouch_in;
+    ouch_in.belief = &belief;
     ouch_in.refs = &belief.my_refs;
     ouch_in.accepted = &accepted;
     ouch_in.rejected = &rejected;
@@ -326,6 +376,9 @@ int main(int argc, char** argv) {
     ouch_in.execs = &ouch_executed_received;
     ouch_in.exec_shares = &ouch_executed_shares;
     ouch_in.drop_executed = opt.drop_ouch_executed;
+    std::deque<std::pair<uint64_t, uint64_t>> late_acks;
+    ouch_in.delay_ns = opt.ack_delay_ms * 1'000'000ULL;
+    ouch_in.late = &late_acks;
 
     const uint64_t wall_start = wall_now_ns();
     sb::ClientSession client(ccfg, wall_start, "STRAT", "PASSWORD", "", "1", &out, &ouch_in);
@@ -339,23 +392,49 @@ int main(int argc, char** argv) {
     uint64_t ended_at = 0;
 
     while (true) {
-        epoll_event ev[8];
-        const int n = ::epoll_wait(ep, ev, 8, 20);
+        int timeout_ms = 20;
+        const uint64_t before = wall_now_ns();
+        const int to_tick = next_tick_ns > before
+            ? static_cast<int>((next_tick_ns - before) / 1'000'000ULL) : 0;
+        if (to_tick < timeout_ms) timeout_ms = to_tick;
+
+        // TCP first, then UDP: learn who you are, then read the tape. It
+        // does not close the ack race -- the ack may simply arrive later -- but
+        // it stops the loop from manufacturing one by reading a datagram it
+        // already held the answer to.
+        pollfd pfd[2];
+        pfd[0].fd = tcp; pfd[0].events = POLLIN; pfd[0].revents = 0;
+        pfd[1].fd = ufd; pfd[1].events = POLLIN; pfd[1].revents = 0;
+        const int n = ::poll(pfd, 2, timeout_ms);
         const uint64_t wall = wall_now_ns();
 
-        for (int k = 0; k < n; ++k) {
-            if (ev[k].data.fd == tfd) {
-                uint64_t exp = 0;
-                while (::read(tfd, &exp, sizeof(exp)) == sizeof(exp)) {}
-                client.tick(wall);
-            } else if (ev[k].data.fd == tcp) {
+        // Unconditional, not a branch of the poll result.
+        if (wall >= next_tick_ns) {
+            next_tick_ns = wall + kTickPeriodNs;
+            client.tick(wall);
+        }
+
+        // Acknowledgements that were held now come due, in the order they
+        // arrived. Everything the feed already said about each reference is
+        // retired here, which is the path --ack-delay-ms exists to exercise.
+        while (!late_acks.empty() && late_acks.front().first <= wall) {
+            const uint64_t r = late_acks.front().second;
+            late_acks.pop_front();
+            belief.my_refs.insert(r);
+            belief.retire(r);
+        }
+
+        for (int k = 0; n > 0 && k < 2; ++k) {
+            if (pfd[k].revents == 0) continue;
+            if (pfd[k].fd == tcp) {
                 uint8_t rb[8192];
                 for (;;) {
                     const ssize_t r = ::read(tcp, rb, sizeof(rb));
                     if (r <= 0) break;
+                    ouch_in.now = wall;
                     client.on_bytes(rb, size_t(r), wall);
                 }
-            } else if (ev[k].data.fd == ufd) {
+            } else if (pfd[k].fd == ufd) {
                 for (;;) {
                     const ssize_t r = ::recvfrom(ufd, dg.data(), dg.size(), 0, nullptr, nullptr);
                     if (r <= 0) break;
@@ -424,6 +503,16 @@ int main(int argc, char** argv) {
         if (wall - wall_start > 180ULL * 1'000'000'000ULL) break;
     }
 
+    // Anything still held would be an ack the run simply never applied, and
+    // its fills would go missing for a reason that has nothing to do with the
+    // transports. Drain before reporting.
+    while (!late_acks.empty()) {
+        const uint64_t r = late_acks.front().second;
+        late_acks.pop_front();
+        belief.my_refs.insert(r);
+        belief.retire(r);
+    }
+
     seq.flush(handler);
     const auto& st = seq.stats();
 
@@ -438,6 +527,8 @@ int main(int argc, char** argv) {
     std::printf("%-32s %14" PRIu64 "\n", "OUCH canceled", canceled);
     std::printf("%-32s %14" PRIu64 "\n", "own adds seen ON THE FEED", belief.own_adds_seen);
     std::printf("%-32s %14" PRIu64 "\n", "  feed beat the ack", belief.adds_before_ack);
+    std::printf("%-32s %14" PRIu64 "\n", "FILLS THAT BEAT THE ACK", belief.execs_before_ack);
+    std::printf("%-32s %14" PRIu64 "\n", "  shares", belief.execs_before_ack_shares);
     std::printf("%-32s %14" PRIu64 "\n", "MAKER FILLS FROM THE FEED", belief.maker_fills);
     std::printf("%-32s %14" PRIu64 "\n", "  resting in MY OWN book", belief.maker_fills_in_book);
     std::printf("%-32s %14" PRIu64 "\n", "  shares", belief.maker_fill_shares);
@@ -453,13 +544,14 @@ int main(int argc, char** argv) {
                 "  \"gaps\": %" PRIu64 ",\n  \"messages_lost\": %" PRIu64 ",\n"
                 "  \"orders_sent\": %" PRIu64 ",\n  \"ouch_accepted\": %" PRIu64 ",\n"
                 "  \"ouch_rejected\": %" PRIu64 ",\n  \"ouch_canceled\": %" PRIu64 ",\n"
-                "  \"own_adds_seen_on_feed\": %" PRIu64 ",\n  \"adds_before_ack\": %" PRIu64 ",\n"
+                "  \"own_adds_seen_on_feed\": %" PRIu64 ",\n  \"adds_before_ack\": %" PRIu64 ",\n  \"execs_before_ack\": %" PRIu64 ",\n  \"execs_before_ack_shares\": %" PRIu64 ",\n"
                 "  \"maker_fills_from_feed\": %" PRIu64 ",\n  \"maker_fills_in_my_book\": %" PRIu64 ",\n  \"maker_fill_shares\": %" PRIu64 ",\n"
                 "  \"ouch_executed_received\": %" PRIu64 ",\n  \"ouch_executed_shares\": %" PRIu64 ",\n"
                 "  \"position_from_feed\": %" PRId64 "\n}\n",
                 datagrams, belief.applied, st.gaps, st.messages_lost,
                 orders_sent, accepted, rejected, canceled, belief.own_adds_seen,
-                belief.adds_before_ack,
+                belief.adds_before_ack, belief.execs_before_ack,
+                belief.execs_before_ack_shares,
                 belief.maker_fills, belief.maker_fills_in_book, belief.maker_fill_shares,
                 ouch_executed_received, ouch_executed_shares, belief.position);
             std::fclose(j);

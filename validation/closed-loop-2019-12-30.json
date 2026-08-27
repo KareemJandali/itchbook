@@ -5,48 +5,104 @@
   "symbol": "MSFT",
   "stock_locate": 5291,
   "date": "2019-12-30",
-  "exchange": {
-    "messages_read": 1221484,
-    "applied": 1221484,
-    "aggressors": 34739,
-    "strategy_shares_taken": 104286,
-    "partition_violations": 0,
-    "itch_published": 1222900,
-    "mold_packets": 27080,
-    "datagrams_sent": 27082,
-    "ouch_accepted": 1200,
-    "ouch_executed": 2154,
-    "gateway_position": 108532,
-    "conserves_shares": true,
-    "agrees_with_book": true
+  "pacing": {
+    "multiplier": 1000,
+    "note": "paced, not free-running -- about 62 seconds for a full ITCH session including pre- and post-market. Long enough to be evidence about the periodic path as well: SoupBinTCP heartbeats are sent from tick() and nowhere else, and a server declares its client dead after 15 seconds of silence, so a 62-second run ending with both processes exiting 0 could not have happened if tick() had stopped firing."
   },
-  "strategy": {
-    "datagrams_received": 27082,
-    "feed_messages_applied": 1222835,
-    "sequencer_gaps": 0,
-    "messages_lost": 0,
-    "orders_sent": 1200,
-    "ouch_accepted": 1200,
-    "ouch_rejected": 0,
-    "own_adds_seen_on_feed": 1148,
-    "adds_that_beat_their_ack": 10,
-    "maker_fills_from_feed": 2102,
-    "maker_fills_resting_in_own_book": 2102,
-    "maker_fill_shares": 104286,
-    "position_from_feed": 104286,
-    "ouch_executed_received": 2154,
-    "ouch_executed_shares": 108532
-  },
-  "cross_checks": {
-    "shares_agree_across_processes": true,
-    "every_fill_was_resting_in_the_strategys_book": true,
-    "position_equals_fill_shares": true,
-    "taker_shares_invisible_to_itch": 4246
+  "runs": {
+    "natural": {
+      "wall_seconds": 61.2,
+      "exchange": {
+        "messages_read": 1221484,
+        "applied": 1221484,
+        "aggressors": 34739,
+        "strategy_shares_taken": 105786,
+        "partition_violations": 0,
+        "itch_published": 1222788,
+        "mold_packets": 27208,
+        "mold_heartbeats": 244,
+        "datagrams_sent": 27452,
+        "ouch_accepted": 1200,
+        "ouch_executed": 2206,
+        "gateway_position": 107836,
+        "conserves_shares": true,
+        "agrees_with_book": true
+      },
+      "strategy": {
+        "datagrams_received": 27452,
+        "sequencer_gaps": 0,
+        "messages_lost": 0,
+        "orders_sent": 1200,
+        "ouch_accepted": 1200,
+        "ouch_rejected": 0,
+        "own_adds_seen_on_feed": 1180,
+        "adds_that_beat_their_ack": 2,
+        "fills_that_beat_their_ack": 0,
+        "fills_that_beat_their_ack_shares": 0,
+        "maker_fills_from_feed": 2185,
+        "maker_fills_resting_in_own_book": 2185,
+        "maker_fill_shares": 105786,
+        "position_from_feed": 105786,
+        "ouch_executed_received": 2206,
+        "ouch_executed_shares": 107836
+      },
+      "cross_checks": {
+        "shares_agree_across_processes": true,
+        "every_fill_was_resting_in_the_strategys_book": true,
+        "position_equals_fill_shares": true,
+        "taker_shares_invisible_to_itch": 2050
+      }
+    },
+    "acknowledgements_held_250ms": {
+      "wall_seconds": 61.2,
+      "exchange": {
+        "messages_read": 1221484,
+        "applied": 1221484,
+        "aggressors": 34739,
+        "strategy_shares_taken": 106431,
+        "partition_violations": 0,
+        "itch_published": 1222779,
+        "mold_packets": 27209,
+        "mold_heartbeats": 244,
+        "datagrams_sent": 27453,
+        "ouch_accepted": 1200,
+        "ouch_executed": 2119,
+        "gateway_position": 108123,
+        "conserves_shares": true,
+        "agrees_with_book": true
+      },
+      "strategy": {
+        "datagrams_received": 27453,
+        "sequencer_gaps": 0,
+        "messages_lost": 0,
+        "orders_sent": 1200,
+        "ouch_accepted": 1200,
+        "ouch_rejected": 0,
+        "own_adds_seen_on_feed": 1184,
+        "adds_that_beat_their_ack": 1182,
+        "fills_that_beat_their_ack": 1614,
+        "fills_that_beat_their_ack_shares": 84072,
+        "maker_fills_from_feed": 2095,
+        "maker_fills_resting_in_own_book": 2095,
+        "maker_fill_shares": 106431,
+        "position_from_feed": 106431,
+        "ouch_executed_received": 2119,
+        "ouch_executed_shares": 108123
+      },
+      "cross_checks": {
+        "shares_agree_across_processes": true,
+        "every_fill_was_resting_in_the_strategys_book": true,
+        "position_equals_fill_shares": true,
+        "taker_shares_invisible_to_itch": 1692
+      }
+    }
   },
   "notes": [
-    "The two share counts are computed in different address spaces from different inputs: the exchange's from the matcher's own Meta bookkeeping, the strategy's by parsing ITCH out of a UDP datagram.",
+    "The two share counts are computed in different address spaces from different inputs: the exchange's from the matcher's own Meta bookkeeping, the strategy's by parsing ITCH out of a UDP datagram. They agree exactly in both runs.",
     "taker_shares_invisible_to_itch is not an error. ITCH describes what happens to RESTING orders, so a strategy order that crosses is never named on the tape and cannot be seen this way. It is the difference between what OUCH reported and what the feed could show.",
-    "adds_that_beat_their_ack counts orders whose ITCH Add arrived on UDP before the OUCH Accepted naming them arrived on TCP. Nothing orders the two transports against each other. The strategy reads an order's side from the book it built from the feed rather than from a map keyed on having seen the ack first, so the race costs it nothing.",
-    "The three-arm gate that establishes the fills came from the feed and not from OUCH runs on generated feeds in CI: scripts/closed-loop-check.sh. Five mutations were run against it and all five were caught."
+    "WHY THERE ARE TWO RUNS. my_refs is populated from OUCH Accepted, over TCP; both the ITCH Add and the ITCH Execution go out over UDP; and nothing orders those two transports against each other. An earlier version of this run disagreed with the exchange by exactly 202 shares while every datagram arrived and the sequencer reported nothing lost -- three fills reached the strategy before the acknowledgement naming their orders, and were dropped because the strategy did not yet know they were its own. Fills are now parked with everything the feed knew at the time and retired when the ack lands, and TCP is drained before UDP so the loop stops manufacturing the race out of nothing.",
+    "That second change made the first one invisible: the natural run now reports almost no races at all, which is the right outcome and useless as evidence. The acknowledgements_held_250ms run forces it. There, 1,182 of 1,200 Adds and 1,614 of the fills -- 84,072 shares, 79% of the total -- arrive before the acknowledgement that names them, and the counts still agree with the exchange exactly. Every one of those shares would have been silently lost before the fix.",
+    "Neither run is deterministic and neither is meant to be. The fill count depends on how stale the strategy's view of the book is when each order lands, which depends on scheduling. What is asserted is the agreement between the two processes and the absence of gaps, not the particular number of fills.",
+    "The four-arm gate that establishes the fills came from the feed and not from OUCH runs on generated feeds in CI: scripts/closed-loop-check.sh. Six mutations were run against it and all six were caught."
   ]
 }

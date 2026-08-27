@@ -3288,12 +3288,14 @@ side.
 
 `tools/exchange.cpp`, `tools/strategy.cpp`, `include/itchbook/mold/publisher.hpp`
 and `scripts/closed-loop-check.sh`. **Two processes, not three.** On the real
-day, MSFT 2019-12-30: 1,221,484 messages, 27,082 datagrams, **zero sequencer
-gaps**, 1,200 orders over TCP, and **2,102 maker fills recognised from the
-strategy's own feed, every one of them naming an order resting in the book the
-strategy had built from that feed.** 104,286 shares — the same number the
-exchange reports its aggressor took, computed in another address space from
-another input. Recorded in `validation/closed-loop-2019-12-30.json`.
+day, MSFT 2019-12-30, paced at 1000× so a full ITCH session takes 62 seconds:
+1,221,484 messages, 27,451 datagrams, **zero sequencer gaps**, 1,200 orders over
+TCP, and **2,185 maker fills recognised from the strategy's own feed, every one
+of them naming an order resting in the book the strategy had built from that
+feed.** 105,786 shares — the same number the exchange reports its aggressor
+took, computed in another address space from another input. Recorded in
+`validation/closed-loop-2019-12-30.json`, which holds two runs and not one; the
+second is below.
 
 **Two processes rather than the three the plan asked for.** The plan separates
 the historical replayer from the exchange. They cannot separate:
@@ -3305,9 +3307,9 @@ phase exists to rule out, not a topology to adopt on the way to ruling it out.
 So the split that carries the claim is the one between the exchange and the
 strategy, and every byte between those two crosses a real socket.
 
-**Only MAKER fills can be seen this way, and that is not a limitation to work
-around.** ITCH describes what happens to RESTING orders; a strategy order that
-crosses the spread is never named on the tape. "It traded" is therefore not
+**Only MAKER fills can be seen this way, and that is the point rather than a
+limitation.** ITCH describes what happens to RESTING orders; a strategy order
+that crosses the spread is never named on the tape. "It traded" is therefore not
 evidence for the done-condition, and the first run showed exactly why:
 
     quote 1   bid=1597300 ask=1570000 px=1597100
@@ -3328,39 +3330,66 @@ The only way the strategy learns which ITCH reference belongs to its token is
 the Accepted message's reference number. The clause forbids the fill EVENT
 arriving over OUCH, not the token-to-reference binding.
 
-**A race between two transports, found by two numbers that had never been
-compared.** On the real day the strategy counted 103,210 shares of fills and
-derived a position of 101,860. The 1,350-share gap was orders whose ITCH Add
-arrived on UDP *before* the OUCH Accepted naming them arrived on TCP — nothing
-orders those two against each other, and market data outrunning the
-acknowledgement is the ordinary condition a co-located strategy is built for,
-not a harness artifact. The side is now read from the strategy's own book,
-which holds it whether or not the ack has landed; `adds_before_ack` counts the
-race directly (10 on that day) so the next one announces itself instead of
-hiding in the difference between two figures nobody compared.
+**THE ACKNOWLEDGEMENT IS NOT ORDERED AGAINST THE FEED, AND 202 SHARES WENT
+MISSING BECAUSE OF IT.** The paced run disagreed with the exchange — 105,363
+shares taken against 105,161 counted — while all 27,459 datagrams arrived and
+the sequencer reported no gaps and nothing lost. Nothing had been dropped in
+transit; something had arrived and not been recognised. The counter added to
+find out came back at exactly the difference:
 
-**The gate is three arms, and the third earns its place.** Arm 1 is a required
-green baseline. Arm 2 has the exchange withhold exactly the ITCH executions
-naming a strategy reference: the strategy must fall silent *while the exchange
-still reports the fills happened*, because a detector that cannot see its input
-must report nothing. Arm 3 deletes every OUCH Executed inside the strategy: the
-fills must survive. Five mutations were run against the gate — **5 caught, 0
-missed, 0 errors** — and mutation 5, a strategy that counts a feed fill only
-once OUCH has confirmed one, passes arms 1 and 2 exactly like correct code and
-is caught by arm 3 alone.
+    FILLS THAT BEAT THE ACK                       3
+      shares                                    202     <- the missing 202
 
-**Three defects the phase found in code that already ran.** A leaked session and
+`my_refs` is populated from OUCH Accepted over TCP; both the ITCH Add and the
+ITCH Execution go out over UDP; nothing orders those two transports against each
+other. An order can be added *and filled*, with both messages delivered, before
+its Accepted crosses the socket — and the strategy drops a fill it is looking
+straight at. Fills are now **parked** with everything the feed knew at the time
+(shares, side, and whether the order was resting in our book, which cannot be
+asked again once `book::apply` has run) and retired when the ack lands.
+Ownership still comes from the Accepted message and nowhere else; only the
+attribution waits. TCP is also drained before UDP now — learn who you are, then
+read the tape — which does not close the race but stops the loop manufacturing
+it out of nothing.
+
+**And that fix promptly made itself invisible.** With TCP drained first, the
+natural run reports 0 races and the recovery path never executes. A fix nobody
+has watched work is worth what a detector nobody has watched fail is worth, so
+`--ack-delay-ms` holds every Accepted while the feed runs at full speed, and the
+real day is recorded twice. With acks held 250ms: **1,182 of 1,200 Adds and
+1,614 of the fills — 84,072 shares, 79% of the total — arrive before the
+acknowledgement naming them, and the counts still agree with the exchange
+exactly.** Every one of those shares would have been silently lost before the
+fix. That is ARM 4.
+
+**The gate is four arms, and each of the last three earns its place.** Arm 1 is
+a required green baseline. Arm 2 has the exchange withhold exactly the ITCH
+executions naming a strategy reference: the strategy must fall silent *while the
+exchange still reports the fills happened*, because a detector that cannot see
+its input must report nothing. Arm 3 deletes every OUCH Executed inside the
+strategy: the fills must survive. Arm 4 holds the acknowledgements. **Six
+mutations were run against the gate — 6 caught, 0 missed, 0 errors** — and two
+of them are caught by exactly one arm each: a strategy that counts a feed fill
+only once OUCH has confirmed one passes arms 1, 2 and 4 like correct code and
+dies on arm 3; and dropping a fill that beats its ack — the defect that was
+really in the tree — passes arms 1, 2 and 3 and dies on arm 4.
+
+**Five defects the phase found in code that already ran.** A leaked session and
 gateway (84,756 bytes in 1,606 allocations, LeakSanitizer, first Debug run) — a
 leak that would have kept this gate out of the sanitised build, which is the one
 place two-process socket code gets its bounds checked at all. A session
 constructed with `app_in = nullptr`, which compiles perfectly and silently drops
-every inbound order. And `kLocate` as a hardcoded 1, correct for every generated
-feed here and wrong for every real one — MSFT is stock_locate 5291, and with the
-constant the gateway binds an empty book and the run reports zero fills for a
-reason that has nothing to do with the engine.
+every inbound order. `kLocate` hardcoded to 1, right for every generated feed
+and wrong for every real one — MSFT is stock_locate 5291, and with the constant
+the gateway binds an empty book and reports zero fills for a reason that has
+nothing to do with the engine. The dropped fill above. And `epoll` and `timerfd`
+throughout, which are Linux-only and broke the macOS job; both are gone in
+favour of `poll()`, and the periodic `tick()` — which `soupbin/session.hpp`
+requires to fire independently of socket readability — is now an unconditional
+deadline test at the top of the loop rather than a descriptor that still had to
+be reported ready. 244 heartbeats over 62 seconds say it fires.
 
-30 checks green under ASan/UBSan in 5 seconds; 25/25 in ctest; `verify-local`
-PASSED.
+37 checks green under ASan/UBSan; 25/25 in ctest; `verify-local` PASSED.
 
 ### 12.8 — Tick-to-trade, decomposed
 

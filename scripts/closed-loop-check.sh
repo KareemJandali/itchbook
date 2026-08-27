@@ -29,6 +29,11 @@
 #     exchange still reports that those fills happened. A detector that cannot
 #     see its input must report nothing; if it still reports something, it was
 #     never reading the input.
+#   * The strategy sees a fill it does not yet know is its own, and drops it.
+#     ARM 4 holds every acknowledgement for 250ms while the feed runs at full
+#     speed, which is the ordinary condition of an ack arriving late. The fills
+#     must still add up. This cost 202 shares on the real day before it was
+#     found, and it was found by two numbers that had never been compared.
 #   * Nothing traded at all, so every arm passes by having no work to do.
 #     ARM 1 is a required green baseline. Zero maker fills there is a FAILURE,
 #     not a quiet pass -- this repo has produced a vacuous gate four times, and
@@ -235,6 +240,27 @@ else
     echo "   FAIL  positive arm did not complete"; FAILED=1
 fi
 
+# ==============================================================================
+echo
+echo "=== ARM 4 — the acknowledgement arrives late ================================="
+echo "    Every OUCH Accepted is held 250ms while the feed runs at full speed."
+echo "    The race must actually happen, and must cost nothing."
+if run_arm ackdelay "" "--ack-delay-ms 250"; then
+    EX4="$EXJSON"; ST4="$STJSON"
+    echo "    $(jget "$ST4" execs_before_ack) fills arrived before the ack that named them"
+    # Without this the arm is vacuous: a delay that changed no ordering would
+    # pass every check below by never exercising anything.
+    check "the race actually happened"           "$(jget "$ST4" execs_before_ack)" gt 0
+    check "  and so did the add-side race"       "$(jget "$ST4" adds_before_ack)" gt 0
+    check "MAKER FILLS from the feed"            "$(jget "$ST4" maker_fills_from_feed)" gt 0
+    check "  shares still match the exchange"    "$(jget "$ST4" maker_fill_shares)" eq "$(jget "$EX4" strategy_shares_taken)"
+    check "  every one still in the book"        "$(jget "$ST4" maker_fills_in_my_book)" eq "$(jget "$ST4" maker_fills_from_feed)"
+    check "  position still equals the shares"   "$(jget "$ST4" position_from_feed)" eq "$(jget "$ST4" maker_fill_shares)"
+    check "sequencer gaps"                       "$(jget "$ST4" gaps)" eq 0
+else
+    echo "   FAIL  late-ack arm did not complete"; FAILED=1
+fi
+
 echo
 if (( FAILED )); then
     echo "=== FAILED ==================================================================="
@@ -246,5 +272,6 @@ echo "    A strategy order crossed TCP as OUCH, rested in the exchange's book,"
 echo "    was published as ITCH over UDP, was executed by a historical order"
 echo "    arriving behind it, and the execution was recognised by the strategy"
 echo "    from the feed alone. Withholding the feed executions silences it;"
-echo "    deleting the OUCH executions does not."
+echo "    deleting the OUCH executions does not; and holding the acknowledgements"
+echo "    back 250ms costs it nothing."
 echo "    Artifacts in $WORK"
