@@ -2789,6 +2789,90 @@ encode → decode → encode is byte-identical over a corpus covering every mess
 in both directions; the token↔ref distinction is cross-checked rather than
 assumed.
 
+### 12.3 — what actually happened
+
+`include/itchbook/ouch/messages.hpp` (decode) and `include/itchbook/ouch/encode.hpp`
+(encode), `tests/test_ouch.cpp` in ctest. OUCH 4.2 chosen over 5.0 — simpler,
+and it is the version the build plan named before any code existed.
+
+**There is no live NASDAQ OUCH session anywhere in this project's future** —
+that needs a market-participant connection, out of scope for a portfolio
+project by construction — so the evidence class the ITCH header uses
+(CONFIRMED against a real trading day) cannot be claimed here at all. Every
+offset in `messages.hpp` is spec-only, for every one of the nine core message
+types, with no exception. What differs from a single spec read is how the spec
+was read: three independent extractions of the vendor PDF — a blind
+reconstruction from pre-flattened text, a from-scratch font-aware extractor,
+and `pdftotext -layout` — landed on identical offsets and lengths for all nine
+messages, and every message's fields tile its stated total length with zero
+gaps and zero overlaps, checked at compile time via `static_assert`.
+
+**The second extraction found a real bug in the first, in the document
+itself rather than in the wire format.** The PDF draws five field-name labels
+— never an offset, never a length — with an embedded Identity-H composite
+font that a naive byte-level text reader renders as garbage or drops
+outright. A byte-for-byte re-implementation of the extractor, this time
+walking the PDF's font resources and decoding through each font's own
+ToUnicode CMap, recovered all five: **Replaced Message offset 9 is
+"Replacement Order Token," not "Order Token"** — the one correction that
+would have been easy to get wrong by positional analogy to Accepted Message,
+since both messages carry a 14-byte token at that offset and only the name
+differs. Two more (`Accepted`/`Replaced` offset 49, "Reference Number" not
+"Order Reference Number") turned out to be a real inconsistency in NASDAQ's
+own document — the analogous field in the unrelated Order Priority Update
+Message uses the longer name — not an extraction artifact. No offset or
+length changed anywhere; only field names, and only where a reader would
+otherwise have guessed.
+
+**One field remains genuinely unconfirmed at the value level.** Enter Order's
+Cross Type (offset 47, length 1) has a solid offset and length across all
+three passes, but its permitted value characters are only referenced ("see
+Data Types") and the table itself never appears in the extracted text of any
+pass. It is exposed as an opaque, unenumerated `char` for exactly that reason
+— encoded and decoded, never interpreted.
+
+**The token/reference-number distinction is this protocol's version of the
+locate trap**, per `docs/phase12-design.md`, and it is load-bearing rather
+than decorative: Order Token is a 14-byte client-chosen alphanumeric string,
+day-unique per OUCH account, present on every message in both directions;
+Order Reference Number is an 8-byte exchange-assigned integer, present only
+in Accepted and Replaced among the nine core types, and it is the value that
+becomes the ITCH order reference the matcher publishes once a strategy order
+exists — the bridge between OUCH's session-local string identity and ITCH's
+wire-level integer identity built in 12.1/12.2. `test_ouch.cpp` checks this
+adversarially: a token that is itself all digits, paired with a reference
+number that is a different integer, decodes to the right value on each side;
+a reference number whose bytes would read as ASCII digits if misinterpreted
+as a token decodes as the integer it is, never as text.
+
+**Two price sentinels, checked against the spec's own hex.** The maximum
+limit price ($199,999.9900 = 1,999,999,900 = `0x7735939C`) and the
+market-order-in-a-cross sentinel ($214,748.3647 = 2,147,483,647 =
+`0x7FFFFFFF`, `INT32_MAX`) are each stated by the spec in both decimal and
+hex — a self-checking pair, verified independently rather than copied, and
+pinned by `static_assert` so a transcription slip fails the build rather than
+waiting for a test to notice.
+
+**Mutation-tested, because no real-day gate exists to backstop this the way
+ITCH's does.** Five plausible mistakes — two field-offset swaps in decode,
+an off-by-one in an encode offset, a write that clobbers one field with
+another's data, and a deliberately introduced overlap in the compile-time
+span table — all five caught, the last one specifically confirmed to fail via
+the intended `static_assert` and not some incidental compile error. The
+round-trip test and the span-tiling check are not decorative; they were shown
+to fail when the header is wrong, which is the only kind of evidence
+available in the absence of a live session.
+
+**What this does not establish.** Nothing here has been through a socket —
+that is 12.4. Six more message types the spec documents (Modify Order in both
+directions, AIQ Cancelled, Broken Trade, Executed with Reference Price,
+Cancel Pending, Cancel Reject, Order Priority Update) are out of the core
+subset and unimplemented, not forgotten; Modify Order is additionally marked
+"greyed out" by the document's own footer note. And every offset here, no
+matter how many independent passes agree on it, remains what the header says
+it is: spec-only. No real bytes have ever met it, and none will inside this
+project.
+
 ### 12.4 — SoupBinTCP
 
 Minimal, and small enough to be its own step: login request/accept/reject,
@@ -2910,8 +2994,15 @@ disagreement categorised as unexplained is a finding and may stand; an
       input — `validation/p1-emitted-2019-12-30.json`. The emitted-ITCH hash is in
       `validation/emitted-itch-sha256.txt` with a CI self-test that must catch
       one corrupted message.)*
-- [ ] **12.3** — OUCH 4.2 core subset; deviations listed with evidence separated
+- [x] **12.3** — OUCH 4.2 core subset; deviations listed with evidence separated
       from spec; round-trip byte-identical.
+      *(Nine core message types, offsets triangulated three independent ways
+      from the vendor PDF — a font-decoding bug in one extraction pass found
+      and fixed by the second. Zero gaps/overlaps per message, checked by
+      `static_assert`. Price sentinels verified against the spec's own hex.
+      5/5 mutations caught — no real-day gate exists for OUCH, so this is the
+      whole defense. Every offset remains spec-only; no live OUCH session
+      exists or will exist for this project.)*
 - [ ] **12.4** — SoupBinTCP session: heartbeats hold an idle session, a dead
       peer is detected within the timeout.
 - [ ] **12.5** — kill-switch flatten-on-trip and flatten-on-session-death proven
