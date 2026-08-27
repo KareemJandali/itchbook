@@ -47,6 +47,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -277,8 +278,17 @@ int main(int argc, char** argv) {
     if (ufd < 0) { std::perror("socket udp"); return 1; }
     int one = 1;
     ::setsockopt(ufd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    // Ask for 8MB and then find out what was granted. Linux clamps to
+    // net.core.rmem_max and says nothing: on this machine the request becomes
+    // 416 KB, which is what actually stands between an unpaced feed and a
+    // dropped datagram. A number nobody reads back is an assumption.
     int rcvbuf = 8 << 20;
     ::setsockopt(ufd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+    int rcvbuf_granted = 0;
+    socklen_t rcvbuf_len = sizeof(rcvbuf_granted);
+    if (::getsockopt(ufd, SOL_SOCKET, SO_RCVBUF, &rcvbuf_granted, &rcvbuf_len) != 0) {
+        rcvbuf_granted = 0;
+    }
     sockaddr_in ua{};
     ua.sin_family = AF_INET;
     ua.sin_port = htons(opt.udp_port);
@@ -383,6 +393,11 @@ int main(int argc, char** argv) {
     const uint64_t wall_start = wall_now_ns();
     sb::ClientSession client(ccfg, wall_start, "STRAT", "PASSWORD", "", "1", &out, &ouch_in);
 
+    // See the exchange: a write to a socket whose peer has gone would kill
+    // this process before it could report anything. Reproduced in both
+    // directions at wait status 141.
+    ::signal(SIGPIPE, SIG_IGN);
+
     std::printf("READY strategy udp=%u tcp=%u\n", opt.udp_port, opt.tcp_port);
     std::fflush(stdout);
 
@@ -390,6 +405,7 @@ int main(int argc, char** argv) {
     uint64_t next_token = 1;
     uint64_t last_quote_at = 0;
     uint64_t ended_at = 0;
+    bool exchange_gone = false;
 
     while (true) {
         int timeout_ms = 20;
@@ -486,6 +502,13 @@ int main(int argc, char** argv) {
         if (!out.buf.empty()) {
             const ssize_t w = ::write(tcp, out.buf.data(), out.buf.size());
             if (w > 0) out.buf.erase(out.buf.begin(), out.buf.begin() + w);
+            else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
+                     errno != EINTR) {
+                // The exchange has gone. Stop quoting and let the run finish
+                // reporting rather than spinning on a broken pipe.
+                out.buf.clear();
+                exchange_gone = true;
+            }
         }
 
         // The feed's end-of-session is the exchange saying it is finished. Give
@@ -500,6 +523,7 @@ int main(int argc, char** argv) {
             }
             if (wall - ended_at > 500'000'000ULL && out.buf.empty()) break;
         }
+        if (exchange_gone && seq.ended()) break;
         if (wall - wall_start > 180ULL * 1'000'000'000ULL) break;
     }
 
@@ -518,6 +542,7 @@ int main(int argc, char** argv) {
 
     std::printf("\n=== strategy ===\n");
     std::printf("%-32s %14" PRIu64 "\n", "datagrams received", datagrams);
+    std::printf("%-32s %14d\n", "UDP rcvbuf actually granted", rcvbuf_granted);
     std::printf("%-32s %14" PRIu64 "\n", "feed messages applied", belief.applied);
     std::printf("%-32s %14" PRIu64 "\n", "sequencer gaps", st.gaps);
     std::printf("%-32s %14" PRIu64 "\n", "messages lost", st.messages_lost);
@@ -540,7 +565,7 @@ int main(int argc, char** argv) {
         std::FILE* j = std::fopen(opt.json.c_str(), "w");
         if (j != nullptr) {
             std::fprintf(j,
-                "{\n  \"datagrams\": %" PRIu64 ",\n  \"feed_messages\": %" PRIu64 ",\n"
+                "{\n  \"datagrams\": %" PRIu64 ",\n  \"rcvbuf_granted\": %d,\n  \"feed_messages\": %" PRIu64 ",\n"
                 "  \"gaps\": %" PRIu64 ",\n  \"messages_lost\": %" PRIu64 ",\n"
                 "  \"orders_sent\": %" PRIu64 ",\n  \"ouch_accepted\": %" PRIu64 ",\n"
                 "  \"ouch_rejected\": %" PRIu64 ",\n  \"ouch_canceled\": %" PRIu64 ",\n"
@@ -548,7 +573,7 @@ int main(int argc, char** argv) {
                 "  \"maker_fills_from_feed\": %" PRIu64 ",\n  \"maker_fills_in_my_book\": %" PRIu64 ",\n  \"maker_fill_shares\": %" PRIu64 ",\n"
                 "  \"ouch_executed_received\": %" PRIu64 ",\n  \"ouch_executed_shares\": %" PRIu64 ",\n"
                 "  \"position_from_feed\": %" PRId64 "\n}\n",
-                datagrams, belief.applied, st.gaps, st.messages_lost,
+                datagrams, rcvbuf_granted, belief.applied, st.gaps, st.messages_lost,
                 orders_sent, accepted, rejected, canceled, belief.own_adds_seen,
                 belief.adds_before_ack, belief.execs_before_ack,
                 belief.execs_before_ack_shares,

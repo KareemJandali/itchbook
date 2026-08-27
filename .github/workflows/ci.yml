@@ -570,7 +570,11 @@ jobs:
             cmake --build build --target strategy -j 2
             exit 1
           fi
-          grep -q "FAIL" /tmp/cl-neg.txt
+          # Not "any failure": a gate broken in some unrelated way would read
+          # as a gate working. The mutation makes the strategy report the OUCH
+          # count, so with the OUCH executions deleted it must report zero fills
+          # -- that specific check, in arm 3, is what has to fail.
+          grep -q "FAIL  MAKER FILLS from the feed .* gt 0" /tmp/cl-neg.txt
           cmake --build build --target strategy -j 2
           echo "the gate correctly refused fills that came from OUCH"
 

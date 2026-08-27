@@ -42,10 +42,21 @@
 #
 # Every arm also cross-checks the two processes against each other: the shares
 # the exchange says its aggressor took from strategy orders must equal the
-# shares the strategy counted off the tape. Those two numbers are computed in
-# different address spaces from different inputs -- one from the matcher's own
-# Meta bookkeeping, one by parsing ITCH out of a UDP datagram -- and there is no
-# path by which a bug in one silently produces the other.
+# shares the strategy counted off the tape.
+#
+# BE PRECISE ABOUT WHAT THAT PROVES. split.hpp:376 does
+#
+#     c_.strategy_shares_taken += take;
+#     emit_exec(p, sref, take);
+#
+# -- the same `take`. So this is ONE QUANTITY MEASURED TWICE, at the source and
+# again after a round trip, not two independent computations. What it
+# establishes is that every share the exchange put on the tape survived
+# encoding, MoldUDP64 framing, a real UDP socket, sequencing, parsing, ownership
+# attribution and the in-book test, with none dropped and none double-counted.
+# That is a transport-and-attribution result and it is what this gate is for. It
+# is NOT evidence that the quantity is arithmetically right -- conserves_shares
+# and agrees_with_book are what speak to that, and arm 1 checks them separately.
 #
 set -uo pipefail
 
@@ -210,6 +221,10 @@ echo "    reports that they happened."
 if run_arm suppressed "--suppress-strategy-exec-itch" ""; then
     EX2="$EXJSON"; ST2="$STJSON"
     check "exchange still suppressed something"  "$(jget "$EX2" itch_suppressed)" gt 0
+    # ...and only that. Suppressing the whole tape would satisfy every other
+    # assertion in this arm while proving nothing about strategy executions.
+    check "  and suppressed almost nothing else"  "$(( $(jget "$EX2" itch_published) ))" gt "$(( $(jget "$EX2" itch_suppressed) * 1000 ))"
+    check "  the tape arrived essentially intact"  "$(( $(jget "$ST2" feed_messages) * 10 ))" gt "$(( $(jget "$ST1" feed_messages) * 9 ))"
     check "  and fills really did happen"        "$(jget "$EX2" strategy_shares_taken)" gt 0
     check "  the strategy was still fed"         "$(jget "$ST2" datagrams)" gt 0
     check "  and still had orders on the book"   "$(jget "$ST2" own_adds_seen_on_feed)" gt 0

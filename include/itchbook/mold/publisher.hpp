@@ -53,7 +53,10 @@ public:
     // configuration error rather than a runtime condition.
     bool add(const uint8_t* msg, size_t len) {
         const size_t need = 2 + len;
-        if (need > mtu_ - kHeaderLen) return false;
+        // The subtraction below is on size_t. An mtu smaller than the header
+        // wraps it to something enormous, the fit check passes, and the write
+        // lands past the end of a buffer sized to that same mtu.
+        if (mtu_ <= kHeaderLen || need > mtu_ - kHeaderLen) return false;
         if (used_ + need > mtu_ || count_ == kEndOfSession - 1) flush();
         write_be16(packet_.data() + used_, static_cast<uint16_t>(len));
         std::memcpy(packet_.data() + used_ + 2, msg, len);

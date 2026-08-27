@@ -42,6 +42,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -272,6 +273,14 @@ int main(int argc, char** argv) {
     // window between a port appearing and a process actually being ready, and
     // paid for it in multi-millisecond latency samples at every rate; the
     // harness waits for this line, not for the port.
+    // A write to a socket whose peer has gone raises SIGPIPE, whose default
+    // disposition kills the process -- taking the summary and the JSON with it,
+    // on exactly the runs whose counters would have said what went wrong.
+    // Reproduced at wait status 141 under the sanitised build before this line
+    // existed. SIG_IGN is POSIX; MSG_NOSIGNAL is Linux-only and SO_NOSIGPIPE is
+    // Darwin-only, and this file has to build on both.
+    ::signal(SIGPIPE, SIG_IGN);
+
     std::printf("READY exchange tcp=%u udp=%u\n", opt.tcp_port, opt.udp_port);
     std::fflush(stdout);
 
@@ -279,8 +288,10 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> msg;
     bool feed_done = false;
     bool client_ready = false;
+    bool peer_gone = false;
     uint64_t read = 0, applied = 0;
     uint64_t first_replay_ts = 0, last_replay_ts = 0;
+    uint64_t feed_done_ns = 0;
     uint64_t wall_start = wall_now_ns();
 
     while (true) {
@@ -342,6 +353,14 @@ int main(int argc, char** argv) {
                 uint8_t rb[8192];
                 for (;;) {
                     const ssize_t r = ::read(cfd, rb, sizeof(rb));
+                    if (r == 0) {
+                        // EOF, not EAGAIN. Treating them alike left cfd open
+                        // forever against a peer that had gone, so the loop
+                        // never reached its own exit condition and kept writing
+                        // into a broken pipe.
+                        peer_gone = true;
+                        break;
+                    }
                     if (r > 0) {
                         ouch_in.wall = wall;
                         session->on_bytes(rb, size_t(r), wall);
@@ -409,10 +428,21 @@ int main(int argc, char** argv) {
 
         pub.maybe_heartbeat(wall, opt.heartbeat_ms * 1'000'000ULL);
 
-        // Drain the outbound OUCH queue.
+        // Drain the outbound OUCH queue. A failed write is not retried
+        // forever against a dead peer: with SIGPIPE ignored it returns EPIPE,
+        // and the run should end reporting its counters rather than spinning.
         if (cfd >= 0 && !out.buf.empty()) {
             const ssize_t w = ::write(cfd, out.buf.data(), out.buf.size());
             if (w > 0) out.buf.erase(out.buf.begin(), out.buf.begin() + w);
+            else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
+                     errno != EINTR) {
+                peer_gone = true;
+            }
+        }
+        if (peer_gone && cfd >= 0) {
+            ::close(cfd);
+            cfd = -1;
+            out.buf.clear();
         }
 
         // Done when the feed is exhausted, everything is flushed, and the
@@ -421,7 +451,14 @@ int main(int argc, char** argv) {
                                               sb::is_terminal(session->state()))) {
             break;
         }
-        if (feed_done && wall_now_ns() - wall_start > 60ULL * 1'000'000'000ULL) break;
+        // Measured from feed_done, not from the start: wall_start is rebased
+        // to the client's login by --wait-for-client, so a replay longer than
+        // the window had already spent it before the drain began. The 62-second
+        // paced real-day run is over that line.
+        if (feed_done) {
+            if (feed_done_ns == 0) feed_done_ns = wall_now_ns();
+            if (wall_now_ns() - feed_done_ns > 60ULL * 1'000'000'000ULL) break;
+        }
     }
 
     const uint64_t wall_end = wall_now_ns();

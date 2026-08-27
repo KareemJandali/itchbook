@@ -3293,9 +3293,21 @@ day, MSFT 2019-12-30, paced at 1000× so a full ITCH session takes 62 seconds:
 TCP, and **2,185 maker fills recognised from the strategy's own feed, every one
 of them naming an order resting in the book the strategy had built from that
 feed.** 105,786 shares — the same number the exchange reports its aggressor
-took, computed in another address space from another input. Recorded in
-`validation/closed-loop-2019-12-30.json`, which holds two runs and not one; the
-second is below.
+took. Recorded in `validation/closed-loop-2019-12-30.json`, which holds two runs
+and not one; the second is below.
+
+**What that agreement proves, stated precisely, because the first version of
+this section overstated it.** `split.hpp:376` does `c_.strategy_shares_taken +=
+take;` and then `emit_exec(p, sref, take)` — the same `take`. The two numbers
+are therefore **one quantity measured twice**, at the source and again after a
+round trip, not two independent computations in two address spaces as this was
+first written. The check is still what killed four of the six mutations: it
+establishes that every share the exchange put on the tape survived encoding,
+MoldUDP64 framing, a real UDP socket, sequencing, parsing, ownership attribution
+and the in-book test, with none dropped and none double-counted. That is a
+transport-and-attribution result, which is the thing this phase is about. It is
+not evidence that the quantity is arithmetically right; `conserves_shares()` and
+`agrees_with_book()` speak to that, and the gate checks them separately.
 
 **Two processes rather than the three the plan asked for.** The plan separates
 the historical replayer from the exchange. They cannot separate:
@@ -3374,7 +3386,37 @@ only once OUCH has confirmed one passes arms 1, 2 and 4 like correct code and
 dies on arm 3; and dropping a fill that beats its ack — the defect that was
 really in the tree — passes arms 1, 2 and 3 and dies on arm 4.
 
-**Five defects the phase found in code that already ran.** A leaked session and
+**Nine defects the phase found in code that already ran.** Four of them came
+from an adversarial audit run over the finished phase, and every one was
+reproduced before it was fixed. **SIGPIPE killed either process instead of
+letting it report** — a write to a socket whose peer has gone raises signal 13,
+whose default disposition terminates, so the summary block and the `--json` file
+were never reached:
+
+    exchange wait status = 141   (141 = killed by signal 13, SIGPIPE)
+    exchange JSON: ABSENT
+    exchange summary line: 0
+
+It reproduces under the sanitisers and not under `-O2`, which is to say it
+reproduces in the configuration CI runs; ASan slows the exchange enough that
+OUCH acks are still queued when the peer disappears. The enabler was one line
+away: `read()` returning **0 is EOF and was treated exactly like EAGAIN**, so
+the client fd was never closed, the session never became terminal, and the loop
+kept writing into a broken pipe. Every counter that says *why* a run failed was
+destroyed by the signal on precisely the runs where it mattered.
+`signal(SIGPIPE, SIG_IGN)` is POSIX; `MSG_NOSIGNAL` is Linux-only and
+`SO_NOSIGPIPE` is Darwin-only, and this file has to build on both. **The
+post-feed watchdog granted no drain time on a slow replay**, because it measured
+from `wall_start`, which `--wait-for-client` rebases to the client's login — the
+62-second paced run was already past the 60-second window before the feed was
+done. And **`--mtu` underflowed its own fit check**: `need > mtu_ - kHeaderLen`
+on `size_t` wraps for any mtu below the header size, so the check passes and the
+write lands past the end of a buffer sized to that same mtu.
+
+**And the audit corrected a claim rather than a line of code** — the
+independence overstatement above, which is the finding that mattered most.
+
+The five found while building it: A leaked session and
 gateway (84,756 bytes in 1,606 allocations, LeakSanitizer, first Debug run) — a
 leak that would have kept this gate out of the sanitised build, which is the one
 place two-process socket code gets its bounds checked at all. A session
@@ -3389,7 +3431,8 @@ requires to fire independently of socket readability — is now an unconditional
 deadline test at the top of the loop rather than a descriptor that still had to
 be reported ready. 244 heartbeats over 62 seconds say it fires.
 
-37 checks green under ASan/UBSan; 25/25 in ctest; `verify-local` PASSED.
+39 checks green under ASan/UBSan; 25/25 in ctest; `verify-local` PASSED; both
+processes compile clean under clang as well as gcc.
 
 ### 12.8 — Tick-to-trade, decomposed
 
