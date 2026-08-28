@@ -107,6 +107,13 @@ public:
     uint64_t messages() const { return messages_; }
     uint64_t heartbeats() const { return heartbeats_; }
     uint64_t next_sequence() const { return sequence_; }
+
+    // The sequence the NEXT added message will carry. Stable across a flush --
+    // flush advances sequence_ by count_ and zeroes count_, so the sum does not
+    // move -- which is what lets a caller read it before add() without knowing
+    // whether the message is about to start a new packet. Phase 12.8 uses it to
+    // join a fill's match stamp to the datagram that eventually carried it.
+    uint64_t sequence_of_next_add() const { return sequence_ + count_; }
     bool ended() const { return ended_; }
 
 private:

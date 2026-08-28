@@ -102,6 +102,8 @@ struct Opt {
 // ---- the UDP publish socket ---------------------------------------------------
 
 struct UdpOut {
+    bench::Arena<bench::PktEx>* packets = nullptr;   // phase 12.8, t5b
+    bench::StampCounts* sc = nullptr;
     int fd = -1;
     sockaddr_in dst{};
     uint64_t datagrams = 0, bytes = 0;
@@ -109,6 +111,21 @@ struct UdpOut {
 
 void udp_send(void* ctx, const uint8_t* p, size_t n) {
     UdpOut* u = static_cast<UdpOut*>(ctx);
+    // t5b, once per datagram. The header is already written, so the sequence
+    // range this datagram covers is readable here and the report joins any
+    // message whose sequence falls inside it. Stamping per message would be
+    // stamping something that does not happen per message.
+    if (u->packets != nullptr && n >= itchbook::mold::kHeaderLen) {
+        itchbook::mold::Header h;
+        if (itchbook::mold::parse_header(p, n, &h)) {
+            if (bench::PktEx* pk = u->packets->push()) {
+                pk->header_seq = h.sequence;
+                pk->header_count = h.message_count();
+                pk->t5b = bench::mono_ns();
+                if (u->sc != nullptr) ++u->sc->t5b;
+            }
+        }
+    }
     const ssize_t s = ::sendto(u->fd, p, n, 0,
                                reinterpret_cast<sockaddr*>(&u->dst), sizeof(u->dst));
     if (s > 0) { ++u->datagrams; u->bytes += static_cast<uint64_t>(s); }
@@ -135,6 +152,30 @@ public:
     itchbook::mold::Publisher* pub_;
     bool suppress_strategy_exec = false;
     uint64_t published = 0, suppressed = 0;
+};
+
+// Phase 12.8 chain B. The replayer reports each fill of a strategy order the
+// instant it exists; this records it with tA -- the stamp of the historical
+// execution that caused it -- and the sequence its ITCH 'E' will carry.
+struct FillRecorder : rp::FillTrace {
+    bench::Arena<bench::EmitEx>* emits = nullptr;
+    bench::StampCounts* sc = nullptr;
+    uint64_t tA = 0;    // set by the replay branch before each message is applied
+    void on_strategy_fill(uint64_t ref, uint32_t ordinal, uint64_t mold_seq,
+                          uint32_t /*shares*/) override {
+        if (emits == nullptr) return;
+        if (bench::EmitEx* e = emits->push()) {
+            e->tA = tA;
+            e->t5a = bench::mono_ns();
+            e->mold_seq = mold_seq;
+            // The high bit is the strategy partition; the low bits are the
+            // dense counter RefSource hands out, which is the array subscript
+            // on both sides of the socket.
+            e->ref_seq = static_cast<uint32_t>(ref & ~rp::kStrategyRefBit);
+            e->fill_ordinal = ordinal;
+            if (sc != nullptr) ++sc->t5a;
+        }
+    }
 };
 
 // Inbound OUCH: the session hands an Unsequenced Data payload here, and this
@@ -296,6 +337,24 @@ int main(int argc, char** argv) {
         }
     }
 
+    // ---- phase 12.8 trace arenas ------------------------------------------------
+    //
+    // Ahead of everything that points at them, and sized before READY is
+    // printed. An index past the end is dropped and counted, never wrapped: a
+    // wrapped index pairs one fill's t5a with another's t5b and the result
+    // looks exactly like a plausible packing delay.
+    bench::Arena<bench::AcceptEx> accept_ex;
+    bench::Arena<bench::EmitEx> emit_ex;
+    bench::Arena<bench::PktEx> pkt_ex;
+    bench::StampCounts stamps;
+    accept_ex.reserve(1u << 14);
+    emit_ex.reserve(1u << 17);
+    pkt_ex.reserve(1u << 17);
+
+    FillRecorder fill_rec;
+    fill_rec.emits = &emit_ex;
+    fill_rec.sc = &stamps;
+
     // ---- the exchange ----------------------------------------------------------
     bk::BookSet set{1u << 22, 100, 20, 512};
     bk::Book& book = set.at(opt.locate);
@@ -304,16 +363,20 @@ int main(int argc, char** argv) {
     itchbook::risk::KillSwitch kill;
 
     itchbook::mold::Publisher pub{"CLOSEDLOOP", opt.mtu, &udp_send, &udp};
+    udp.packets = &pkt_ex;
+    udp.sc = &stamps;
     FeedSink feed{&pub};
     feed.suppress_strategy_exec = opt.suppress_strategy_exec_itch;
 
     rp::SplitReplayer replayer{set};
     replayer.set_matcher(&matcher);
+    replayer.set_fill_trace(
+        &fill_rec,
+        [](void* c) -> uint64_t {
+            return static_cast<itchbook::mold::Publisher*>(c)->sequence_of_next_add();
+        },
+        &pub);
     replayer.set_sink(&feed);
-
-    bench::Arena<bench::AcceptEx> accept_ex;
-    bench::StampCounts stamps;
-    accept_ex.reserve(1u << 14);
 
     OutQueue out;
     OuchIn ouch_in;
@@ -479,6 +542,11 @@ int main(int argc, char** argv) {
                         last_replay_ts = ts;
                         if (gw != nullptr) gw->set_replay_now(ts);
                     }
+                    // tA: this historical message is about to be applied. If
+                    // it is an execution that walks a strategy order, the fill
+                    // it causes carries this stamp.
+                    fill_rec.tA = bench::mono_ns();
+                    if (type == 'E') ++stamps.tA;
                     replayer.apply(type, p);
                     matcher.pump_stops();
                     if (gw != nullptr) gw->pump_fills(wall);
@@ -534,7 +602,10 @@ int main(int argc, char** argv) {
                          opt.trace_out.c_str());
             return 1;
         }
-        const bool ok = bench::write_section(tf, "ACPT", accept_ex, accept_ex.size());
+        const bool ok =
+            bench::write_section(tf, "ACPT", accept_ex, accept_ex.size()) &&
+            bench::write_section(tf, "EMIT", emit_ex, emit_ex.size()) &&
+            bench::write_section(tf, "PKTS", pkt_ex, pkt_ex.size());
         std::fclose(tf);
         if (!ok) {
             std::fprintf(stderr, "error: short write to %s\n", opt.trace_out.c_str());
@@ -567,6 +638,10 @@ int main(int argc, char** argv) {
     std::printf("%-30s %16zu\n", "chain A accept records", accept_ex.size());
     std::printf("%-30s %16" PRIu64 "\n", "  t3' stamps", stamps.t3p);
     std::printf("%-30s %16" PRIu64 "\n", "  t4 stamps", stamps.t4);
+    std::printf("%-30s %16zu\n", "chain B fill records", emit_ex.size());
+    std::printf("%-30s %16" PRIu64 "\n", "  tA stamps (executions)", stamps.tA);
+    std::printf("%-30s %16" PRIu64 "\n", "  t5a stamps (fills)", stamps.t5a);
+    std::printf("%-30s %16" PRIu64 "\n", "  t5b stamps (datagrams)", stamps.t5b);
     std::printf("%-30s %16" PRIu64 "\n", "  samples dropped (arena full)", accept_ex.dropped());
     std::printf("%-30s %16" PRIu64 "\n", "OUCH inbound delivered", ouch_in.delivered);
     std::printf("%-30s %16" PRIu64 "\n", "OUCH inbound refused", ouch_in.refused);
@@ -598,7 +673,8 @@ int main(int argc, char** argv) {
                 matcher.conserves_shares() ? "true" : "false",
                 matcher.agrees_with_book() ? "true" : "false",
                 wall_end - wall_start,
-                pinned_cpu, accept_ex.size(), accept_ex.dropped(),
+                pinned_cpu, accept_ex.size(),
+                accept_ex.dropped() + emit_ex.dropped() + pkt_ex.dropped(),
                 stamps.t3p, stamps.t4);
             std::fclose(j);
         }

@@ -50,6 +50,7 @@
 //
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #include "itchbook/book/book.hpp"
@@ -84,6 +85,20 @@ inline constexpr Treatment treatment_of(char type) {
     return type == 'E' ? Treatment::Aggressor : Treatment::State;
 }
 
+// Phase 12.8 chain B. The replayer reports a fill the instant it exists, and
+// the caller decides what to do with it -- the class does not own the storage.
+struct FillTrace {
+    // ref: the strategy order that was filled. ordinal: the n-th fill of THAT
+    // reference, counted here and again in the strategy, because the match
+    // number is shared by every fill of one aggressor and cannot key a sample.
+    // mold_seq: the sequence the ITCH 'E' about to be emitted will carry, which
+    // is the only thing connecting this instant to the datagram that leaves
+    // later.
+    virtual ~FillTrace() = default;
+    virtual void on_strategy_fill(uint64_t ref, uint32_t ordinal,
+                                  uint64_t mold_seq, uint32_t shares) = 0;
+};
+
 class SplitReplayer {
 public:
     struct Counters {
@@ -113,6 +128,15 @@ public:
     // replayer behaves exactly as it did for 12.2's P1 gate, which is what
     // keeps that gate a valid regression check on this change.
     void set_matcher(engine::Matcher* m) { matcher_ = m; }
+
+    // Phase 12.8. `t` is told about each fill of a strategy order as it
+    // happens; `seq` supplies the sequence the next emitted message will carry.
+    // Both null by default, so the 12.1 and 12.7 paths are unchanged.
+    void set_fill_trace(FillTrace* t, uint64_t (*seq)(void*), void* seq_ctx) {
+        trace_ = t;
+        seq_fn_ = seq;
+        seq_ctx_ = seq_ctx;
+    }
 
     const Counters& counters() const { return c_; }
     book::BookSet& set() { return set_; }
@@ -374,6 +398,13 @@ private:
             b.note_feed_trade(price, take);
             remaining -= take;
             c_.strategy_shares_taken += take;
+            // t5a: the fill exists. Reported BEFORE emit_exec, so the sequence
+            // read here is the one the 'E' about to be emitted will carry.
+            if (trace_ != nullptr) {
+                const uint32_t ord = fill_ordinal_[sref]++;
+                const uint64_t ms = (seq_fn_ != nullptr) ? seq_fn_(seq_ctx_) : 0;
+                trace_->on_strategy_fill(sref, ord, ms, take);
+            }
             // One 'E' per fill, all sharing the aggressor's match number --
             // which is what a real venue does when one incoming order walks
             // several makers. At zero strategy orders this loop does not run
@@ -426,6 +457,12 @@ private:
     book::BookSet& set_;
     emit::Sink* sink_ = nullptr;
     engine::Matcher* matcher_ = nullptr;
+    FillTrace* trace_ = nullptr;
+    uint64_t (*seq_fn_)(void*) = nullptr;
+    void* seq_ctx_ = nullptr;
+    // Fills seen per strategy reference, so the ordinal is counted rather than
+    // guessed. Cleared nowhere: a reference is used once.
+    std::unordered_map<uint64_t, uint32_t> fill_ordinal_;
     Counters c_;
     std::vector<uint64_t> ahead_;   // reused; the walk is empty 99.8% of the time
 };

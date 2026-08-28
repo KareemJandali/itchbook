@@ -48,6 +48,10 @@ FILLREC = "<QQIIIBBH"
 FILLREC_SIZE = struct.calcsize(FILLREC)
 ACCEPTEX = "<QQIB3x"
 ACCEPTEX_SIZE = struct.calcsize(ACCEPTEX)
+EMITEX = "<QQQII"
+EMITEX_SIZE = struct.calcsize(EMITEX)
+PKTEX = "<QQII"
+PKTEX_SIZE = struct.calcsize(PKTEX)
 
 
 def read_trace(path):
@@ -252,6 +256,72 @@ def main():
                      "out of order or the join is wrong. This is a harness bug, "
                      "not a clock finding." % (intra_neg, worst))
 
+    # ---- chain B: the fill report ---------------------------------------------
+    #
+    # One sample per maker fill, anchored at the aggressor rather than the
+    # order, so every fill is an independent traversal and no order is counted
+    # twice for having been filled twice.
+    b_hops = []
+    b_joined = 0
+    b_unmatched_ordinal = 0
+    b_no_packet = 0
+    if "EMIT" in ex and "FILL" in st:
+        rec_e, blob_e = ex["EMIT"]
+        rec_f, blob_f = st["FILL"]
+        rec_k, blob_k = ex.get("PKTS", (PKTEX_SIZE, b""))
+        if rec_e != EMITEX_SIZE or rec_f != FILLREC_SIZE or rec_k != PKTEX_SIZE:
+            fatal.append("chain B record sizes on the wire (%d/%d/%d) do not match "
+                         "this reader (%d/%d/%d)" % (rec_e, rec_f, rec_k,
+                                                     EMITEX_SIZE, FILLREC_SIZE, PKTEX_SIZE))
+        else:
+            emits = {}
+            for i in range(len(blob_e) // rec_e):
+                tA, t5a, mseq, ref, ordn = struct.unpack_from(EMITEX, blob_e, i * rec_e)
+                emits[(ref, ordn)] = dict(tA=tA, t5a=t5a, mseq=mseq)
+            packets = []
+            for i in range(len(blob_k) // rec_k):
+                hseq, t5b, hcount, _pad = struct.unpack_from(PKTEX, blob_k, i * rec_k)
+                if hcount:
+                    packets.append((hseq, hseq + hcount, t5b))
+            packets.sort()
+
+            def packet_for(seq):
+                lo, hi = 0, len(packets)
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    if packets[mid][0] <= seq:
+                        lo = mid + 1
+                    else:
+                        hi = mid
+                if lo == 0:
+                    return None
+                a, b, t = packets[lo - 1]
+                return t if a <= seq < b else None
+
+            hA = Hop("tA->t5a  aggressor walk and match")
+            hB = Hop("t5a->t5b PACKING DELAY (--mtu)")
+            hC = Hop("t5b->t6' loopback UDP", cross_process=True)
+            hD = Hop("t6'->t6  drain, sequence, parse, apply")
+            for i in range(len(blob_f) // rec_f):
+                (t6p, t6, ref, ordn, shares, in_book, parked,
+                 _pad) = struct.unpack_from(FILLREC, blob_f, i * rec_f)
+                e = emits.get((ref, ordn))
+                if e is None:
+                    b_unmatched_ordinal += 1
+                    continue
+                b_joined += 1
+                hA.add(int(e["t5a"]) - int(e["tA"]))
+                t5b = packet_for(e["mseq"])
+                if t5b is None:
+                    b_no_packet += 1
+                else:
+                    hB.add(int(t5b) - int(e["t5a"]))
+                    hC.add(int(t6p) - int(t5b))
+                hD.add(int(t6) - int(t6p))
+            for h in (hA, hB, hC, hD):
+                h.finalize()
+            b_hops = [hA, hB, hC, hD]
+
     # ---- report ----------------------------------------------------------------
     print()
     print("=== hops (ns) === NOT ADDITIVE: percentiles do not sum; see the design doc")
@@ -274,6 +344,28 @@ def main():
     print()
     line(head_react)
     line(head_arrival)
+
+    if b_hops:
+        print()
+        print("=== chain B, the fill report ===")
+        print("  joined on (reference, fill ordinal) %6d" % b_joined)
+        if b_unmatched_ordinal:
+            print("  fills the exchange has no record of %5d" % b_unmatched_ordinal)
+        if b_no_packet:
+            print("  fills whose datagram was not found  %5d" % b_no_packet)
+        for h in b_hops:
+            line(h)
+        if b_unmatched_ordinal:
+            fatal.append("%d fills the strategy saw have no matching exchange "
+                         "record: the two ordinal counts disagree, so the join "
+                         "would pair one fill's t5a with another's t6"
+                         % b_unmatched_ordinal)
+        if b_no_packet:
+            fatal.append("%d fills carry a sequence that lies in no recorded "
+                         "datagram: the packet join is broken" % b_no_packet)
+        for h in b_hops:
+            if h.n == 0:
+                fatal.append("chain B hop '%s' took ZERO samples" % h.name)
 
     # ---- the checks that can fail ---------------------------------------------
     print()

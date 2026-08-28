@@ -189,6 +189,10 @@ struct Belief {
     uint64_t cur_t0 = 0, cur_tsc0 = 0;
     uint16_t cur_cpu0 = 0xFFFF;
     bench::StampCounts* sc = nullptr;
+    bench::Arena<bench::FillRec>* fills = nullptr;
+    // The n-th fill of each strategy reference, counted from the feed. The
+    // exchange counts the same thing; the join checks they agree.
+    std::unordered_map<uint64_t, uint32_t> fill_ordinal;
 
     // The Accepted for `ref` has just landed. Anything the feed already said
     // about it counts now, exactly as it would have counted then.
@@ -256,6 +260,22 @@ struct FeedHandler {
                 b->parked[ref].execs.push_back(
                     {sh, po != nullptr,
                      po != nullptr ? static_cast<char>(po->side) : ' '});
+                // t6 here too. This branch is where 79% of fills land when
+                // acknowledgements are held, so a stamp only in the owned
+                // branch would report the ack delay as the feed path.
+                if (b->fills != nullptr) {
+                    if (bench::FillRec* fr = b->fills->push()) {
+                        fr->t6p = b->cur_t0;
+                        fr->t6 = bench::mono_ns();
+                        fr->ref_seq = static_cast<uint32_t>(
+                            ref & ~itchbook::replay::kStrategyRefBit);
+                        fr->fill_ordinal = b->fill_ordinal[ref]++;
+                        fr->shares = sh;
+                        fr->in_book = (po != nullptr) ? 1 : 0;
+                        fr->parked = 1;
+                        if (b->sc != nullptr) { ++b->sc->t6p; ++b->sc->t6; }
+                    }
+                }
                 ++b->execs_before_ack;
                 b->execs_before_ack_shares += sh;
             }
@@ -267,9 +287,28 @@ struct FeedHandler {
                 // reference number coming back proves only that a number came
                 // back; this proves the 'A' that carried it was received,
                 // parsed and applied.
+                // t6: the execution is recognised as ours. Stamped where it
+                // is SEEN, not where it is attributed -- see the banner.
+                if (b->fills != nullptr) {
+                    if (bench::FillRec* fr = b->fills->push()) {
+                        fr->t6p = b->cur_t0;
+                        fr->t6 = bench::mono_ns();
+                        fr->ref_seq = static_cast<uint32_t>(
+                            ref & ~itchbook::replay::kStrategyRefBit);
+                        fr->fill_ordinal = b->fill_ordinal[ref]++;
+                        fr->shares = sh;
+                        fr->parked = 0;
+                        if (b->sc != nullptr) { ++b->sc->t6p; ++b->sc->t6; }
+                    }
+                }
                 const bk::Book* mine = b->have_locate ? b->set.peek(b->locate) : nullptr;
                 const bk::Order* o = mine != nullptr ? mine->find(ref) : nullptr;
                 if (o != nullptr) {
+                    if (b->fills != nullptr && b->fills->size() > 0) {
+                        // The record just pushed for this 'E'.
+                        const_cast<bench::FillRec*>(
+                            b->fills->data() + b->fills->size() - 1)->in_book = 1;
+                    }
                     ++b->maker_fills_in_book;
                     // The side comes from the book, not from a map keyed on
                     // having seen the ack first -- see the banner.
@@ -494,6 +533,7 @@ int main(int argc, char** argv) {
     chain_a.reserve(opt.max_orders + 2);
     fills.reserve(1u << 16);
     belief.sc = &stamps;
+    belief.fills = &fills;
     // Arm the FIRST chain. Without this `armed_at` stays 0, the trigger test
     // never fires before the first quote, and chain 1 carries no t0 and no t1.
     belief.armed_at = opt.quote_every;
@@ -761,6 +801,8 @@ int main(int argc, char** argv) {
     std::printf("%-32s %14" PRIu64 "\n", "  t1' stamps", stamps.t1p);
     std::printf("%-32s %14" PRIu64 "\n", "  t2 stamps", stamps.t2);
     std::printf("%-32s %14" PRIu64 "\n", "  t3 stamps", stamps.t3);
+    std::printf("%-32s %14zu\n", "chain B fill records", fills.size());
+    std::printf("%-32s %14" PRIu64 "\n", "  t6 stamps", stamps.t6);
     std::printf("%-32s %14" PRIu64 "\n", "  core migrations", stamps.migrations);
     std::printf("%-32s %14" PRIu64 "\n", "  samples dropped (arena full)",
                 chain_a.dropped() + fills.dropped());
