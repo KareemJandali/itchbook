@@ -23,7 +23,9 @@ set -uo pipefail
 
 TARBALL="${1:-}"
 OUT="${OUT:-validation}"
-WORK="${WORK:-/tmp/itchbook-12-8-ingest}"
+# NOT /tmp: it is wiped between WSL invocations on this machine, and the raw
+# material is what a later question has to go back to.
+WORK="${WORK:-$HOME/itchbook-12-8-ingest}"
 
 if [[ -z "$TARBALL" ]]; then
     echo "usage: $0 <phase12-8-results.tar.gz>" >&2
@@ -41,10 +43,18 @@ echo "=== unpacking $(basename "$TARBALL") ($(stat -c %s "$TARBALL" | numfmt --t
 tar xzf "$TARBALL" -C "$WORK" || { echo "error: cannot unpack" >&2; exit 1; }
 
 # ---- what came back ------------------------------------------------------------
-mapfile -t STRACES < <(find "$WORK" -name '*-st.trace' | sort)
+# The ten repeats live under w-main. Everything else -- the multiplier sweep,
+# the MTU sweep, the held-ack arm, the dry run -- is a DIFFERENT configuration
+# and is reported separately. Pooling them would be asking whether runs that
+# were set up to differ differ.
+mapfile -t MAIN_TRACES < <(find "$WORK" -path '*w-main*' -name 'run*-st.trace' | sort)
+mapfile -t OTHER_TRACES < <(find "$WORK" -name '*-st.trace' \
+    -not -path '*w-main*run*' | sort)
+STRACES=("${MAIN_TRACES[@]}")
 mapfile -t SAMPLES < <(find "$WORK" -name '*-samples.json' | sort)
 mapfile -t REPORTS < <(find "$WORK" -name '*-report.json' | sort)
-echo "  strategy traces : ${#STRACES[@]}"
+echo "  repeats (w-main): ${#MAIN_TRACES[@]}"
+echo "  other configs   : ${#OTHER_TRACES[@]}  (sweeps, dry run, ack-held)"
 echo "  sample sets     : ${#SAMPLES[@]}"
 echo "  run reports     : ${#REPORTS[@]}"
 
@@ -133,12 +143,63 @@ python3 scripts/phase12-8-pool.py "${FRESH[@]}" \
 POOL_RC=${PIPESTATUS[0]}
 echo "pool exit: $POOL_RC   (0 one experiment, 3 the runs differ)"
 
+# ---- the configurations that were meant to differ ------------------------------
+if (( ${#OTHER_TRACES[@]} > 0 )); then
+    echo
+    echo "=== other configurations, each on its own (NOT pooled with the repeats)"
+    for st in "${OTHER_TRACES[@]}"; do
+        ex="${st%-st.trace}-ex.trace"
+        sj="${st%-st.trace}-st.json"
+        ej="${st%-st.trace}-ex.json"
+        [[ -f "$ex" && -f "$sj" && -f "$ej" ]] || continue
+        label="$(basename "$(dirname "$st")")/$(basename "${st%-st.trace}")"
+        python3 scripts/phase12-8-report.py \
+            --strategy-trace "$st" --exchange-trace "$ex" \
+            --strategy-json "$sj" --exchange-json "$ej" \
+            --run-tag "$label" "${EXTRA[@]}" \
+            --json-out "$WORK/other-$(echo "$label" | tr / -).json" \
+            > "$WORK/other-$(echo "$label" | tr / -).txt" 2>&1
+        printf '  %-28s %s\n' "$label" \
+            "$(python3 -c "
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+except Exception:
+    print('(no report)'); raise SystemExit
+h=d.get('headline_t1p_t3') or {}
+hops=d.get('hops') or {}
+pack=[v for k,v in hops.items() if 'PACKING' in k]
+print('joined %-5s headline p50 %-8s packing p50 %s' % (
+    d.get('joined'), h.get('p50'),
+    (pack[0].get('p50') if pack else '-')))
+" "$WORK/other-$(echo "$label" | tr / -).json" 2>/dev/null)"
+    done
+fi
+
 # ---- the artifact ---------------------------------------------------------------
 echo
 echo "=== artifact"
 python3 - "$WORK" "$OUT" "$POOL_RC" <<'PY'
 import json, os, sys, glob
 work, out, pool_rc = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+# The HARNESS's own verdict, from the artifact it wrote on the machine. It knows
+# things the per-run reports cannot: the CPU governor, the topology it chose, the
+# jitter on the exact pinned pair. Omitting these produced an artifact that named
+# two secondary reasons and not the one that mattered.
+harness_reasons = []
+harness_doc = None
+for p in glob.glob(os.path.join(work, "**", "tick-to-trade-*.json"), recursive=True):
+    if os.path.basename(p).startswith("tick-to-trade-mult"):
+        continue
+    try:
+        d = json.load(open(p))
+    except Exception:
+        continue
+    if "not_quotable_because" in d:
+        harness_doc = d
+        harness_reasons = ["[harness] " + r for r in d.get("not_quotable_because", [])]
+        break
 runs = []
 for p in sorted(glob.glob(os.path.join(work, "*-fresh-report.json"))):
     try:
@@ -153,8 +214,10 @@ if os.path.exists(pp):
 # The verdict is the AND of every run's own verdict and the pooling.
 quotable = bool(runs) and all(r.get("quotable") for r in runs) and pool_rc == 0
 reasons = sorted({r for run in runs for r in run.get("not_quotable", [])})
+reasons = harness_reasons + reasons
 if pool_rc == 3:
     reasons.append("the repeats are not one experiment (see pooled)")
+quotable = quotable and not harness_reasons
 
 doc = {
     "what": "phase 12.8 tick-to-trade, decomposed - bare metal",
@@ -162,6 +225,7 @@ doc = {
     "quotable": quotable,
     "not_quotable_because": reasons,
     "pooled": pooled,
+    "harness_verdict": harness_doc,
     "per_run": runs,
     "notes": [
         "Every number here was re-derived from the raw traces by "

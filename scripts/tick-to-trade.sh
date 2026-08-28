@@ -121,9 +121,15 @@ auto_pick_pair() {
     if [[ -n "$iso" ]]; then
         for c in "${cpus[@]}"; do in_list "$iso" "$c" && ordered+=("$c"); done
     fi
+    # cpu0 LAST. It is legal -- on this hardware its sibling is cpu8, so 0 and 1
+    # are distinct physical cores and every veto passes -- but it is where Linux
+    # points device interrupts by default, which makes it the busiest core on an
+    # otherwise idle machine. Used only if nothing else is left.
     for c in "${cpus[@]}"; do
+        [[ "$c" == "0" ]] && continue
         if [[ -z "$iso" ]] || ! in_list "$iso" "$c"; then ordered+=("$c"); fi
     done
+    ordered+=("0")
     local a b
     for a in "${ordered[@]}"; do
         for b in "${ordered[@]}"; do
@@ -232,6 +238,35 @@ probe no_turbo /sys/devices/system/cpu/intel_pstate/no_turbo
 probe isolated /sys/devices/system/cpu/isolated
 probe kernel /proc/version
 probe rmem_max /proc/sys/net/core/rmem_max
+
+# THE PERFORMANCE GOVERNOR. A live session defaults to powersave, and a boot
+# measured at the minimum CPU frequency produces numbers that are uniformly
+# wrong across every hop -- which is exactly what the first bare-metal run did.
+# Try to fix it, verify the fix took, and refuse to quote if it did not.
+GOV_PATH="/sys/devices/system/cpu/cpu$CPU_A/cpufreq/scaling_governor"
+if [[ -r "$GOV_PATH" ]]; then
+    GOV_BEFORE="$(cat "$GOV_PATH" 2>/dev/null)"
+    if [[ "$GOV_BEFORE" != "performance" ]]; then
+        say "  governor is '$GOV_BEFORE'; setting performance on every cpu"
+        for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            echo performance 2>/dev/null > "$g" || \
+                echo performance 2>/dev/null | sudo tee "$g" >/dev/null 2>&1 || true
+        done
+    fi
+    # Verified, not assumed: writing to sysfs can fail silently.
+    GOV_NOW="$(cat "$GOV_PATH" 2>/dev/null)"
+    say "  governor now: ${GOV_NOW:-unreadable}"
+    if [[ "$GOV_NOW" != "performance" ]]; then
+        NOTQ+=("the CPU governor is '${GOV_NOW:-unreadable}', not performance: \
+every hop is measured at an unspecified clock frequency, and a uniform \
+slowdown across unrelated hops is the governor rather than the code")
+    fi
+else
+    # Absent is not a pass. Under WSL2 there is no cpufreq at all, which is
+    # precisely the machine this check exists to flag.
+    NOTQ+=("no cpufreq on this machine, so the CPU frequency during the run is \
+unknown and unverifiable")
+fi
 
 CLOCKSRC_BEFORE=""
 [[ -r "$CLOCKSRC_PATH" ]] && CLOCKSRC_BEFORE="$(cat "$CLOCKSRC_PATH")"

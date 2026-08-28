@@ -614,3 +614,75 @@ numbers.
 **Not yet built:** the two figures (the p50-rank and p99-rank per-sample
 decompositions, and the tail-conditional mean) and `docs/phase12-8-results.md`,
 which is generated and not typed. Both want real numbers to be worth writing.
+
+---
+
+## 11. The first bare-metal boot, 2026-08-28
+
+Ten repeats plus the sweeps, on the live USB. **The harness did its job and the
+numbers are not usable**, for one reason, and the distinction is the point of
+having a harness.
+
+### 11.1 What it established
+
+**The machine holds a CPU.** This is what the boot was for, and it is a property
+of the machine rather than of the measurement, so it stands regardless of §11.2:
+
+    VERDICT: this machine holds a CPU. Not one gap over 100 us on any CPU
+    tried, across 20 s each -- 10 per second over 10 us, worst 27 us.
+
+Against WSL2's ~3,000 gaps per second over 10 µs and a worst gap of 2.57 ms,
+that is roughly **300× quieter**, and it clears the bar the design set: no gap
+long enough to move a microsecond-scale tail.
+
+**The runs are repeatable.** The headline moved 775 ns across ten runs on a
+median of 38,435 — **2.0%**, against 13–18% under WSL2 — and eight of twelve
+hops came back poolable where nine of twelve had shown a run effect. The
+permutation test that refused to pool on WSL2 accepts most of this.
+
+**The census fires clean.** 0 of 1,200 chains descheduled, and **no chain at all
+above 3× the median**. The tight distribution is what a quiet machine looks like,
+and the census could have said otherwise.
+
+**The clock is fine.** `clocksource=tsc`, cross-core offset **unmeasurable**,
+bounded at 50 ns against the method's own resolution.
+
+### 11.2 What it did not establish: the CPU was at the powersave governor
+
+    governor               powersave
+
+Every hop came back 4–6× slower than the same code under WSL2 — `t0→t1` 8,342 ns
+against ~1,300, the headline 38,435 against 8,845 — **uniformly, across hops
+that share no code**. A uniform slowdown across unrelated paths is not a code
+finding; it is the clock the code was running at. A live session defaults to
+powersave and nothing set it otherwise.
+
+The harness **printed the governor and quoted the numbers anyway**. That is the
+defect: a latency measured at an unspecified CPU frequency is not a latency. It
+now sets the performance governor itself, verifies the change took — writing to
+sysfs can fail silently — and treats anything else as a reason not to quote,
+including the absent case, since WSL2 has no cpufreq at all and is precisely the
+machine that check exists to flag.
+
+### 11.3 Two smaller things the boot found
+
+**The auto-picker chose cpu0.** Legal — on this hardware cpu0's sibling is cpu8,
+so 0 and 1 are distinct physical cores and every veto passed — and still wrong,
+because cpu0 is where Linux points device interrupts by default, making it the
+busiest core on an otherwise idle machine. It is now chosen last. The live boot
+also had no `isolcpus`, so there were no isolated cores to prefer.
+
+**The ingest pooled the sweeps with the repeats.** `run-12-8.sh` produces the ten
+repeats *and* the multiplier sweep, the MTU sweep, the held-ack arm and the dry
+run; the ingest globbed all seventeen and pooled them as one experiment. They are
+deliberately different configurations — `--multiplier 500` and `2000` exist
+*because* they should differ — so pooling them asks whether runs set up to differ
+differ. The repeats are pooled alone now and every other configuration is
+reported on its own. It also wrote its working tree to `/tmp`, which is wiped
+between WSL invocations here, so the raw material vanished between two commands.
+
+### 11.4 What the next boot needs
+
+Nothing but a re-run: the same one command. The governor is set by the harness
+now, cpu0 is avoided, and everything else about the first boot was clean. The
+run takes ~25 minutes and the numbers from it will be at a known, verified clock.
