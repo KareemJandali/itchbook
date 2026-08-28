@@ -94,6 +94,9 @@ def build():
         return {"threshold_ns": sum(e["threshold_ns"] for e in g) // len(g),
                 "mean_ns": sum(e["mean_ns"] for e in g) // len(g)}
 
+    tracever = min([r.get("trace_version", 1) for r in per_run] or [1])
+    prov = art.get("provenance") or {}
+
     udp = hops.get("t5b->t6' loopback UDP", {})
     udp_neg = sum((r["hops"].get("t5b->t6' loopback UDP") or {}).get("negatives", 0)
                   for r in per_run if "hops" in r)
@@ -234,13 +237,29 @@ def build():
         if nm in hops:
             A(row(nm, hops[nm]))
     A("")
-    A("**Loopback TCP transport ∈ [%s, %s] ns at p50.** The upper end uses `t2` "
-      "because these traces predate the fix; `include/itchbook/bench/trace.hpp` "
-      "now carries a `t3_pre` stamp taken immediately before the syscall, so "
-      "the next boot brackets it tightly. Narrowing it further would need a "
-      "stamp inside the kernel, which this harness does not have."
-      % (fmt(hops[BRACKET[0]]["pooled"]["p50"]),
-         fmt(hops[BRACKET[1]]["pooled"]["p50"])))
+    lo_p50 = hops[BRACKET[0]]["pooled"]["p50"]
+    hi_p50 = hops[BRACKET[1]]["pooled"]["p50"]
+    A("**Loopback TCP transport ∈ [%s, %s] ns at p50.**" % (fmt(lo_p50), fmt(hi_p50)))
+    A("")
+    if tracever >= 2:
+        # With a stamp on each side of the syscall the bracket stops being a
+        # vague range and becomes a measurement of the syscall itself.
+        enc = hops["t2->t3   encode, frame, write"]["pooled"]["p50"] - (hi_p50 - lo_p50)
+        A("These traces carry `t3_pre`, taken immediately before `::write()`, so "
+          "the two ends sit either side of the syscall and the width of the "
+          "bracket **is** the syscall: **%s ns**. That in turn splits the "
+          "`t2→t3` hop, which is %s ns in total — leaving roughly **%s ns of "
+          "actual encoding and framing**. The 8 µs was never the encode."
+          % (fmt(hi_p50 - lo_p50),
+             fmt(hops["t2->t3   encode, frame, write"]["pooled"]["p50"]), fmt(enc)))
+        A("")
+        A("Narrowing the transport further would need a stamp *inside* the "
+          "kernel, which this harness does not have. The bracket is the honest "
+          "width, not a placeholder for a number that exists somewhere.")
+    else:
+        A("These traces are layout v1 and carry no pre-write stamp, so the upper "
+          "end falls back to `t2` and is loose by the cost of the encode. "
+          "`include/itchbook/bench/trace.hpp` carries `t3_pre` from v2 onward.")
     A("")
     A("One consequence worth stating plainly: because delivery happens inside "
       "`write()`, part of what `t2→t3` charges to the strategy is really the "
@@ -325,12 +344,39 @@ def build():
       "above was **re-derived from the raw traces** by "
       "`scripts/phase12-8-report.py` after the boot.")
     A("")
-    A("The harness verdict inside that artifact is the one written **on the "
-      "machine, at boot time**, and it predates the explanation above: its "
-      "per-run notes still read the negative transport hop as two processes "
+    if prov.get("verified"):
+        A("**The commit is established by evidence, not asserted.** The harness "
+          "reported `dirty_tree: true` on every bare-metal boot, and that was a "
+          "bug rather than a fact: it ran `! git diff --quiet`, and the boot "
+          "stick has neither a repository nor the `git` binary, so the command "
+          "failed and the negation made it true. The gate could not pass on the "
+          "machine it was written for — the phase-10 constant-gate defect "
+          "inverted, stuck at FAIL instead of PASS.")
+        A("")
+        A("What the run *did* record is each binary's `sha256` prefix, and the "
+          "kit's `PROVENANCE.txt` records the full hashes against a commit. They "
+          "agree, so the binaries that produced these numbers are the ones built "
+          "from **`%s`** with a clean tree:"
+          % (prov.get("commit") or "")[:12])
+        A("")
+        A("| binary | logged by the run | recorded for the commit | |")
+        A("|---|---|---|:--:|")
+        for nm, c in sorted((prov.get("binaries") or {}).items()):
+            A("| `%s` | `%s…` | `%s…` | %s |"
+              % (nm, c.get("observed_prefix"), (c.get("claimed") or "")[:16],
+                 "✓" if c.get("agrees") else "✗"))
+        A("")
+        A("`tick-to-trade.sh` now reads `PROVENANCE.txt` when git is absent and "
+          "**verifies the binaries against it**, refusing outright if any hash "
+          "disagrees — a commit written in a text file beside arbitrary binaries "
+          "is a claim, not evidence.")
+        A("")
+    A("The harness verdict inside the artifact is the one written **on the "
+      "machine, at boot time**, and parts of it predate the explanations above: "
+      "its per-run notes still read the negative transport hop as two processes "
       "being descheduled relative to each other. That reading was wrong and is "
-      "kept rather than edited, because an artifact that is quietly corrected "
-      "after the fact is not evidence of anything.")
+      "kept rather than edited, because an artifact quietly corrected after the "
+      "fact is not evidence of anything.")
     A("")
     A("The first boot, which ran at the powersave governor and is not usable, "
       "is kept as `validation/tick-to-trade-2026-08-28-powersave.json`.")

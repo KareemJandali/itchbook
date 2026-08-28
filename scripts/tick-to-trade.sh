@@ -72,13 +72,56 @@ fi
 
 # ---- 0. provenance, before anything can be blamed on the wrong tree ----------
 step "0. provenance"
-COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-DIRTY=false
-if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-    DIRTY=true
-    NOTQ+=("the working tree is dirty: the binaries may not be the commit")
+# THIS GATE USED TO BE A CONSTANT. It ran `! git diff --quiet`, and on the boot
+# stick there is no repository and no git binary -- so the command failed, the
+# negation was true, and DIRTY came back true on every bare-metal boot ever
+# made. It was never reporting the tree. It was reporting git's absence, which
+# is the phase-10 kernel-drop defect inverted: stuck at FAIL instead of PASS.
+#
+# In a repository, ask git. Off one, read the kit's PROVENANCE.txt -- and verify
+# the binaries against the hashes it carries, because a commit written in a text
+# file next to arbitrary binaries is a claim and not evidence.
+COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+DIRTY=true
+PROV_SOURCE=none
+if [[ -n "$COMMIT" ]]; then
+    PROV_SOURCE=git
+    if git diff --quiet 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
+        DIRTY=false
+    else
+        NOTQ+=("the working tree is dirty: the binaries may not be the commit")
+    fi
+elif [[ -f PROVENANCE.txt ]]; then
+    PROV_MISMATCH=0
+    for b in exchange strategy tsc_offset cpu_jitter; do
+        [[ -f "$BIN/$b" ]] || continue
+        WANT="$(grep -E "[0-9a-f]{64}  $b\$" PROVENANCE.txt | grep -oE '[0-9a-f]{64}' | head -1)"
+        GOT="$(sha256sum "$BIN/$b" | cut -d' ' -f1)"
+        if [[ -z "$WANT" ]]; then
+            say "  PROVENANCE.txt names no hash for $b"
+            PROV_MISMATCH=1
+        elif [[ "$WANT" != "$GOT" ]]; then
+            say "  REFUSED: $b does not match the hash PROVENANCE.txt claims."
+            say "    kit says $WANT"
+            say "    on disk $GOT"
+            say "  The binaries are not the ones this kit was built from."
+            exit 4
+        fi
+    done
+    if (( PROV_MISMATCH == 0 )); then
+        COMMIT="$(grep -E '^built from' PROVENANCE.txt | grep -oE '[0-9a-f]{7,40}' | head -1)"
+        if grep -qE '^dirty tree *: *no' PROVENANCE.txt; then DIRTY=false; fi
+        PROV_SOURCE=kit-verified
+    fi
 fi
-say "  commit $COMMIT  dirty=$DIRTY"
+if [[ -z "$COMMIT" ]]; then
+    COMMIT=unknown
+    NOTQ+=("no provenance: neither a git repository nor a PROVENANCE.txt the \
+binaries match, so these numbers cannot be tied to any commit")
+elif [[ "$DIRTY" == "true" && "$PROV_SOURCE" == "kit-verified" ]]; then
+    NOTQ+=("the kit was built from a dirty tree: the binaries may not be the commit")
+fi
+say "  commit $COMMIT  dirty=$DIRTY  provenance=$PROV_SOURCE"
 say "  exchange sha256 $(sha256sum "$BIN/exchange" | cut -c1-16)"
 say "  strategy sha256 $(sha256sum "$BIN/strategy" | cut -c1-16)"
 
@@ -506,6 +549,7 @@ fi
 step "9. artifact"
 ART="$OUT/tick-to-trade-$TAG.json"
 python3 - "$ART" "$COMMIT" "$DIRTY" "$CPU_A" "$CPU_B" "$BOUND_NS" "$OK" \
+    "$PROV_SOURCE" \
         "$CLOCKSRC_BEFORE" "$WORK" "${NOTQ[@]:-}" <<'PY'
 import json, os, sys
 art, commit, dirty, cpu_a, cpu_b, bound, ok, clocksrc, work = sys.argv[1:10]
@@ -521,6 +565,8 @@ doc = {
     "what": "phase 12.8 tick-to-trade, decomposed",
     "commit": commit,
     "dirty_tree": dirty == "true",
+    # git | kit-verified | none. "none" means the numbers are untraceable.
+    "provenance_source": sys.argv[8] if len(sys.argv) > 8 else "none",
     "cpus": {"exchange": int(cpu_a), "strategy": int(cpu_b)},
     "clocksource": clocksrc or None,
     "tsc_offset_bound_ns": float(bound),

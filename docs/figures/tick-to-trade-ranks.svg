@@ -31,26 +31,26 @@
 <text class="ink" x="20" y="30" font-size="16" font-weight="600">Where a slow order loses its time</text>
 <text class="muted" x="20" y="50" font-size="12">One order at the p50 rank and one at the p99 rank, arrival to write. Mean over 10 runs; percentiles do not decompose, single orders do.</text>
 <text class="ink" x="20" y="102" font-size="13" font-weight="600">p50 rank</text>
-<text class="muted" x="20" y="120" font-size="11">17,283 ns</text>
-<rect class="s1" x="150.0" y="78" width="36.6" height="62"/>
-<rect class="s2" x="186.6" y="78" width="83.5" height="62"/>
-<text class="on-fill" x="228.3" y="113" font-size="11" text-anchor="middle">6,340</text>
-<rect class="s3" x="270.0" y="78" width="1.7" height="62"/>
-<rect class="s4" x="271.7" y="78" width="105.9" height="62"/>
-<text class="on-fill" x="324.6" y="113" font-size="11" text-anchor="middle">8,039</text>
-<line class="axis" x1="270.0" y1="70" x2="270.0" y2="156" stroke-dasharray="3 3"/>
-<text class="muted" x="186.0" y="168" font-size="10">&#8592; drain &#183; headline t1'&#8594;t3 &#8594;</text>
+<text class="muted" x="20" y="120" font-size="11">16,696 ns</text>
+<rect class="s1" x="150.0" y="78" width="36.2" height="62"/>
+<rect class="s2" x="186.2" y="78" width="70.2" height="62"/>
+<text class="on-fill" x="221.4" y="113" font-size="11" text-anchor="middle">5,646</text>
+<rect class="s3" x="256.5" y="78" width="2.2" height="62"/>
+<rect class="s4" x="258.7" y="78" width="99.0" height="62"/>
+<text class="on-fill" x="308.2" y="113" font-size="11" text-anchor="middle">7,961</text>
+<line class="axis" x1="256.5" y1="70" x2="256.5" y2="156" stroke-dasharray="3 3"/>
+<text class="muted" x="172.5" y="168" font-size="10">&#8592; drain &#183; headline t1'&#8594;t3 &#8594;</text>
 <text class="ink" x="20" y="238" font-size="13" font-weight="600">p99 rank</text>
-<text class="muted" x="20" y="256" font-size="11">38,733 ns</text>
-<rect class="s1" x="150.0" y="214" width="76.7" height="62"/>
-<text class="on-fill" x="188.3" y="249" font-size="11" text-anchor="middle">5,825</text>
-<rect class="s2" x="226.7" y="214" width="116.4" height="62"/>
-<text class="on-fill" x="284.9" y="249" font-size="11" text-anchor="middle">8,842</text>
-<rect class="s3" x="343.1" y="214" width="5.5" height="62"/>
-<rect class="s4" x="348.6" y="214" width="311.4" height="62"/>
-<text class="on-fill" x="504.3" y="249" font-size="11" text-anchor="middle">23,649</text>
-<line class="axis" x1="343.1" y1="206" x2="343.1" y2="292" stroke-dasharray="3 3"/>
-<text class="muted" x="259.1" y="304" font-size="10">&#8592; drain &#183; headline t1'&#8594;t3 &#8594;</text>
+<text class="muted" x="20" y="256" font-size="11">40,992 ns</text>
+<rect class="s1" x="150.0" y="214" width="96.5" height="62"/>
+<text class="on-fill" x="198.3" y="249" font-size="11" text-anchor="middle">7,758</text>
+<rect class="s2" x="246.5" y="214" width="116.7" height="62"/>
+<text class="on-fill" x="304.9" y="249" font-size="11" text-anchor="middle">9,380</text>
+<rect class="s3" x="363.2" y="214" width="6.7" height="62"/>
+<rect class="s4" x="369.9" y="214" width="290.1" height="62"/>
+<text class="on-fill" x="515.0" y="249" font-size="11" text-anchor="middle">23,315</text>
+<line class="axis" x1="363.2" y1="206" x2="363.2" y2="292" stroke-dasharray="3 3"/>
+<text class="muted" x="279.2" y="304" font-size="10">&#8592; drain &#183; headline t1'&#8594;t3 &#8594;</text>
 <rect class="s1" x="150" y="314" width="11" height="11"/>
 <text class="muted" x="166" y="324" font-size="11">arrival to applied</text>
 <rect class="s2" x="280" y="314" width="11" height="11"/>

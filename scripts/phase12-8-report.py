@@ -52,10 +52,12 @@ READABLE_VERSIONS = (1, 2)
 # would be read here as plausible numbers, which is why the file carries a
 # version and this asserts the record size the writer declared.
 #
-# v2 inserted t3_pre after t2. v1 traces are still read -- the 2026-08-28 bare
-# metal boots are v1 and re-deriving their numbers must stay possible -- but
-# they carry no pre-write stamp, so the transport bracket falls back to t2 as
-# its upper end, which is looser and is labelled as such.
+# v2 inserted t3_pre after t2. v1 traces are still read: the first two bare
+# metal boots of 2026-08-28 are v1 and re-deriving their numbers must stay
+# possible. They carry no pre-write stamp, so the transport bracket falls back
+# to t2 as its upper end, which is looser by the cost of the encode and is
+# labelled as such. The third boot is v2, where the bracket's width IS the
+# write syscall.
 CHAINA_V1 = "<QQQQQQQQQQQIIIIHHBBBB"
 CHAINA_V2 = "<QQQQQQQQQQQQIIIIHHBBBB"
 CHAINA = CHAINA_V2
@@ -732,6 +734,10 @@ def main():
                               "cross_process": h.cross} for h in hops},
             "headline_t1p_t3": {"n": head_react.n, "p50": pct(head_react.vals, 50)},
             "coverage_p50_pct": pct(coverage, 50) if coverage else None,
+            # v1 has no pre-write stamp and the bracket falls back to t2;
+            # v2 brackets the syscall itself. The document must not claim
+            # one while reading the other.
+            "trace_version": st.get("__version__", 1),
             # The falsifiable half of the stamp-placement account. A negative
             # LOWER-bound hop is expected; one whose shortfall exceeds the
             # window the send happened in is not, and would mean the join or

@@ -355,7 +355,7 @@ if [ ! -d /tmp/itchbook-bootkit ]; then
     exit 1
 fi
 cd /tmp || exit 1
-tar czf /tmp/phase12-8-results.tar.gz     itchbook-bootkit/out     $(ls -d /tmp/tmp.* 2>/dev/null | head -20) 2>/dev/null
+tar czf /tmp/phase12-8-results.tar.gz     itchbook-bootkit/out itchbook-bootkit/PROVENANCE.txt     $(ls -d /tmp/tmp.* 2>/dev/null | head -20) 2>/dev/null
 if [ ! -s /tmp/phase12-8-results.tar.gz ]; then
     echo "Nothing to save - did any run complete?"
     exit 1

@@ -180,7 +180,7 @@ fi
 echo
 echo "=== artifact"
 python3 - "$WORK" "$OUT" "$POOL_RC" <<'PY'
-import json, os, sys, glob
+import json, os, re, sys, glob
 work, out, pool_rc = sys.argv[1], sys.argv[2], int(sys.argv[3])
 
 # The HARNESS's own verdict, from the artifact it wrote on the machine. It knows
@@ -200,6 +200,73 @@ for p in glob.glob(os.path.join(work, "**", "tick-to-trade-*.json"), recursive=T
         harness_doc = d
         harness_reasons = ["[harness] " + r for r in d.get("not_quotable_because", [])]
         break
+
+# ---- provenance, established rather than inherited -----------------------------
+#
+# `git diff --quiet` FAILS when git is absent, and the boot stick has no
+# repository and no git binary -- so the harness reported dirty_tree=true on
+# every bare-metal boot regardless of the tree. tick-to-trade.sh reads
+# PROVENANCE.txt now, but the boots already taken predate that, and their
+# numbers are still tied to a commit by evidence they DID record: the run log
+# carries the first 16 hex of each binary's sha256, and PROVENANCE.txt carries
+# the full hashes against a commit.
+#
+# PROVENANCE.txt is looked for inside the results first. Older tarballs do not
+# carry it, so PROVENANCE=<path> may supply the kit's copy; the artifact records
+# which, because a file handed in from outside is weaker evidence than one the
+# machine returned and a reader must be able to tell them apart.
+provenance = {"verified": False, "source": None, "reason": "no PROVENANCE.txt found"}
+prov_path = None
+for p in glob.glob(os.path.join(work, "**", "PROVENANCE.txt"), recursive=True):
+    prov_path, provenance["source"] = p, "in-results"
+    break
+if prov_path is None and os.environ.get("PROVENANCE"):
+    cand = os.environ["PROVENANCE"]
+    if os.path.exists(cand):
+        prov_path, provenance["source"] = cand, "supplied-out-of-band"
+
+if prov_path:
+    txt = open(prov_path, encoding="utf-8", errors="replace").read()
+    claimed = dict(re.findall(r"([0-9a-f]{64})\s+(\w+)", txt)[::1] and
+                   [(m[1], m[0]) for m in re.findall(r"([0-9a-f]{64})\s+(\w+)", txt)])
+    commit_m = re.search(r"^built from\s*:\s*([0-9a-f]{7,40})", txt, re.M)
+    dirty_m = re.search(r"^dirty tree\s*:\s*(\w+)", txt, re.M)
+    # what the run itself saw, from its own log
+    observed = {}
+    for lg in glob.glob(os.path.join(work, "**", "*.txt"), recursive=True):
+        try:
+            for line in open(lg, encoding="utf-8", errors="replace"):
+                m = re.match(r"\s*(\w+) sha256 ([0-9a-f]{16})\s*$", line)
+                if m:
+                    observed[m.group(1)] = m.group(2)
+        except Exception:
+            pass
+    checks, ok = {}, bool(observed)
+    for name, pref in sorted(observed.items()):
+        full = claimed.get(name)
+        agree = bool(full) and full.startswith(pref)
+        checks[name] = {"observed_prefix": pref, "claimed": full, "agrees": agree}
+        ok = ok and agree
+    provenance = {
+        "verified": ok,
+        "source": provenance["source"],
+        "commit": commit_m.group(1) if commit_m else None,
+        "dirty_tree": (dirty_m.group(1).lower() != "no") if dirty_m else None,
+        "binaries": checks,
+        "reason": ("the binaries the run logged match the hashes PROVENANCE.txt "
+                   "records for that commit" if ok else
+                   "the run's binary hashes do not match PROVENANCE.txt"),
+    }
+
+# The harness's dirty flag is dropped ONLY when the evidence positively says
+# otherwise. Every other reason it gave stands untouched.
+if provenance.get("verified") and provenance.get("dirty_tree") is False:
+    kept = [r for r in harness_reasons if "working tree is dirty" not in r]
+    if len(kept) != len(harness_reasons):
+        print("  provenance: verified %s (%s); dropping the harness's dirty-tree "
+              "reason, which it could not compute without git"
+              % (provenance["commit"][:12], provenance["source"]))
+    harness_reasons = kept
 runs = []
 for p in sorted(glob.glob(os.path.join(work, "*-fresh-report.json"))):
     try:
@@ -243,6 +310,7 @@ for p in sorted(glob.glob(os.path.join(work, "other-*.json"))):
 doc = {
     "what": "phase 12.8 tick-to-trade, decomposed - bare metal",
     "runs": len(runs),
+    "provenance": provenance,
     "other_configurations": others,
     "quotable": quotable,
     "not_quotable_because": reasons,
