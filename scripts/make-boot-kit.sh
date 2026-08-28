@@ -145,8 +145,13 @@ PHASE 12.8 -- BARE METAL RUNBOOK
 Everything here is static. There is no compiler and no network in this session,
 and everything is lost at reboot. Do step 6 before you shut down.
 
-1. cd into this kit, wherever the stick is mounted.
-       cd /media/*/itchbook-bootkit    (or wherever it landed)
+1. RUN IT FROM THE STICK'S ROOT. The stick is mounted READ-ONLY, and a FAT32
+   stick is usually mounted noexec too, so nothing here can be executed in
+   place. run-12-8.sh copies the tarball to /tmp and extracts it there.
+
+       bash /cdrom/run-12-8.sh
+
+   If /cdrom is not where it landed:   ls /media/*/ /cdrom/
 
 2. LOOK AT THE MACHINE. Run the harness with no CPUs set. It will refuse and
    print the topology, marking which cores are isolated.
@@ -203,11 +208,13 @@ and everything is lost at reboot. Do step 6 before you shut down.
        - one run with --ack-delay-ms 250 passed through, as the t6 placement
          test: fills must still be counted and the shares must still agree.
 
-7. SAVE EVERYTHING BEFORE YOU REBOOT. This session forgets.
+7. SAVE EVERYTHING BEFORE YOU REBOOT. This session forgets, and the stick is
+   mounted read-only until this remounts it.
 
-       ./save-to-stick.sh /media/<you>/<stick>
+       bash /cdrom/save-12-8.sh
 
-   Then check the files are really there before shutting down.
+   Then check the file is really there before shutting down:
+       ls -lh /cdrom/phase12-8-results.tar.gz
 
 DO NOT use --rt-priority or SCHED_FIFO. Phase 10 established that RT priority
 was itself the source of a 47 ms lateness spike via RT bandwidth throttling, and
@@ -249,8 +256,123 @@ binaries   : $(cd "$KIT/bin" && sha256sum * | sed 's/^/             /')
 EOF
 echo "  PROVENANCE.txt"
 
+# ---- STICK PACKAGING ----------------------------------------------------------
+#
+# A tarball plus two scripts at the stick's root, matching the pattern that
+# already worked for the phase-10 boot: the stick is read-only and usually
+# noexec, so the kit is extracted to /tmp and run from there.
+echo
+echo "=== packaging for the stick"
+STICK="$KIT/../itchbook-12-8-stick"
+rm -rf "$STICK"
+mkdir -p "$STICK"
+tar czf "$STICK/phase12-8-kit.tar.gz" -C "$(dirname "$KIT")" "$(basename "$KIT")"
+echo "  phase12-8-kit.tar.gz  $(stat -c %s "$STICK/phase12-8-kit.tar.gz" | numfmt --to=iec)"
+
+cat > "$STICK/run-12-8.sh" <<'RUNEOF'
+#!/usr/bin/env bash
+#
+# PHASE 12.8 - FULL RUN.  In the Ubuntu live session:   bash /cdrom/run-12-8.sh
+#
+# This does everything: pre-flight, the measurement, the sweeps that classify
+# the hops, and the save. It saves at the end because the live session keeps
+# nothing at reboot and the save is the step that loses the whole boot if it is
+# forgotten.
+#
+# Roughly 25 minutes. Nothing needs typing after this line.
+set -uo pipefail
+
+KIT=$(find /cdrom /media /run/media -maxdepth 4 -name phase12-8-kit.tar.gz 2>/dev/null | head -1)
+if [ -z "$KIT" ]; then
+    echo "Could not find phase12-8-kit.tar.gz."
+    echo "Find the stick with:   ls /media/*/ /cdrom/"
+    exit 1
+fi
+echo "kit found at: $KIT"
+cp "$KIT" /tmp/ || exit 1
+cd /tmp || exit 1
+rm -rf itchbook-bootkit
+tar xzf phase12-8-kit.tar.gz || exit 1
+cd itchbook-bootkit || exit 1
+chmod +x bin/* scripts/*.sh 2>/dev/null
+mkdir -p out
+
+FEED_ARGS="FEED=data/MSFT.gz SYMBOL=MSFT LOCATE=5291"
+if [ ! -f data/MSFT.gz ]; then
+    echo "!! data/MSFT.gz missing; falling back to the generated bench feed."
+    FEED_ARGS="FEED=data/bench.gz SYMBOL=TEST LOCATE=1"
+fi
+
+banner() { echo; echo "=================================================="; echo "$*"; echo "=================================================="; }
+
+banner "1/5  the measurement: pre-flight, dry run, 10 repeats, pooling"
+env $FEED_ARGS BIN=bin OUT=out REPEATS=10 MULTIPLIER=1000 TAG=baremetal \
+    WORK=/tmp/w-main ./scripts/tick-to-trade.sh
+MAIN_RC=$?
+echo "main run exit: $MAIN_RC   (0 quotable, 3 ran but not quotable)"
+if [ "$MAIN_RC" = "1" ] || [ "$MAIN_RC" = "4" ]; then
+    echo "!! The run did not complete. Saving whatever exists and stopping."
+else
+    # These CLASSIFY the hops. A hop that scales with the replay multiplier is
+    # measuring the tape; one that does not is measuring the machine.
+    banner "2/5  multiplier sweep (which hops are the tape?)"
+    for M in 500 2000; do
+        echo "--- multiplier $M"
+        env $FEED_ARGS BIN=bin OUT=out REPEATS=1 MULTIPLIER=$M TAG=mult$M \
+            WORK=/tmp/w-m$M ./scripts/tick-to-trade.sh > out/mult$M.txt 2>&1
+        echo "    exit $?  (out/mult$M.txt)"
+    done
+
+    banner "3/5  MTU sweep (is the packing delay a function of --mtu?)"
+    env BIN=bin ./scripts/tick-to-trade-mtu-sweep.sh > out/mtu-sweep.txt 2>&1
+    echo "    exit $?  (out/mtu-sweep.txt)"
+
+    banner "4/5  held acknowledgements (is t6 stamped where it is seen?)"
+    env $FEED_ARGS BIN=bin OUT=out REPEATS=1 MULTIPLIER=1000 TAG=ackheld \
+        WORK=/tmp/w-ack ./scripts/tick-to-trade.sh > out/ackheld.txt 2>&1
+    echo "    exit $?  (out/ackheld.txt)"
+fi
+
+banner "5/5  saving to the stick"
+cp -r /tmp/w-main /tmp/w-m500 /tmp/w-m2000 /tmp/w-ack out/ 2>/dev/null
+bash "$(dirname "$KIT")/save-12-8.sh" || bash /cdrom/save-12-8.sh
+
+echo
+echo "Done. If the save printed a file size, you can reboot into Windows."
+RUNEOF
+chmod 755 "$STICK/run-12-8.sh"
+echo "  run-12-8.sh"
+
+cat > "$STICK/save-12-8.sh" <<'SAVEEOF'
+#!/usr/bin/env bash
+# Phase 12.8 - after the runs finish:   bash /cdrom/save-12-8.sh
+#
+# The live session forgets everything at reboot, and the stick is mounted
+# read-only until this remounts it.
+set -uo pipefail
+if [ ! -d /tmp/itchbook-bootkit ]; then
+    echo "/tmp/itchbook-bootkit does not exist - was run-12-8.sh used?"
+    exit 1
+fi
+cd /tmp || exit 1
+tar czf /tmp/phase12-8-results.tar.gz     itchbook-bootkit/out     $(ls -d /tmp/tmp.* 2>/dev/null | head -20) 2>/dev/null
+if [ ! -s /tmp/phase12-8-results.tar.gz ]; then
+    echo "Nothing to save - did any run complete?"
+    exit 1
+fi
+KIT=$(find /cdrom /media /run/media -maxdepth 4 -name phase12-8-kit.tar.gz 2>/dev/null | head -1)
+D=$(dirname "$KIT")
+sudo mount -o remount,rw "$D" 2>/dev/null
+sudo cp /tmp/phase12-8-results.tar.gz "$D/" && sync     && ls -lh "$D/phase12-8-results.tar.gz"     && echo "Copied to the stick. Safe to reboot into Windows."
+SAVEEOF
+chmod 755 "$STICK/save-12-8.sh"
+echo "  save-12-8.sh"
+
 echo
 echo "=== kit ready: $KIT"
 du -sh "$KIT"
+echo "=== stick payload ready: $STICK"
+ls -la "$STICK"
 echo
-echo "Copy the whole directory to the stick, then follow RUNBOOK.txt on the machine."
+echo "Copy the THREE files in $STICK to the root of the stick, then in the live"
+echo "session run:  bash /cdrom/run-12-8.sh"

@@ -105,19 +105,61 @@ PYIL
 }
 pkg() { cat "/sys/devices/system/cpu/cpu$1/topology/physical_package_id" 2>/dev/null; }
 
-if [[ -z "$CPU_A" || -z "$CPU_B" ]]; then
-    say "error: set CPU_A (exchange) and CPU_B (strategy) explicitly."
-    say "       Do not inherit phase 10's numbering; re-read the topology on the day."
-    say "       Candidates on this machine:"
-    ISO="$(cat /sys/devices/system/cpu/isolated 2>/dev/null)"
-    [[ -n "$ISO" ]] && say "       (isolated cpus: $ISO -- prefer a non-sibling pair from these)"
+# Chosen from the live topology, not inherited. See the banner in
+# docs/phase12-8-design.md: what that rule requires is reading sysfs ON THE DAY,
+# which a program does more reliably than a person at a boot prompt.
+auto_pick_pair() {
+    local iso="$(cat /sys/devices/system/cpu/isolated 2>/dev/null)"
+    local cpus=()
+    local c
     for c in $(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | sed 's#.*/cpu##' | sort -n); do
-        s="$(sib "$c")"; p="$(pkg "$c")"
-        mark=""
-        in_list "$ISO" "$c" && mark=" ISOLATED"
-        printf '         cpu%-3s siblings=%-8s package=%s%s\n' "$c" "${s:-absent}" "${p:-absent}" "$mark"
+        cpus+=("$c")
     done
-    exit 4
+    # Isolated cores first: they are measurably quieter, and using shared ones
+    # when isolated ones exist is already a reason not to quote.
+    local ordered=()
+    if [[ -n "$iso" ]]; then
+        for c in "${cpus[@]}"; do in_list "$iso" "$c" && ordered+=("$c"); done
+    fi
+    for c in "${cpus[@]}"; do
+        if [[ -z "$iso" ]] || ! in_list "$iso" "$c"; then ordered+=("$c"); fi
+    done
+    local a b
+    for a in "${ordered[@]}"; do
+        for b in "${ordered[@]}"; do
+            [[ "$a" == "$b" ]] && continue
+            local sa="$(sib "$a")" pa="$(pkg "$a")" pb="$(pkg "$b")"
+            [[ -z "$sa" || -z "$pa" || -z "$pb" ]] && continue
+            in_list "$sa" "$b" && continue          # SMT siblings
+            [[ "$pa" != "$pb" ]] && continue        # different packages
+            printf '%s %s' "$a" "$b"
+            return 0
+        done
+    done
+    return 1
+}
+
+if [[ -z "$CPU_A" || -z "$CPU_B" ]]; then
+    ISO="$(cat /sys/devices/system/cpu/isolated 2>/dev/null)"
+    say "  no CPUs given; choosing from THIS machine's topology"
+    [[ -n "$ISO" ]] && say "  isolated cpus: $ISO (preferred)"
+    PICK="$(auto_pick_pair)"
+    if [[ -z "$PICK" ]]; then
+        say "REFUSED: no pair on this machine is on distinct physical cores of the"
+        say "         same package with readable topology. Listing what there is:"
+        for c in $(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | sed 's#.*/cpu##' | sort -n); do
+            sv="$(sib "$c")"; pv="$(pkg "$c")"
+            mark=""
+            in_list "$ISO" "$c" && mark=" ISOLATED"
+            printf '         cpu%-3s siblings=%-8s package=%s%s\n' "$c" "${sv:-absent}" "${pv:-absent}" "$mark"
+        done
+        say "         Set CPU_A and CPU_B by hand if you know better."
+        exit 4
+    fi
+    CPU_A="${PICK% *}"
+    CPU_B="${PICK#* }"
+    say "  chose cpu $CPU_A (exchange) and cpu $CPU_B (strategy)"
+    say "  override with:  CPU_A=<a> CPU_B=<b> $0"
 fi
 
 SIB_A="$(sib "$CPU_A")"; SIB_B="$(sib "$CPU_B")"
