@@ -561,6 +561,7 @@ numbers may be published:
 | coverage of the completing iteration | p50 99.2% |
 | MTU sweep, packing delay p50 | 144.5 µs → 117.1 µs → 84.4 µs at 1400 / 700 / 350 |
 | gap-overlap census | 0 of 800 chains descheduled; the 12 slowest were all running |
+| five repeats, pooled | every chain-A hop moves 13-18% between runs, p=0.0005 |
 
 **The pre-flight refuses, and each refusal has been watched firing.** It will not
 choose CPUs for you — it prints the machine's real topology, marks which cores
@@ -588,8 +589,28 @@ cleanly, and is refused for five separate measured reasons, of which the
 load-bearing one is that a cross-process hop comes out 1467× more negative than
 the clock bound can explain.
 
-**Not yet built:** the ten-repeat pooling and the two figures (the p50-rank and
-p99-rank per-sample decompositions, and the tail-conditional mean), which want
-real numbers to be worth writing; `docs/phase12-8-results.md`, which is
-generated and not typed; and the join/sign/census unit tests wired into
-`verify-local`.
+**The tests run in `verify-local` and in CI.** `tests/test_tick_to_trade.cpp`
+covers the machinery whose failure would make a timing silently wrong rather than
+obviously absent: an arena that wrapped instead of dropping (a wrapped index
+pairs one order's t₀ with another's t₃ and the result looks like a plausible
+latency), a clamped histogram that looked like a large sample, a topology probe
+that treated *absent* as *fine*, and the record layouts.
+
+`tests/test_report_join.py` builds trace files **by hand with defects planted in
+them** and requires the report to refuse each one — because a live run cannot
+test a refusal. It produces whatever it produces, and a silently wrong join still
+looks like a table of plausible latencies. The planted defects are stamps out of
+order, an exchange record naming an order that was never sent, the same token
+twice, a fill whose two independently-counted ordinals disagree, a chain that
+stopped running mid-hop (which the census must **tag** — the test that it can
+fire at all), and a run with no census (where p99.9 must not be printed).
+
+It also reads a fixture the C++ test writes, parsing it with the report's own
+struct format strings, so the two languages are checked **against each other**
+rather than against two copies of a constant. That is what would catch a padding
+change that the Python reader would otherwise go on unpacking into plausible
+numbers.
+
+**Not yet built:** the two figures (the p50-rank and p99-rank per-sample
+decompositions, and the tail-conditional mean) and `docs/phase12-8-results.md`,
+which is generated and not typed. Both want real numbers to be worth writing.

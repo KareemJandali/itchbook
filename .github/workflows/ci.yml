@@ -547,6 +547,21 @@ jobs:
       # against the shares the strategy counted off the tape. Those two numbers
       # are computed in different address spaces from different inputs and
       # there is no path by which a bug in one produces the other.
+      # Phase 12.8. The measurement itself needs bare metal and is not taken
+      # here. What IS testable anywhere is whether the report would refuse a
+      # corrupted one: the join, the sign gates and the gap-overlap census are
+      # exercised against traces built by hand with defects planted in them. A
+      # live run cannot test a refusal -- it produces whatever it produces, and
+      # a silently wrong join still looks like a table of plausible latencies.
+      #
+      # It also reads a fixture the C++ test writes, so the structs and the
+      # Python reader are checked against each other rather than against two
+      # copies of a constant.
+      - name: Phase 12.8 report (join, sign gates, gap-overlap census)
+        run: |
+          ./build/test_tick_to_trade
+          python3 tests/test_report_join.py
+
       - name: Closed loop (two processes, UDP feed, TCP order entry)
         run: ./scripts/closed-loop-check.sh
 

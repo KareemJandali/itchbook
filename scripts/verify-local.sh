@@ -109,6 +109,24 @@ build_with() {   # $1 dir, $2 cc, $3 cxx, $4 build type
 step "gcc, Debug + ASan/UBSan"
 build_with build-verify-gcc gcc g++ Debug
 
+# Phase 12.8's report is a Python program, so ctest cannot reach it. Its join,
+# its sign gates and its gap-overlap census are tested against traces built by
+# hand with defects planted in them -- a live run cannot test a refusal, because
+# it produces whatever it produces and a silently wrong join still looks like a
+# table of plausible latencies.
+#
+# It reads the fixture tests/test_tick_to_trade.cpp writes, which is how the C++
+# structs and the Python reader are checked against each other rather than
+# against two copies of a constant. ctest has run by now, so the fixture exists.
+step "phase 12.8 report: join, sign gates, census"
+if python3 tests/test_report_join.py > /tmp/vl-report-join.txt 2>&1; then
+    grep -c "^  ok" /tmp/vl-report-join.txt | sed 's/^/  checks passed: /'
+else
+    grep -E "^  FAIL|failure" /tmp/vl-report-join.txt | head -10
+    echo "  FAILED: phase 12.8 report tests"
+    fail=1
+fi
+
 # Clang's sanitizer runtime is a separate package and is often absent on a dev
 # box. Release still exercises the whole front end, which is what the second
 # compiler is here for.
