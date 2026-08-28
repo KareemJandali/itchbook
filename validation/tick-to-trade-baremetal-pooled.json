@@ -34,7 +34,10 @@
         "p50": 2756,
         "p99": 11601,
         "interval": "[2730, 2791] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 18674,
+        "p999_gap_free": 18674,
+        "p999_unavailable_because": null
       }
     },
     "t0->t3   arrival to write (incl. drain)": {
@@ -62,7 +65,10 @@
         "p50": 20010,
         "p99": 61540,
         "interval": "[19644, 20470] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 72969,
+        "p999_gap_free": 72969,
+        "p999_unavailable_because": null
       }
     },
     "t1'->t2  decision": {
@@ -90,7 +96,10 @@
         "p50": 251,
         "p99": 922,
         "interval": "[104, 263] runs",
-        "interval_is": "per-run range"
+        "interval_is": "per-run range",
+        "p999_all": null,
+        "p999_gap_free": null,
+        "p999_unavailable_because": "the runs are not one experiment"
       }
     },
     "t1'->t3  HEADLINE reaction path": {
@@ -118,7 +127,10 @@
         "p50": 8139,
         "p99": 23723,
         "interval": "[8105, 8172] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 38244,
+        "p999_gap_free": 38244,
+        "p999_unavailable_because": null
       }
     },
     "t1->t1'  post-trigger drain": {
@@ -146,7 +158,10 @@
         "p50": 6045,
         "p99": 33373,
         "interval": "[5919, 6183] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 42809,
+        "p999_gap_free": 42809,
+        "p999_unavailable_because": null
       }
     },
     "t2->t3   encode, frame, write": {
@@ -174,7 +189,10 @@
         "p50": 8002,
         "p99": 23337,
         "interval": "[7960, 8036] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 37692,
+        "p999_gap_free": 37692,
+        "p999_unavailable_because": null
       }
     },
     "t3'->t4  parse, validate, submit": {
@@ -202,7 +220,10 @@
         "p50": 2537,
         "p99": 13912,
         "interval": "[2468, 2605] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 51772,
+        "p999_gap_free": 51772,
+        "p999_unavailable_because": null
       }
     },
     "t3->t3'  transport, LOWER bound": {
@@ -230,7 +251,10 @@
         "p50": 1750,
         "p99": 48156,
         "interval": "[1723, 1777] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 71603,
+        "p999_gap_free": 71603,
+        "p999_unavailable_because": null
       }
     },
     "t3pre->t3' transport, UPPER bound": {
@@ -258,7 +282,10 @@
         "p50": 9574,
         "p99": 62775,
         "interval": "[9510, 9635] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 80182,
+        "p999_gap_free": 80182,
+        "p999_unavailable_because": null
       }
     },
     "t5a->t5b PACKING DELAY (--mtu)": {
@@ -286,7 +313,10 @@
         "p50": 21505,
         "p99": 1283852,
         "interval": "[19959, 24239] runs",
-        "interval_is": "per-run range"
+        "interval_is": "per-run range",
+        "p999_all": null,
+        "p999_gap_free": null,
+        "p999_unavailable_because": "the runs are not one experiment"
       }
     },
     "t5b->t6' loopback UDP": {
@@ -314,7 +344,10 @@
         "p50": 21960,
         "p99": 159350,
         "interval": "[21329, 22478] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 177730,
+        "p999_gap_free": null,
+        "p999_unavailable_because": null
       }
     },
     "t6'->t6  drain, sequence, parse, apply": {
@@ -342,7 +375,10 @@
         "p50": 3200,
         "p99": 15139,
         "interval": "[3159, 3237] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 23731,
+        "p999_gap_free": null,
+        "p999_unavailable_because": null
       }
     },
     "tA->t5a  aggressor walk and match": {
@@ -370,7 +406,10 @@
         "p50": 945,
         "p99": 20061,
         "interval": "[914, 973] normal",
-        "interval_is": "order-statistic CI"
+        "interval_is": "order-statistic CI",
+        "p999_all": 43471,
+        "p999_gap_free": null,
+        "p999_unavailable_because": null
       }
     }
   }

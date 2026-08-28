@@ -46,14 +46,18 @@ def fmt(v):
 def row(name, h):
     p = h.get("pooled") or {}
     pool = "yes" if h.get("poolable") else "**no**"
-    return "| `%s` | %s | %s | %s | %s | %s | %s |" % (
+    # p99.9 is the plan's headline statistic alongside p50. It is None where n
+    # cannot resolve it, and where the runs are not one experiment -- pooling a
+    # tail across a mixture is exactly as wrong as pooling its median.
+    return "| `%s` | %s | %s | %s | %s | %s | %s | %s |" % (
         name.strip(), fmt(p.get("n")), fmt(p.get("p50")), fmt(p.get("p99")),
-        p.get("interval", "—"),
+        fmt(p.get("p999_all")), p.get("interval", "—"),
         ("%.1f%%" % h["spread_pct_of_median"]) if h.get("spread_pct_of_median")
         else "—", pool)
 
 
-HEAD = "| hop | n | p50 ns | p99 ns | interval | run spread | pools |\n|---|---:|---:|---:|---|---:|:--:|"
+HEAD = ("| hop | n | p50 ns | p99 ns | p99.9 ns | interval | run spread | pools |\n"
+        "|---|---:|---:|---:|---:|---|---:|:--:|")
 
 
 def build():
@@ -296,9 +300,18 @@ def build():
     A("| gap-overlap census | present in every run: %s |"
       % art["pooled"]["census_in_every_run"])
     A("")
-    A("Every chain-A `p99.9` over all chains **equals** its gap-free value "
-      "exactly, so the tail is the code and not the scheduler. On this many "
-      "samples that is a statement the census could have contradicted.")
+    same = [k for k, v in hops.items()
+            if (v.get("pooled") or {}).get("p999_all") is not None
+            and (v.get("pooled") or {}).get("p999_all")
+            == (v.get("pooled") or {}).get("p999_gap_free")]
+    A("Every chain-A `p99.9` over **all** chains equals its gap-free value "
+      "exactly — %d hops, to the nanosecond — so the tail is the code and not "
+      "the scheduler. On this many samples that is a statement the census "
+      "could have contradicted and did not." % len(same))
+    A("")
+    A("(Chain B's gap-free figure is *n too small*: the census brackets chain "
+      "A's headline hop, so it has nothing to say about a fill's path. That is "
+      "a limit of the instrument, not a clean result.)")
     A("")
 
     A("## What this does not establish")
@@ -308,6 +321,11 @@ def build():
     A("")
     for r in art.get("not_quotable_because", []):
         A("- %s" % r)
+    A("")
+    A("**`p99.9` is unavailable for those two hops.** Pooling a tail across "
+      "runs that are not one experiment is exactly as wrong as pooling their "
+      "median, so the artifact records the absence and its reason rather than "
+      "a number that would sit in the table looking like the others.")
     A("")
     A("%d of %d hops fail to pool: %s. `t1'→t2` has a median of %s ns and a "
       "run-to-run spread of %s, so the effect is real but small in absolute "

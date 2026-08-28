@@ -14,15 +14,15 @@ It moved **1.5%** across the 10 repeats and a permutation test cannot tell the r
 
 ## Chain A — the reaction path
 
-| hop | n | p50 ns | p99 ns | interval | run spread | pools |
-|---|---:|---:|---:|---|---:|:--:|
-| `t0->t1   arrival to applied` | 12,000 | 2,756 | 11,601 | [2730, 2791] normal | 6.0% | yes |
-| `t1->t1'  post-trigger drain` | 12,000 | 6,045 | 33,373 | [5919, 6183] normal | 15.0% | yes |
-| `t1'->t2  decision` | 12,000 | 251 | 922 | [104, 263] runs | 61.6% | **no** |
-| `t2->t3   encode, frame, write` | 12,000 | 8,002 | 23,337 | [7960, 8036] normal | 1.4% | yes |
-| `t3'->t4  parse, validate, submit` | 12,000 | 2,537 | 13,912 | [2468, 2605] normal | 18.5% | yes |
-| `t1'->t3  HEADLINE reaction path` | 12,000 | 8,139 | 23,723 | [8105, 8172] normal | 1.5% | yes |
-| `t0->t3   arrival to write (incl. drain)` | 12,000 | 20,010 | 61,540 | [19644, 20470] normal | 10.8% | yes |
+| hop | n | p50 ns | p99 ns | p99.9 ns | interval | run spread | pools |
+|---|---:|---:|---:|---:|---|---:|:--:|
+| `t0->t1   arrival to applied` | 12,000 | 2,756 | 11,601 | 18,674 | [2730, 2791] normal | 6.0% | yes |
+| `t1->t1'  post-trigger drain` | 12,000 | 6,045 | 33,373 | 42,809 | [5919, 6183] normal | 15.0% | yes |
+| `t1'->t2  decision` | 12,000 | 251 | 922 | — | [104, 263] runs | 61.6% | **no** |
+| `t2->t3   encode, frame, write` | 12,000 | 8,002 | 23,337 | 37,692 | [7960, 8036] normal | 1.4% | yes |
+| `t3'->t4  parse, validate, submit` | 12,000 | 2,537 | 13,912 | 51,772 | [2468, 2605] normal | 18.5% | yes |
+| `t1'->t3  HEADLINE reaction path` | 12,000 | 8,139 | 23,723 | 38,244 | [8105, 8172] normal | 1.5% | yes |
+| `t0->t3   arrival to write (incl. drain)` | 12,000 | 20,010 | 61,540 | 72,969 | [19644, 20470] normal | 10.8% | yes |
 
 `t2→t3` at 8,002 ns dominates the headline, and it is **the write, not the encode**: the decision itself (`t1'→t2`) is 251 ns. The hop is named for what it contains and the encode is a rounding error inside it. What that write actually spends its time on is the subject of the next section.
 
@@ -69,10 +69,10 @@ That account makes a prediction that could have failed and did not:
 
 So the transport is reported as an interval rather than a point. The true send instant lies between the two stamps and this harness cannot say where:
 
-| hop | n | p50 ns | p99 ns | interval | run spread | pools |
-|---|---:|---:|---:|---|---:|:--:|
-| `t3->t3'  transport, LOWER bound` | 12,000 | 1,750 | 48,156 | [1723, 1777] normal | 4.4% | yes |
-| `t3pre->t3' transport, UPPER bound` | 12,000 | 9,574 | 62,775 | [9510, 9635] normal | 2.1% | yes |
+| hop | n | p50 ns | p99 ns | p99.9 ns | interval | run spread | pools |
+|---|---:|---:|---:|---:|---|---:|:--:|
+| `t3->t3'  transport, LOWER bound` | 12,000 | 1,750 | 48,156 | 71,603 | [1723, 1777] normal | 4.4% | yes |
+| `t3pre->t3' transport, UPPER bound` | 12,000 | 9,574 | 62,775 | 80,182 | [9510, 9635] normal | 2.1% | yes |
 
 **Loopback TCP transport ∈ [1,750, 9,574] ns at p50.**
 
@@ -84,12 +84,12 @@ One consequence worth stating plainly: because delivery happens inside `write()`
 
 ## Chain B — the fill report
 
-| hop | n | p50 ns | p99 ns | interval | run spread | pools |
-|---|---:|---:|---:|---|---:|:--:|
-| `tA->t5a  aggressor walk and match` | 20,868 | 945 | 20,061 | [914, 973] normal | 16.8% | yes |
-| `t5a->t5b PACKING DELAY (--mtu)` | 20,868 | 21,505 | 1,283,852 | [19959, 24239] runs | 19.8% | **no** |
-| `t5b->t6' loopback UDP` | 20,868 | 21,960 | 159,350 | [21329, 22478] normal | 16.7% | yes |
-| `t6'->t6  drain, sequence, parse, apply` | 20,868 | 3,200 | 15,139 | [3159, 3237] normal | 7.2% | yes |
+| hop | n | p50 ns | p99 ns | p99.9 ns | interval | run spread | pools |
+|---|---:|---:|---:|---:|---|---:|:--:|
+| `tA->t5a  aggressor walk and match` | 20,868 | 945 | 20,061 | 43,471 | [914, 973] normal | 16.8% | yes |
+| `t5a->t5b PACKING DELAY (--mtu)` | 20,868 | 21,505 | 1,283,852 | — | [19959, 24239] runs | 19.8% | **no** |
+| `t5b->t6' loopback UDP` | 20,868 | 21,960 | 159,350 | 177,730 | [21329, 22478] normal | 16.7% | yes |
+| `t6'->t6  drain, sequence, parse, apply` | 20,868 | 3,200 | 15,139 | 23,731 | [3159, 3237] normal | 7.2% | yes |
 
 **The packing delay dominates at 21,505 ns**, an order of magnitude above the aggressor walk that produces the fill (945 ns). It is the time a fill's ITCH `'E'` waits for the feed behind it to fill the datagram — a function of `--mtu`, not a property of the exchange. The plan folds this into "match + ITCH publish", where it would have been a hop nobody could explain.
 
@@ -103,13 +103,17 @@ One consequence worth stating plainly: because delivery happens inside `write()`
 | cross-core offset | not distinguishable from zero, bounded at 53.6 ns |
 | gap-overlap census | present in every run: True |
 
-Every chain-A `p99.9` over all chains **equals** its gap-free value exactly, so the tail is the code and not the scheduler. On this many samples that is a statement the census could have contradicted.
+Every chain-A `p99.9` over **all** chains equals its gap-free value exactly — 8 hops, to the nanosecond — so the tail is the code and not the scheduler. On this many samples that is a statement the census could have contradicted and did not.
+
+(Chain B's gap-free figure is *n too small*: the census brackets chain A's headline hop, so it has nothing to say about a fill's path. That is a limit of the instrument, not a clean result.)
 
 ## What this does not establish
 
 **The run is marked not-quotable in its own artifact**, for reasons recorded rather than argued away:
 
 - the repeats are not one experiment (see pooled)
+
+**`p99.9` is unavailable for those two hops.** Pooling a tail across runs that are not one experiment is exactly as wrong as pooling their median, so the artifact records the absence and its reason rather than a number that would sit in the table looking like the others.
 
 2 of 13 hops fail to pool: `t1'->t2  decision`, `t5a->t5b PACKING DELAY (--mtu)`. `t1'→t2` has a median of 251 ns and a run-to-run spread of 159, so the effect is real but small in absolute terms; the headline and both transport bounds pool.
 

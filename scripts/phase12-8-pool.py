@@ -273,16 +273,40 @@ def main():
         print("  chains that stopped running during the headline hop: %d of %d (%.2f%%)"
               % (tagged, joined, 100.0 * tagged / max(1, joined)))
         print("  %-34s %9s %11s %11s" % ("hop", "n", "p99.9 all", "p99.9 gap-free"))
+
+        def p999(vals):
+            """None rather than a number when n cannot resolve the percentile.
+
+            p99.9 of n samples is the (n/1000)th largest; below ~10,000 that is
+            a handful of observations wearing a percentile's name. Returning
+            None puts the absence in the artifact instead of a stdout string a
+            document would have to parse."""
+            if len(vals) < 10 or (len(vals) - int(0.999 * len(vals))) < 10:
+                return None
+            return pct(vals, 99.9)
+
         for name in hop_names:
             if name in not_poolable:
+                # Pooling the tail of a mixture is exactly as wrong as pooling
+                # its median. Recorded as unavailable, with the reason, rather
+                # than quietly omitted.
+                out.setdefault(name, {}).setdefault("pooled", {}).update({
+                    "p999_all": None, "p999_gap_free": None,
+                    "p999_unavailable_because": "the runs are not one experiment",
+                })
                 continue
             allv = sorted(v for r in runs for v in r["hops"][name]["vals"])
             cln = sorted(v for r in runs for v in r["hops"][name]["clean"])
-            def cell(vals):
-                if len(vals) < 10 or (len(vals) - int(0.999 * len(vals))) < 10:
-                    return "n too small"
-                return pct(vals, 99.9)
-            print("  %-34s %9d %11s %11s" % (name, len(allv), cell(allv), cell(cln)))
+            a999, c999 = p999(allv), p999(cln)
+            out.setdefault(name, {}).setdefault("pooled", {}).update({
+                "p999_all": a999, "p999_gap_free": c999,
+                "p999_unavailable_because": (None if a999 is not None else
+                                             "n too small to resolve p99.9"),
+            })
+            print("  %-34s %9d %11s %11s"
+                  % (name, len(allv),
+                     a999 if a999 is not None else "n too small",
+                     c999 if c999 is not None else "n too small"))
         print()
         print("  Where the two differ, the difference is the scheduler and not the")
         print("  code. n too small means exactly that: p99.9 of n samples is the")
