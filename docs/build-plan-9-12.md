@@ -3458,6 +3458,72 @@ boot, rather than budgeting around it.
 **Done when:** p50 and p99.9 are reported per hop and the hops sum to the total;
 **any hop you cannot explain means you have not finished.**
 
+### 12.8 — what the design review corrected, before any code existed
+
+`docs/phase12-8-design.md` is the design of record. Five sentences above do not
+survive contact with the code, and three further findings would each have
+produced a published number that was wrong. Recorded here because the paragraph
+above is what a reader sees first.
+
+**t₀→t₁ is not phase 10's number.** Phase 10's came from `wire_to_book.cpp`:
+`receiver thread --ring--> book thread`, two pinned threads, a 65,536-slot ring,
+one arrival stamp amortised across a `recvmmsg` batch. `tools/strategy.cpp` has
+**zero** `std::thread` and one `recvfrom` per datagram, applied inline. Different
+program, different queue, different stamp granularity.
+
+**t₄→t₅ is not a latency.** A strategy order fills only when a *historical* order
+at its price, added after it, is executed — so that interval is how long the
+quote sat in the book, i.e. market structure divided by `--multiplier`. At 1× it
+saturates `Histogram`'s `UINT32_MAX` clamp (1.193 s at 3.599 cycles/ns). It is
+reported in replay seconds, on its own axis, never stacked.
+
+**"the hops sum to the total" cannot fail.** Differences of stored stamps
+telescope: Σ(hops) = t_last − t_first unconditionally — with a 10 µs clock
+offset, with a stamp in the wrong function, with an entirely un-instrumented
+region between two stamps. That is a fifth vacuous gate. It is replaced by
+instrumented-coverage, two-instruments-on-one-number, sign gates, and count/set
+identities.
+
+**Percentiles are not additive**, so a stacked bar of per-hop p99.9 depicts a
+round trip that never happened. Replaced by a per-sample decomposition of the
+p50-rank and p99-rank chains, and a tail-conditional mean.
+
+**The headline was anchored to a message with no causal role.** The quote block
+sits *after* the drain and prices off the post-drain book, and `last_quote_at` is
+assigned at quote time — so the trigger message only crossed a counter, and the
+stride is data-dependent rather than `quote_every`. The headline reaction-path
+number is **t₁′→t₃** (post-drain decision to write); t₀→t₃ is reported separately
+and named as including the drain.
+
+**p99.9 at the achievable n is mostly scheduler noise.** Chain A yields ~1,200
+samples per run. On the *bare-metal* box `cpu_jitter` records 30.1 gaps/core/s
+over 10 µs with a recorded-gap p50 of 15,092 ns, so order 1–7 of the twelve
+samples that define p99.9 at n=12,000 are descheduling events wearing a hop's
+label — a property of the machine and the chain length, not of n. The headline
+tail is **p99**; p99.9 is printed only with a gap-overlap census beside it.
+
+**Every chain-A sample is taken at the loop's most favourable instant** — the
+drain runs to `EAGAIN` and the quote block follows it, so the decision and write
+hops are always measured with an empty receive queue. Stated as a condition on
+the numbers, with the drain-burst distribution beside them and a separately
+labelled `--quote-in-handler` arm for comparison.
+
+**Landed ahead of the boot.** The review found four allocations and a memmove
+inside regions 12.8 will time — `send_unsequenced` and `send_sequenced` each did
+`std::vector<uint8_t> frame(len + 3)` per message in both directions, the
+outbound drain did an O(remaining) `erase` per write, and the token used
+`snprintf`. Fixed and measured: frame send **44 → 22** net cycles at p50 (654 →
+424 at p99.9), token **128 → 54** net cycles (1,066 → 236 at p99.9, 4.5×). 25/25
+in ctest, four arms green at 39 checks.
+
+**Blocked on bare metal: every number.** `cpu_jitter` on this box reports ~3,000
+gaps/s over 10 µs and a worst gap of 2.57 ms — *"this machine does NOT hold a
+CPU"* — while **every clock gate the repository owns passes here**: invariant
+TSC, `clocksource=tsc`, cross-core offset bounded under 52 ns against a
+`BOUND_NS` of 1000. A full table would be produced with no gate firing and it
+would be wrong, so `cpu_jitter` is the decisive gate and the clock checks are
+demoted to necessary-but-not-sufficient.
+
 ### 12.9 — Replay-vs-live A/B, and the results document
 
 Identical historical day, identical strategy, twice: (a) through the phase-6/11

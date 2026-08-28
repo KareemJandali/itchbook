@@ -310,6 +310,7 @@ public:
                  const char* password, const char* requested_session,
                  const char* requested_sequence_number, Sink* out, Sink* app_in)
         : cfg_(cfg), out_(out), app_in_(app_in) {
+        tx_scratch_.resize(cfg_.max_frame_bytes + 3);
         send_side_.reset(start_now_ns);
         recv_side_.reset(start_now_ns);
         uint8_t frame[soupbin::kLoginRequestWireBytes];
@@ -390,10 +391,14 @@ public:
         return state_ != before;
     }
 
+    // No allocation: this is the path every order takes. The buffer is sized
+    // once at construction from the same max_frame_bytes the receive side is
+    // already bounded by, so a caller cannot outgrow it without also having
+    // been refused on the way in.
     void send_unsequenced(const uint8_t* msg, size_t len, uint64_t now_ns) {
-        std::vector<uint8_t> frame(len + 3);
-        encode::unsequenced_data(frame.data(), msg, len);
-        out_->on_message(frame.data(), frame.size());
+        if (len + 3 > tx_scratch_.size()) return;   // caller bug; drop, do not grow
+        encode::unsequenced_data(tx_scratch_.data(), msg, len);
+        out_->on_message(tx_scratch_.data(), len + 3);
         send_side_.reset(now_ns);
     }
 
@@ -449,6 +454,7 @@ private:
     detail::FrameBuffer buf_;
     detail::SilenceTracker send_side_;
     detail::SilenceTracker recv_side_;
+    std::vector<uint8_t> tx_scratch_;   // sized once; see send_unsequenced
     State state_ = State::AwaitingLogin;
     char reject_reason_ = 0;
     uint8_t session_id_[10] = {};
@@ -473,6 +479,7 @@ public:
     // session is LoggedIn. Nullable, same as ClientSession's.
     ServerSession(Config cfg, uint64_t start_now_ns, Sink* out, Sink* app_in)
         : cfg_(cfg), out_(out), app_in_(app_in) {
+        tx_scratch_.resize(cfg_.max_frame_bytes + 3);
         send_side_.reset(start_now_ns);
         recv_side_.reset(start_now_ns);
     }
@@ -555,10 +562,12 @@ public:
         state_ = State::Rejected;
     }
 
+    // No allocation -- see ClientSession::send_unsequenced. This one runs on
+    // every Accepted and every Executed, so it is the busier of the two.
     void send_sequenced(const uint8_t* msg, size_t len, uint64_t now_ns) {
-        std::vector<uint8_t> frame(len + 3);
-        encode::sequenced_data(frame.data(), msg, len);
-        out_->on_message(frame.data(), frame.size());
+        if (len + 3 > tx_scratch_.size()) return;   // caller bug; drop, do not grow
+        encode::sequenced_data(tx_scratch_.data(), msg, len);
+        out_->on_message(tx_scratch_.data(), len + 3);
         send_side_.reset(now_ns);
         ++sequence_number_;
     }
@@ -618,6 +627,7 @@ private:
     detail::FrameBuffer buf_;
     detail::SilenceTracker send_side_;
     detail::SilenceTracker recv_side_;
+    std::vector<uint8_t> tx_scratch_;   // sized once; see send_sequenced
     State state_ = State::AwaitingLogin;
     uint64_t sequence_number_ = 1;   // "the sequence number of the first
                                     // sequenced message... is always 1" (2.2.3)

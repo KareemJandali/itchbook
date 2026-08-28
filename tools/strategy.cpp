@@ -103,10 +103,37 @@ struct Opt {
     uint64_t trace = 0;
 };
 
+// A consumed-offset cursor rather than erase(begin(), begin()+w). The erase
+// memmoved everything a partial write did not take, on every drain; this is
+// O(1) amortised and compacts only once the dead prefix is worth moving.
 struct OutQueue : sb::Sink {
     std::vector<uint8_t> buf;
+    size_t sent = 0;
     void on_message(const uint8_t* p, size_t n) override { buf.insert(buf.end(), p, p + n); }
+    const uint8_t* data() const { return buf.data() + sent; }
+    size_t size() const { return buf.size() - sent; }
+    bool empty() const { return sent >= buf.size(); }
+    void consume(size_t n) {
+        sent += n;
+        if (sent == buf.size()) { buf.clear(); sent = 0; }
+        else if (sent >= 4096) { buf.erase(buf.begin(), buf.begin() + sent); sent = 0; }
+    }
+    void reset() { buf.clear(); sent = 0; }
 };
+
+// Fourteen fixed bytes: 'S' then a zero-padded 13-digit counter. snprintf parses
+// a format string and consults a locale to do this, which is most of a hop
+// otherwise measured in tens of nanoseconds. Byte-identical output, which the
+// four-arm gate checks for free -- the token is what the exchange echoes back
+// in Accepted and what 12.7's arms already join on.
+inline void write_token(char* out, uint64_t n) {
+    out[0] = 'S';
+    for (int i = 13; i >= 1; --i) {
+        out[i] = static_cast<char>('0' + (n % 10));
+        n /= 10;
+    }
+    out[14] = '\0';
+}
 
 // Everything this process believes, built only from bytes that arrived on a
 // socket. Nothing here is shared with the exchange -- it is a different address
@@ -326,6 +353,7 @@ int main(int argc, char** argv) {
                 opt.symbol.size() > 8 ? 8 : opt.symbol.size());
     itchbook::mold::Sequencer<FeedHandler> seq;
     OutQueue out;
+    out.buf.reserve(1 << 16);
 
     uint64_t ouch_executed_received = 0, ouch_executed_shares = 0;
     uint64_t datagrams = 0, orders_sent = 0, accepted = 0, rejected = 0, canceled = 0;
@@ -484,7 +512,7 @@ int main(int argc, char** argv) {
             if (px > 0) {
                 last_quote_at = belief.applied;
                 char tok[15];
-                std::snprintf(tok, sizeof(tok), "S%013" PRIu64, next_token++);
+                write_token(tok, next_token++);
                 uint8_t msg[ouch::kEnterOrderLen];
                 const size_t mn = ouch::encode::enter_order(
                     msg, tok, 'B', opt.quote_shares, opt.symbol.c_str(), px, 0,
@@ -499,14 +527,14 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (!out.buf.empty()) {
-            const ssize_t w = ::write(tcp, out.buf.data(), out.buf.size());
-            if (w > 0) out.buf.erase(out.buf.begin(), out.buf.begin() + w);
+        if (!out.empty()) {
+            const ssize_t w = ::write(tcp, out.data(), out.size());
+            if (w > 0) out.consume(static_cast<size_t>(w));
             else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
                      errno != EINTR) {
                 // The exchange has gone. Stop quoting and let the run finish
                 // reporting rather than spinning on a broken pipe.
-                out.buf.clear();
+                out.reset();
                 exchange_gone = true;
             }
         }
@@ -521,7 +549,7 @@ int main(int argc, char** argv) {
                 // out a 60-second timeout on every single run.
                 client.send_logout(wall);
             }
-            if (wall - ended_at > 500'000'000ULL && out.buf.empty()) break;
+            if (wall - ended_at > 500'000'000ULL && out.empty()) break;
         }
         if (exchange_gone && seq.ended()) break;
         if (wall - wall_start > 180ULL * 1'000'000'000ULL) break;
