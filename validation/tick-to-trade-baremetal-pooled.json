@@ -5,7 +5,8 @@
   "alpha": 0.05,
   "census_in_every_run": true,
   "not_poolable": [
-    "t1'->t2  decision"
+    "t1'->t2  decision",
+    "t5a->t5b PACKING DELAY (--mtu)"
   ],
   "hops": {
     "t0->t1   arrival to applied": {
@@ -204,7 +205,7 @@
         "interval_is": "order-statistic CI"
       }
     },
-    "t3->t3'  loopback TCP": {
+    "t3->t3'  transport, LOWER bound": {
       "runs": 10,
       "per_run_medians_in_run_order": [
         1687,
@@ -232,6 +233,34 @@
         "interval_is": "order-statistic CI"
       }
     },
+    "t3pre->t3' transport, UPPER bound": {
+      "runs": 10,
+      "per_run_medians_in_run_order": [
+        9795,
+        9875,
+        9872,
+        9856,
+        9783,
+        9881,
+        9761,
+        9888,
+        9895,
+        9717
+      ],
+      "median_of_medians": 9872,
+      "spread_of_medians": 178,
+      "spread_pct_of_median": 1.8,
+      "monotone": null,
+      "run_effect_p": 0.9715142428785607,
+      "poolable": true,
+      "pooled": {
+        "n": 12000,
+        "p50": 9837,
+        "p99": 62377,
+        "interval": "[9763, 9894] normal",
+        "interval_is": "order-statistic CI"
+      }
+    },
     "t5a->t5b PACKING DELAY (--mtu)": {
       "runs": 10,
       "per_run_medians_in_run_order": [
@@ -250,14 +279,14 @@
       "spread_of_medians": 2542,
       "spread_pct_of_median": 11.7,
       "monotone": null,
-      "run_effect_p": 0.05247376311844078,
-      "poolable": true,
+      "run_effect_p": 0.03948025987006497,
+      "poolable": false,
       "pooled": {
         "n": 20841,
         "p50": 21543,
         "p99": 1296067,
-        "interval": "[21134, 21897] normal",
-        "interval_is": "order-statistic CI"
+        "interval": "[20039, 22581] runs",
+        "interval_is": "per-run range"
       }
     },
     "t5b->t6' loopback UDP": {
@@ -278,7 +307,7 @@
       "spread_of_medians": 3714,
       "spread_pct_of_median": 17.16,
       "monotone": null,
-      "run_effect_p": 0.053973013493253376,
+      "run_effect_p": 0.05147426286856572,
       "poolable": true,
       "pooled": {
         "n": 20841,
@@ -306,7 +335,7 @@
       "spread_of_medians": 203,
       "spread_pct_of_median": 6.14,
       "monotone": null,
-      "run_effect_p": 0.5082458770614693,
+      "run_effect_p": 0.5002498750624688,
       "poolable": true,
       "pooled": {
         "n": 20841,
@@ -334,7 +363,7 @@
       "spread_of_medians": 130,
       "spread_pct_of_median": 13.49,
       "monotone": null,
-      "run_effect_p": 0.6091954022988506,
+      "run_effect_p": 0.6231884057971014,
       "poolable": true,
       "pooled": {
         "n": 20841,

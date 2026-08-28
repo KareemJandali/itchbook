@@ -264,6 +264,16 @@ doc = {
 dest = os.path.join(out, "tick-to-trade-baremetal.json")
 json.dump(doc, open(dest, "w"), indent=2)
 print("  wrote %s" % dest)
+
+# The pooling on its own, as well as embedded above. It was committed once by
+# hand and then nothing regenerated it, so it still named a hop -- "t3->t3'
+# loopback TCP" -- that the report had stopped producing, and carried a point
+# estimate for a quantity now known to be a bracket. An artifact nothing writes
+# is an artifact that goes quietly stale, so the ingest writes it.
+if pooled is not None:
+    pdest = os.path.join(out, "tick-to-trade-baremetal-pooled.json")
+    json.dump(pooled, open(pdest, "w"), indent=2)
+    print("  wrote %s" % pdest)
 print("  quotable: %s" % quotable)
 for r in reasons:
     print("    - %s" % r)
