@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" width="720" height="380" role="img" aria-label="Tail-conditional mean of the tick-to-trade headline">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .k1 { fill: none; stroke: #2a78d6; stroke-width: 2; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #d59200; stroke: #d59200; }
+    .k1 { fill: none; stroke: #3987e5; stroke-width: 2; }
+  }
+  text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+         Helvetica, Arial, sans-serif; }
+</style>
+<rect class="surface" x="0" y="0" width="720" height="380"/>
+<text class="ink" x="20" y="30" font-size="16" font-weight="600">How far past the threshold the slow orders land</text>
+<text class="muted" x="20" y="50" font-size="12">Tail-conditional mean E[X | X &#8805; q] of the headline t1'&#8594;t3. A percentile says where the boundary is, not what is beyond it.</text>
+<line class="grid" x1="90" y1="300.0" x2="680" y2="300.0"/>
+<text class="muted" x="82" y="303.0" font-size="10" text-anchor="end">0</text>
+<line class="grid" x1="90" y1="245.0" x2="680" y2="245.0"/>
+<text class="muted" x="82" y="248.0" font-size="10" text-anchor="end">10,253</text>
+<line class="grid" x1="90" y1="190.0" x2="680" y2="190.0"/>
+<text class="muted" x="82" y="193.0" font-size="10" text-anchor="end">20,506</text>
+<line class="grid" x1="90" y1="135.0" x2="680" y2="135.0"/>
+<text class="muted" x="82" y="138.0" font-size="10" text-anchor="end">30,759</text>
+<line class="grid" x1="90" y1="80.0" x2="680" y2="80.0"/>
+<text class="muted" x="82" y="83.0" font-size="10" text-anchor="end">41,013</text>
+<text class="muted" x="82" y="68" font-size="10" text-anchor="end">ns</text>
+<line class="axis" x1="90" y1="300" x2="680" y2="300"/>
+<polyline class="k1" points="90.0,238.9 237.5,207.5 385.0,177.2 532.5,151.6 680.0,96.3"/>
+<circle class="s1" cx="90.0" cy="238.9" r="4"/>
+<text class="ink" x="90.0" y="226.9" font-size="11" text-anchor="middle">11,385</text>
+<text class="muted" x="90.0" y="318" font-size="11" text-anchor="middle">all</text>
+<text class="muted" x="90.0" y="334" font-size="10" text-anchor="middle">&#8805; 1,833 ns</text>
+<text class="muted" x="90.0" y="350" font-size="10" text-anchor="middle">n=12,000</text>
+<circle class="s1" cx="237.5" cy="207.5" r="4"/>
+<text class="ink" x="237.5" y="195.5" font-size="11" text-anchor="middle">17,243</text>
+<text class="muted" x="237.5" y="318" font-size="11" text-anchor="middle">p50</text>
+<text class="muted" x="237.5" y="334" font-size="10" text-anchor="middle">&#8805; 8,168 ns</text>
+<text class="muted" x="237.5" y="350" font-size="10" text-anchor="middle">n=6,001</text>
+<circle class="s1" cx="385.0" cy="177.2" r="4"/>
+<text class="ink" x="385.0" y="165.2" font-size="11" text-anchor="middle">22,899</text>
+<text class="muted" x="385.0" y="318" font-size="11" text-anchor="middle">p90</text>
+<text class="muted" x="385.0" y="334" font-size="10" text-anchor="middle">&#8805; 21,806 ns</text>
+<text class="muted" x="385.0" y="350" font-size="10" text-anchor="middle">n=1,200</text>
+<circle class="s1" cx="532.5" cy="151.6" r="4"/>
+<text class="ink" x="532.5" y="139.6" font-size="11" text-anchor="middle">27,659</text>
+<text class="muted" x="532.5" y="318" font-size="11" text-anchor="middle">p99</text>
+<text class="muted" x="532.5" y="334" font-size="10" text-anchor="middle">&#8805; 24,067 ns</text>
+<text class="muted" x="532.5" y="350" font-size="10" text-anchor="middle">n=120</text>
+<circle class="s1" cx="680.0" cy="96.3" r="4"/>
+<text class="ink" x="680.0" y="84.3" font-size="11" text-anchor="middle">37,975</text>
+<text class="muted" x="680.0" y="318" font-size="11" text-anchor="middle">p99.9</text>
+<text class="muted" x="680.0" y="334" font-size="10" text-anchor="middle">&#8805; 31,662 ns</text>
+<text class="muted" x="680.0" y="350" font-size="10" text-anchor="middle">n=20</text>
+<text class="muted" x="385" y="374" font-size="11" text-anchor="middle">threshold q</text>
+</svg>

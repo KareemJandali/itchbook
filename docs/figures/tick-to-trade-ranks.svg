@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 340" width="720" height="340" role="img" aria-label="One order at the p50 rank and one at the p99 rank, decomposed by hop">
+<style>
+  .surface { fill: #fcfcfb; }
+  .ink     { fill: #0b0b0b; }
+  .muted   { fill: #52514e; }
+  .on-fill { fill: #fcfcfb; }
+  .grid    { stroke: #d8d7d2; stroke-width: 1; }
+  .axis    { stroke: #52514e; stroke-width: 1; }
+  .s1 { fill: #2a78d6; stroke: #2a78d6; }
+  .s2 { fill: #eb6834; stroke: #eb6834; }
+  .s3 { fill: #1baf7a; stroke: #1baf7a; }
+  .s4 { fill: #eda100; stroke: #eda100; }
+  .k1 { fill: none; stroke: #2a78d6; stroke-width: 2; }
+  @media (prefers-color-scheme: dark) {
+    .surface { fill: #1a1a19; }
+    .ink     { fill: #ffffff; }
+    .muted   { fill: #c3c2b7; }
+    .on-fill { fill: #1a1a19; }
+    .grid    { stroke: #3a3a38; }
+    .axis    { stroke: #c3c2b7; }
+    .s1 { fill: #3987e5; stroke: #3987e5; }
+    .s2 { fill: #d95926; stroke: #d95926; }
+    .s3 { fill: #199e70; stroke: #199e70; }
+    .s4 { fill: #d59200; stroke: #d59200; }
+    .k1 { fill: none; stroke: #3987e5; stroke-width: 2; }
+  }
+  text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+         Helvetica, Arial, sans-serif; }
+</style>
+<rect class="surface" x="0" y="0" width="720" height="340"/>
+<text class="ink" x="20" y="30" font-size="16" font-weight="600">Where a slow order loses its time</text>
+<text class="muted" x="20" y="50" font-size="12">One order at the p50 rank and one at the p99 rank, arrival to write. Mean over 10 runs; percentiles do not decompose, single orders do.</text>
+<text class="ink" x="20" y="102" font-size="13" font-weight="600">p50 rank</text>
+<text class="muted" x="20" y="120" font-size="11">17,283 ns</text>
+<rect class="s1" x="150.0" y="78" width="36.6" height="62"/>
+<rect class="s2" x="186.6" y="78" width="83.5" height="62"/>
+<text class="on-fill" x="228.3" y="113" font-size="11" text-anchor="middle">6,340</text>
+<rect class="s3" x="270.0" y="78" width="1.7" height="62"/>
+<rect class="s4" x="271.7" y="78" width="105.9" height="62"/>
+<text class="on-fill" x="324.6" y="113" font-size="11" text-anchor="middle">8,039</text>
+<line class="axis" x1="270.0" y1="70" x2="270.0" y2="156" stroke-dasharray="3 3"/>
+<text class="muted" x="186.0" y="168" font-size="10">&#8592; drain &#183; headline t1'&#8594;t3 &#8594;</text>
+<text class="ink" x="20" y="238" font-size="13" font-weight="600">p99 rank</text>
+<text class="muted" x="20" y="256" font-size="11">38,733 ns</text>
+<rect class="s1" x="150.0" y="214" width="76.7" height="62"/>
+<text class="on-fill" x="188.3" y="249" font-size="11" text-anchor="middle">5,825</text>
+<rect class="s2" x="226.7" y="214" width="116.4" height="62"/>
+<text class="on-fill" x="284.9" y="249" font-size="11" text-anchor="middle">8,842</text>
+<rect class="s3" x="343.1" y="214" width="5.5" height="62"/>
+<rect class="s4" x="348.6" y="214" width="311.4" height="62"/>
+<text class="on-fill" x="504.3" y="249" font-size="11" text-anchor="middle">23,649</text>
+<line class="axis" x1="343.1" y1="206" x2="343.1" y2="292" stroke-dasharray="3 3"/>
+<text class="muted" x="259.1" y="304" font-size="10">&#8592; drain &#183; headline t1'&#8594;t3 &#8594;</text>
+<rect class="s1" x="150" y="314" width="11" height="11"/>
+<text class="muted" x="166" y="324" font-size="11">arrival to applied</text>
+<rect class="s2" x="280" y="314" width="11" height="11"/>
+<text class="muted" x="296" y="324" font-size="11">post-trigger drain</text>
+<rect class="s3" x="410" y="314" width="11" height="11"/>
+<text class="muted" x="426" y="324" font-size="11">decision</text>
+<rect class="s4" x="540" y="314" width="11" height="11"/>
+<text class="muted" x="556" y="324" font-size="11">encode, frame, write</text>
+</svg>

@@ -179,7 +179,7 @@ git ls-files -z | while IFS= read -r -d '' f; do
 done
 (
     cd "$tracked" || exit 1
-    for s in census-report phase9-report phase10-report phase10-8-report; do
+    for s in census-report phase9-report phase10-report phase10-8-report phase12-8-results phase12-8-figures; do
         if ! python3 "scripts/$s.py" --check; then
             echo "  FAILED: $s --check against tracked files only"
             echo "  (it may pass in your working tree off an untracked artifact)"

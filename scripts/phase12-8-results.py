@@ -3,8 +3,13 @@
 
 Generated, never typed, like every other results table in phases 9-12. If a
 number in the document is not in an artifact, it does not go in the document;
-and `--check` re-generates and diffs, so a stale table is a failure rather than
-something a reader has to notice.
+and `--check` re-generates and diffs, so a stale table is a failure in
+verify-local rather than something a reader has to notice.
+
+This is deliberately not a formatter over a summary someone wrote by hand. The
+first version of the phase 12.8 write-up quoted a headline, a governor and a
+census from a live session's transcript. A transcript cannot be re-checked and
+a number in it cannot be traced back to the samples that produced it.
 """
 import argparse
 import json
@@ -13,23 +18,21 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART = os.path.join(ROOT, "validation", "tick-to-trade-baremetal.json")
-POOL = os.path.join(ROOT, "validation", "tick-to-trade-baremetal-pooled.json")
 DOC = os.path.join(ROOT, "docs", "phase12-8-results.md")
 
-# Which hops belong to which chain, and what each one actually is.
 CHAIN_A = ["t0->t1   arrival to applied",
            "t1->t1'  post-trigger drain",
            "t1'->t2  decision",
            "t2->t3   encode, frame, write",
-           "t3->t3'  loopback TCP",
            "t3'->t4  parse, validate, submit"]
+BRACKET = ["t3->t3'  transport, LOWER bound",
+           "t3pre->t3' transport, UPPER bound"]
 CHAIN_B = ["tA->t5a  aggressor walk and match",
            "t5a->t5b PACKING DELAY (--mtu)",
            "t5b->t6' loopback UDP",
            "t6'->t6  drain, sequence, parse, apply"]
 HEADLINE = "t1'->t3  HEADLINE reaction path"
 ARRIVAL = "t0->t3   arrival to write (incl. drain)"
-CROSS = {"t3->t3'  loopback TCP", "t5b->t6' loopback UDP"}
 
 
 def fmt(v):
@@ -42,47 +45,80 @@ def fmt(v):
 
 def row(name, h):
     p = h.get("pooled") or {}
-    ci = p.get("interval", "—")
-    star = " ᶜ" if name in CROSS else ""
-    return "| `%s`%s | %s | %s | %s | %s | %s |" % (
-        name.strip(), star, fmt(p.get("n")), fmt(p.get("p50")), fmt(p.get("p99")),
-        ci, ("%.1f%%" % h["spread_pct_of_median"]) if h.get("spread_pct_of_median") else "—")
+    pool = "yes" if h.get("poolable") else "**no**"
+    return "| `%s` | %s | %s | %s | %s | %s | %s |" % (
+        name.strip(), fmt(p.get("n")), fmt(p.get("p50")), fmt(p.get("p99")),
+        p.get("interval", "—"),
+        ("%.1f%%" % h["spread_pct_of_median"]) if h.get("spread_pct_of_median")
+        else "—", pool)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--check", action="store_true",
-                    help="regenerate and fail if the committed document differs")
-    args = ap.parse_args()
+HEAD = "| hop | n | p50 ns | p99 ns | interval | run spread | pools |\n|---|---:|---:|---:|---|---:|:--:|"
 
-    art = json.load(open(ART))
-    pool = json.load(open(POOL))
-    hops = pool["hops"]
+
+def build():
+    art = json.load(open(ART, encoding="utf-8"))
+    hops = art["pooled"]["hops"]
     runs = art.get("runs", 0)
-    head = hops.get(HEADLINE, {})
-    head_p = head.get("pooled", {})
+    head = hops[HEADLINE]
+    hp = head["pooled"]
+    per_run = art.get("per_run", [])
+    others = art.get("other_configurations", {})
+
+    tb = [r.get("transport_bound", {}) for r in per_run]
+    neg = sum(t.get("negatives", 0) for t in tb)
+    viol = sum(t.get("overshoot_violations", 0) for t in tb)
+    orders = sum(r.get("joined", 0) for r in per_run)
+    worst = min([t.get("worst_negative_ns", 0) for t in tb] or [0])
+    d_t3 = sum(t.get("distinct_t3", 0) for t in tb)
+    d_t3p = sum(t.get("distinct_t3p", 0) for t in tb)
+    bound = art["harness_verdict"]["tsc_offset_bound_ns"]
+
+    # figure inputs, averaged over runs exactly as the figures do
+    rank = {}
+    for label in ("p50", "p99"):
+        rows = [r["rank_decomposition"][label] for r in per_run
+                if r.get("rank_decomposition", {}).get(label)]
+        rank[label] = {
+            "headline": sum(x["headline_ns"] for x in rows) // len(rows),
+            "hops": {h: sum(x["hops_ns"].get(h, 0) for x in rows) // len(rows)
+                     for h in ("t0->t1", "t1->t1'", "t1'->t2", "t2->t3")},
+        }
+    tails = {}
+    for r in per_run:
+        for e in r.get("tail_conditional_mean", []):
+            tails.setdefault(e["threshold_pct"], []).append(e)
+
+    def tail_at(q):
+        g = tails[q]
+        return {"threshold_ns": sum(e["threshold_ns"] for e in g) // len(g),
+                "mean_ns": sum(e["mean_ns"] for e in g) // len(g)}
+
+    udp = hops.get("t5b->t6' loopback UDP", {})
+    udp_neg = sum((r["hops"].get("t5b->t6' loopback UDP") or {}).get("negatives", 0)
+                  for r in per_run if "hops" in r)
+    fills = (udp.get("pooled") or {}).get("n")
 
     L = []
     A = L.append
     A("# Phase 12.8 — Tick-to-trade, decomposed. Results.")
     A("")
     A("*Generated by `scripts/phase12-8-results.py` from "
-      "`validation/tick-to-trade-baremetal.json` and its pooled companion. "
-      "Every number here is in an artifact; none is typed.*")
+      "`validation/tick-to-trade-baremetal.json`. Every number here is in that "
+      "artifact; none is typed.*")
     A("")
-    A("Bare metal, MSFT 2019-12-30 replayed at 1000×, %d repeats of 1,200 orders "
-      "each. Two processes, two pinned cores, ITCH over UDP and OUCH over "
-      "SoupBinTCP." % runs)
+    A("Bare metal, MSFT 2019-12-30 replayed at 1000×, %d repeats of 1,200 "
+      "orders each. Two processes, two pinned cores, ITCH over UDP and OUCH "
+      "over SoupBinTCP." % runs)
     A("")
 
     A("## The headline")
     A("")
-    A("**Tick-to-trade, post-drain decision to the write that puts the order on "
-      "the wire — `t1'→t3` — is %s ns at p50** over %s samples, "
-      "95%% CI %s." % (fmt(head_p.get("p50")), fmt(head_p.get("n")),
-                       head_p.get("interval", "—")))
+    A("**`t1'→t3`, post-drain decision to the write that puts the order on the "
+      "wire, is %s ns at p50** over %s samples, 95%% CI %s."
+      % (fmt(hp["p50"]), fmt(hp["n"]), hp.get("interval", "—")))
     A("")
-    A("It moved **%.1f%%** across the %d repeats, and a permutation test cannot "
+    A("It moved **%.1f%%** across the %d repeats and a permutation test cannot "
       "tell the runs apart (p = %.2f). It is entirely strategy-local: five "
       "stamps taken by one thread on one core, carrying no cross-process clock "
       "error at all."
@@ -91,45 +127,140 @@ def main():
     A("**This is not the plan's `t0→t3`, and the difference is not cosmetic.** "
       "The quote block reads the book *after* the drain, so the message that "
       "crosses the quote counter has no causal role in the order it would have "
-      "anchored. `t0→t3` — arrival to write, including the queue drain — is "
-      "%s ns at p50, and the %s ns between them is drain, not reaction."
+      "anchored. `t0→t3` — arrival to write, including the drain — is %s ns at "
+      "p50, and the %s ns between them is drain, not reaction."
       % (fmt(hops[ARRIVAL]["pooled"]["p50"]),
-         fmt(hops[ARRIVAL]["pooled"]["p50"] - head_p["p50"])))
+         fmt(hops[ARRIVAL]["pooled"]["p50"] - hp["p50"])))
     A("")
 
     A("## Chain A — the reaction path")
     A("")
-    A("| hop | n | p50 ns | p99 ns | interval | run spread |")
-    A("|---|---:|---:|---:|---|---:|")
+    A(HEAD)
     for nm in CHAIN_A:
         if nm in hops:
             A(row(nm, hops[nm]))
     A(row(HEADLINE, head))
     A(row(ARRIVAL, hops[ARRIVAL]))
     A("")
-    A("ᶜ = crosses the process boundary; see the caveat below.")
-    A("")
     A("`t2→t3` at %s ns dominates the headline, and it is **the write, not the "
       "encode**: the decision itself (`t1'→t2`) is %s ns. The hop is named for "
-      "what it contains and the encode is a rounding error inside it."
+      "what it contains and the encode is a rounding error inside it. What that "
+      "write actually spends its time on is the subject of the next section."
       % (fmt(hops["t2->t3   encode, frame, write"]["pooled"]["p50"]),
          fmt(hops["t1'->t2  decision"]["pooled"]["p50"])))
     A("")
 
+    A("## Where the tail comes from")
+    A("")
+    A("![One order at the p50 rank and one at the p99 rank, decomposed by hop]"
+      "(figures/tick-to-trade-ranks.svg)")
+    A("")
+    A("Percentiles do not decompose — the p99 of a sum is not the sum of the "
+      "p99s — so this is built from **single orders**: the one sitting at the "
+      "p50 rank of the headline and the one at the p99 rank, averaged over the "
+      "%d runs." % runs)
+    A("")
+    A("| hop | p50-rank order | p99-rank order | ratio |")
+    A("|---|---:|---:|---:|")
+    for h in ("t0->t1", "t1->t1'", "t1'->t2", "t2->t3"):
+        a_, b_ = rank["p50"]["hops"][h], rank["p99"]["hops"][h]
+        A("| `%s` | %s ns | %s ns | %s |"
+          % (h, fmt(a_), fmt(b_), ("%.1f×" % (b_ / a_)) if a_ else "—"))
+    A("| **headline `t1'→t3`** | **%s ns** | **%s ns** | **%.1f×** |"
+      % (fmt(rank["p50"]["headline"]), fmt(rank["p99"]["headline"]),
+         rank["p99"]["headline"] / float(rank["p50"]["headline"])))
+    A("")
+    A("**The tail is the write.** `t2→t3` carries almost all of it while the "
+      "decision stays flat in absolute terms — a slow order is not one that "
+      "thought harder, it is one whose `write()` took longer. The drain "
+      "(`t1→t1'`) moves too, but it sits *before* the headline's start stamp "
+      "and so contributes nothing to `t1'→t3`.")
+    A("")
+    A("![Tail-conditional mean of the headline](figures/tick-to-trade-tail.svg)")
+    A("")
+    A("A percentile says where a boundary is and nothing about what lies past "
+      "it. Conditioned on crossing p99 (%s ns), the mean order takes %s ns; "
+      "conditioned on crossing p99.9 (%s ns) it takes %s ns. The tail keeps "
+      "going after the percentile stops looking."
+      % (fmt(tail_at(99)["threshold_ns"]), fmt(tail_at(99)["mean_ns"]),
+         fmt(tail_at(99.9)["threshold_ns"]), fmt(tail_at(99.9)["mean_ns"])))
+    A("")
+
+    # ---- the part that took the longest to get right -------------------------
+    A("## The transport hop is a bracket, and here is why")
+    A("")
+    A("`t3→t3'` — the strategy's write to the exchange's read — came out "
+      "**negative for %s of %s orders**, worst −%s ns, against a cross-core "
+      "clock offset bounded at %.1f ns. A hop cannot be negative, and the clock "
+      "is %.0f× too small to explain it."
+      % (fmt(neg), fmt(orders), fmt(-worst), bound, -worst / bound))
+    A("")
+    A("It is neither the clock nor the join. Three things were checked and "
+      "ruled out before the fourth was accepted:")
+    A("")
+    A("| candidate | ruled out because |")
+    A("|---|---|")
+    A("| stamp sharing (one syscall covering several orders) | %s distinct "
+      "`t3` and %s distinct `t3'` over %s orders — cleanly 1:1 |"
+      % (fmt(d_t3), fmt(d_t3p), fmt(orders)))
+    A("| a mis-paired join | pairing by token and pairing by TCP-FIFO rank give "
+      "*identical* results, and `ref_seq` agrees with the index for every order |")
+    A("| the clock | the offset is bounded at %.1f ns and the negatives run "
+      "to %s |" % (bound, fmt(-worst)))
+    A("| **stamp placement** | **`t3` is taken *after* `::write()` returns** |")
+    A("")
+    A("Linux delivers loopback synchronously **in the sender's own call "
+      "stack**. The exchange, busy-polling on the other core, becomes runnable "
+      "and stamps `t3'` partway through the strategy's `write()` — before that "
+      "call has returned to stamp `t3`. So `t3` does not mark the send; it "
+      "marks the writer finishing its syscall, which is strictly later.")
+    A("")
+    A("That account makes a prediction that could have failed and did not:")
+    A("")
+    A("- the send lies inside `(t2, t3)`, so **`t2 → t3'` must never be "
+      "negative** — it is positive for all %s orders;" % fmt(orders))
+    A("- the shortfall can never exceed the window the send happened in — "
+      "**%d of %s negatives exceed it**;" % (viol, fmt(neg)))
+    A("- and the UDP side, which stamps `t5b` *before* `::sendto`, should show "
+      "none of this — it has **%d negatives in %s fills**."
+      % (udp_neg, fmt(fills)))
+    A("")
+    A("So the transport is reported as an interval rather than a point. The "
+      "true send instant lies between the two stamps and this harness cannot "
+      "say where:")
+    A("")
+    A(HEAD)
+    for nm in BRACKET:
+        if nm in hops:
+            A(row(nm, hops[nm]))
+    A("")
+    A("**Loopback TCP transport ∈ [%s, %s] ns at p50.** The upper end uses `t2` "
+      "because these traces predate the fix; `include/itchbook/bench/trace.hpp` "
+      "now carries a `t3_pre` stamp taken immediately before the syscall, so "
+      "the next boot brackets it tightly. Narrowing it further would need a "
+      "stamp inside the kernel, which this harness does not have."
+      % (fmt(hops[BRACKET[0]]["pooled"]["p50"]),
+         fmt(hops[BRACKET[1]]["pooled"]["p50"])))
+    A("")
+    A("One consequence worth stating plainly: because delivery happens inside "
+      "`write()`, part of what `t2→t3` charges to the strategy is really the "
+      "kernel handing the packet to the peer. On a real NIC that cost is a "
+      "doorbell write and the split would fall elsewhere.")
+    A("")
+
     A("## Chain B — the fill report")
     A("")
-    A("| hop | n | p50 ns | p99 ns | interval | run spread |")
-    A("|---|---:|---:|---:|---|---:|")
+    A(HEAD)
     for nm in CHAIN_B:
         if nm in hops:
             A(row(nm, hops[nm]))
     A("")
-    A("**The packing delay dominates at %s ns**, an order of magnitude above the "
-      "aggressor walk that produces the fill (%s ns). It is the time a fill's "
-      "ITCH `'E'` waits for the feed behind it to fill the datagram — a function "
-      "of `--mtu`, not a property of the exchange. The plan folds this into "
-      "\"match + ITCH publish\", where it would have been a hop nobody could "
-      "explain."
+    A("**The packing delay dominates at %s ns**, an order of magnitude above "
+      "the aggressor walk that produces the fill (%s ns). It is the time a "
+      "fill's ITCH `'E'` waits for the feed behind it to fill the datagram — a "
+      "function of `--mtu`, not a property of the exchange. The plan folds this "
+      "into \"match + ITCH publish\", where it would have been a hop nobody "
+      "could explain."
       % (fmt(hops["t5a->t5b PACKING DELAY (--mtu)"]["pooled"]["p50"]),
          fmt(hops["tA->t5a  aggressor walk and match"]["pooled"]["p50"])))
     A("")
@@ -139,30 +270,33 @@ def main():
     A("| | |")
     A("|---|---|")
     A("| governor | `performance`, set by the harness and **verified** after |")
-    A("| scheduler | *holds a CPU*: **no gap over 100 µs** on either pinned "
-      "core across 20 s, worst 31 µs |")
+    A("| scheduler | *holds a CPU*: no gap over 100 µs on either pinned core |")
     A("| clocksource | `tsc` at start and end, unchanged |")
-    A("| cross-core offset | **not distinguishable from zero**, bounded at 48 ns |")
-    A("| gap-overlap census | **0 of 12,000** chains stopped running mid-hop |")
+    A("| cross-core offset | not distinguishable from zero, bounded at %.1f ns |"
+      % art["harness_verdict"]["tsc_offset_bound_ns"])
+    A("| gap-overlap census | present in every run: %s |"
+      % art["pooled"]["census_in_every_run"])
     A("")
-    A("The census matters more than it looks. Every chain-A `p99.9` over all "
-      "chains **equals** its gap-free value exactly — so the tail is the code, "
-      "not the scheduler. On this many samples that is a statement the census "
-      "could have contradicted and did not.")
+    A("Every chain-A `p99.9` over all chains **equals** its gap-free value "
+      "exactly, so the tail is the code and not the scheduler. On this many "
+      "samples that is a statement the census could have contradicted.")
     A("")
 
     A("## What this does not establish")
     A("")
-    A("**The split between the two cross-process hops.** `t3→t3'` sits at %s ns "
-      "at p50 and yet **321 of 1,200 samples in a single run come out "
-      "negative**, worst −1,831 ns, against a clock offset bounded at 55 ns. A "
-      "hop cannot be negative and the clock cannot explain it, so something "
-      "about where those two stamps sit is wrong. It is a distribution wider "
-      "than its own mean, not an outlier tail. **Both cross-process hops are "
-      "therefore reported and not interpreted**, and their sum — which is "
-      "offset-free by construction — is the only cross-process quantity worth "
-      "quoting until this is understood."
-      % fmt(hops["t3->t3'  loopback TCP"]["pooled"]["p50"]))
+    A("**The run is marked not-quotable in its own artifact**, for reasons "
+      "recorded rather than argued away:")
+    A("")
+    for r in art.get("not_quotable_because", []):
+        A("- %s" % r)
+    A("")
+    A("%d of %d hops fail to pool: %s. `t1'→t2` has a median of %s ns and a "
+      "run-to-run spread of %s, so the effect is real but small in absolute "
+      "terms; the headline and both transport bounds pool."
+      % (len(art["pooled"]["not_poolable"]), len(hops),
+         ", ".join("`%s`" % x.strip() for x in art["pooled"]["not_poolable"]),
+         fmt(hops["t1'->t2  decision"]["pooled"]["p50"]),
+         fmt(hops["t1'->t2  decision"]["spread_of_medians"])))
     A("")
     A("**A prediction the design made, falsified.** §7.2 said the reaction path "
       "should be flat across `--multiplier` while only the resting interval "
@@ -171,53 +305,58 @@ def main():
     A("")
     A("| `--multiplier` | headline `t1'→t3` p50 |")
     A("|---:|---:|")
-    A("| 500 | 19,293 ns |")
-    A("| 1000 | 8,169 ns |")
-    A("| 2000 | 5,855 ns |")
+    for label, mult in (("w-m500-run1", 500), (None, 1000), ("w-m2000-run1", 2000)):
+        v = hp["p50"] if label is None else others.get(label, {}).get(
+            "headline_t1p_t3_p50")
+        A("| %d | %s ns |" % (mult, fmt(v)))
     A("")
-    A("Monotone, and by 3.3× across a 4× range — in the direction where a "
-      "*slower* feed gives a *slower* reaction. The plausible mechanism is cache "
-      "and branch-predictor warmth: at 2000× the loop is hot and everything it "
-      "touches is resident; at 500× it idles between quotes and pays to fault "
-      "it all back in. That makes the headline a function of offered load and "
-      "not a constant of the code, which is worth knowing and was not the "
-      "prediction.")
-    A("")
-    A("**And the run is marked not-quotable in its own artifact**, for two "
-      "reasons that are recorded rather than argued away: the kit was built "
-      "from a dirty working tree, so the binaries cannot be tied to a commit; "
-      "and the pooling refuses on one hop of twelve — `t1'→t2`, whose median is "
-      "%s ns and whose run-to-run spread is %s ns. Eleven of twelve hops pool, "
-      "including the headline."
-      % (fmt(hops["t1'->t2  decision"]["pooled"]["p50"]),
-         fmt(hops["t1'->t2  decision"]["spread_of_medians"])))
-    A("")
-    A("## Provenance")
-    A("")
-    A("`validation/tick-to-trade-baremetal.json` carries the per-run reports and "
-      "the verdict with every input it was computed from. Every number above was "
-      "**re-derived from the raw traces** by `scripts/phase12-8-report.py` after "
-      "the boot, not read from the live session's transcript: a transcript "
-      "cannot be re-checked and a number in it cannot be traced to the samples "
-      "that produced it. The first boot, which ran at the powersave governor and "
-      "is not usable, is kept as "
-      "`validation/tick-to-trade-2026-08-28-powersave.json`.")
+    A("Monotone, and in the direction where a *slower* feed gives a *slower* "
+      "reaction. The plausible mechanism is cache and branch-predictor warmth: "
+      "at 2000× the loop is hot and everything it touches is resident; at 500× "
+      "it idles between quotes and pays to fault it all back in. That makes the "
+      "headline a function of offered load and not a constant of the code, "
+      "which is worth knowing and was not the prediction.")
     A("")
 
-    text = "\n".join(L) + "\n"
+    A("## Provenance")
+    A("")
+    A("`validation/tick-to-trade-baremetal.json` carries the per-run reports, "
+      "the pooling, and the harness's own on-machine verdict. Every number "
+      "above was **re-derived from the raw traces** by "
+      "`scripts/phase12-8-report.py` after the boot.")
+    A("")
+    A("The harness verdict inside that artifact is the one written **on the "
+      "machine, at boot time**, and it predates the explanation above: its "
+      "per-run notes still read the negative transport hop as two processes "
+      "being descheduled relative to each other. That reading was wrong and is "
+      "kept rather than edited, because an artifact that is quietly corrected "
+      "after the fact is not evidence of anything.")
+    A("")
+    A("The first boot, which ran at the powersave governor and is not usable, "
+      "is kept as `validation/tick-to-trade-2026-08-28-powersave.json`.")
+    A("")
+    return "\n".join(L) + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true",
+                    help="regenerate and fail if the committed document differs")
+    args = ap.parse_args()
+    text = build()
     if args.check:
         if not os.path.exists(DOC):
             print("phase12-8-results: %s does not exist" % DOC)
             return 1
-        cur = open(DOC, encoding="utf-8").read()
-        if cur != text:
+        if open(DOC, encoding="utf-8").read() != text:
             print("phase12-8-results: the committed document does not match the "
                   "artifacts; re-run scripts/phase12-8-results.py")
             return 1
         print("phase12-8-results.md matches its artifacts")
         return 0
-    open(DOC, "w", encoding="utf-8").write(text)
-    print("wrote %s (%d lines)" % (DOC, len(L)))
+    with open(DOC, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    print("wrote %s" % DOC)
     return 0
 
 

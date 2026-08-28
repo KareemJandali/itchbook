@@ -52,7 +52,19 @@ struct ChainA {
     uint64_t t1 = 0;        // that datagram's trigger message applied
     uint64_t t1p = 0;       // quote block entered, i.e. the drain has finished
     uint64_t t2 = 0;        // price decided and non-zero
+    uint64_t t3_pre = 0;    // immediately BEFORE that write's ::write() call
     uint64_t t3 = 0;        // the write that carried this order's frame
+    // t3 is stamped AFTER ::write() returns, and Linux delivers loopback
+    // synchronously in the sender's own call stack: a busy-polling reader on
+    // the other core can observe the bytes and stamp its own receipt before
+    // write() has returned here. t3 therefore OVERSHOOTS the instant the bytes
+    // became visible, and t3 -> t3' came out negative for 27.2% of 12,000
+    // orders on bare metal -- never by more than (t3 - t2), which is the tell.
+    // The true send instant lies in (t3_pre, t3); neither endpoint is it. The
+    // transport hop is an INTERVAL [t3' - t3, t3' - t3_pre], and pinning it
+    // tighter needs a stamp inside the kernel, which this harness does not
+    // have. The UDP side is stamped before ::sendto and has no such problem:
+    // 0 negatives in 20,841 fills.
     uint64_t iter_start = 0;   // top of the poll iteration that produced it
     uint64_t iter_end = 0;     // bottom of the same iteration
     uint64_t tsc0 = 0;      // paired rdtscp at t0, second instrument
@@ -189,7 +201,7 @@ struct StampCounts {
 // the reader is a Python script and a silent layout change would be read as
 // plausible numbers.
 inline constexpr uint32_t kTraceMagic = 0x38324254;   // "TB28"
-inline constexpr uint32_t kTraceVersion = 1;
+inline constexpr uint32_t kTraceVersion = 2;   // 2: ChainA gained t3_pre
 
 template <typename T>
 inline bool write_section(std::FILE* f, const char tag[4], const Arena<T>& a,

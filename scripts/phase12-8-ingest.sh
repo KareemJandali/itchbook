@@ -219,9 +219,31 @@ if pool_rc == 3:
     reasons.append("the repeats are not one experiment (see pooled)")
 quotable = quotable and not harness_reasons
 
+# The configurations that were MEANT to differ, kept out of the pooling and
+# recorded here so a generated document can cite them. The multiplier sweep is
+# the design's own falsifiable prediction (the reaction path should not move
+# with the pacing knob), and a prediction whose numbers live only in stdout is
+# a prediction nobody can check.
+others = {}
+for p in sorted(glob.glob(os.path.join(work, "other-*.json"))):
+    try:
+        d = json.load(open(p))
+    except Exception:
+        continue
+    label = os.path.basename(p)[len("other-"):-len(".json")]
+    hops = d.get("hops") or {}
+    pack = [v for k, v in hops.items() if "PACKING" in k]
+    others[label] = {
+        "joined": d.get("joined"),
+        "headline_t1p_t3_p50": (d.get("headline_t1p_t3") or {}).get("p50"),
+        "packing_p50": (pack[0].get("p50") if pack else None),
+        "quotable": d.get("quotable"),
+    }
+
 doc = {
     "what": "phase 12.8 tick-to-trade, decomposed - bare metal",
     "runs": len(runs),
+    "other_configurations": others,
     "quotable": quotable,
     "not_quotable_because": reasons,
     "pooled": pooled,

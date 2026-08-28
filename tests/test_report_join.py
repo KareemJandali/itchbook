@@ -46,8 +46,8 @@ ROOT = os.path.dirname(HERE)
 REPORT = os.path.join(ROOT, "scripts", "phase12-8-report.py")
 
 MAGIC = 0x38324254
-VERSION = 1
-CHAINA = "<QQQQQQQQQQQIIIIHHBBBB"
+VERSION = 2
+CHAINA = "<QQQQQQQQQQQQIIIIHHBBBB"
 FILLREC = "<QQIIIBBH"
 ACCEPTEX = "<QQIB3x"
 EMITEX = "<QQQII"
@@ -86,11 +86,16 @@ def write_trace(path, sections):
             f.write(section(tag, fmt, rows))
 
 
-def chain(t0=1000, t1=2000, t1p=3000, t2=4000, t3=5000,
+def chain(t0=1000, t1=2000, t1p=3000, t2=4000, t3=5000, t3_pre=None,
           iter_start=900, iter_end=5100, tsc0=0, tsc3=0,
           cpu_t1p=0, cpu_t3=0, ref=0, stride=200, dg=1, msgs=10,
           cpu0=0xFFFF, cpu3=0xFFFF, resp=ord('A'), have=HAVE_ALL, term=1):
-    return (t0, t1, t1p, t2, t3, iter_start, iter_end, tsc0, tsc3,
+    # t3_pre is the stamp taken immediately BEFORE ::write(); the send happens
+    # between it and t3. Defaulting it just under t3 keeps every existing
+    # fixture's arithmetic while giving the bracket a sane width.
+    if t3_pre is None:
+        t3_pre = t3 - 200
+    return (t0, t1, t1p, t2, t3_pre, t3, iter_start, iter_end, tsc0, tsc3,
             cpu_t1p, cpu_t3, ref, stride, dg, msgs, cpu0, cpu3, resp, have, term, 0)
 
 
@@ -131,7 +136,7 @@ def run_report(st_rows, ex_rows, fills=None, emits=None, pkts=None,
     write_trace(stp, st_sections)
     write_trace(exp, ex_sections)
 
-    real = sum(1 for r in st_rows if r[18] != 0)
+    real = sum(1 for r in st_rows if r[19] != 0)   # `have`, v2 offset
     sj, ej = os.path.join(d, "st.json"), os.path.join(d, "ex.json")
     with open(sj, "w") as f:
         json.dump(st_json or {"orders_sent": real, "samples_dropped": 0,
@@ -330,8 +335,8 @@ def test_fixture_round_trips_from_cpp():
     # Field-for-field. write_fixture() sets every field to a distinct number, so
     # ANY reordering or width change inside a struct shows up here.
     expect = {
-        "CHNA": (CHAINA, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-                          12, 13, 14, 15, 16, 17, ord('A'), 31, 2, 0)),
+        "CHNA": (CHAINA, (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+                          13, 14, 15, 16, 17, 18, ord('A'), 31, 2, 0)),
         "FILL": (FILLREC, (21, 22, 23, 24, 25, 1, 1, 0)),
         "ACPT": (ACCEPTEX, (31, 32, 33, ord('J'))),
         "EMIT": (EMITEX, (41, 42, 43, 44, 45)),
@@ -360,6 +365,56 @@ def test_fixture_round_trips_from_cpp():
               "not a stale file from an earlier session")
 
 
+def test_transport_is_bracketed_and_the_bounds_order():
+    """t3' - t3 is a LOWER bound and t3' - t3_pre an UPPER one, because the send
+    happens between the two stamps. Upper must be the wider of the two, always."""
+    st, ex = joinable_fixture(range(1, 41))
+    rc, doc, out = run_report(st, ex)
+    hops = (doc or {}).get("hops", {})
+    lo = [v for k, v in hops.items() if "LOWER" in k]
+    hi = [v for k, v in hops.items() if "UPPER" in k]
+    check(len(lo) == 1 and len(hi) == 1, "both ends of the bracket are reported")
+    if lo and hi:
+        check(hi[0]["p50"] > lo[0]["p50"],
+              "the upper bound (%d) exceeds the lower (%d)"
+              % (hi[0]["p50"], lo[0]["p50"]))
+
+
+def test_a_negative_lower_bound_inside_its_window_is_not_fatal():
+    """t3 is stamped after ::write() returns and loopback delivery happens
+    inside that call, so the reader can legitimately stamp first. That is a
+    negative LOWER bound and it must not be treated as a broken harness -- as
+    long as the shortfall stays inside the send window."""
+    st, ex = joinable_fixture(range(1, 41))
+    ex = [(t3p - 2100, t4, tok, r) for (t3p, t4, tok, r) in ex]  # t3' just BEFORE t3
+    rc, doc, out = run_report(st, ex)
+    tb = (doc or {}).get("transport_bound", {})
+    check(tb.get("negatives", 0) > 0, "the lower bound did come out negative")
+    check(tb.get("overshoot_violations") == 0,
+          "and none of it exceeds the send window")
+    check(not (doc or {}).get("broken"),
+          "a negative LOWER bound is not a broken harness")
+    check(rc == 0, "the run is still quotable (exit %d)" % rc)
+
+
+def test_a_read_before_the_pre_send_stamp_is_fatal():
+    """The half of the account that can fail. If the exchange stamps its read
+    BEFORE the strategy's pre-write stamp, no stamp placement explains it: the
+    reader saw bytes the writer had not begun to send. That is the join or the
+    clock, and it must be fatal rather than absorbed as 'expected negatives'."""
+    st, ex = joinable_fixture(range(1, 41))
+    # t3_pre defaults to t3-200 and t3 = 5000+10i, so t3' = t3 - 500 lands
+    # before the pre-send stamp for every order.
+    ex = [(t3p - 2500, t4, tok, r) for (t3p, t4, tok, r) in ex]
+    rc, doc, out = run_report(st, ex)
+    tb = (doc or {}).get("transport_bound", {})
+    check(tb.get("overshoot_violations", 0) > 0,
+          "the violation is counted (%s)" % tb.get("overshoot_violations"))
+    check(broken_mentions(doc, "BEFORE the pre-send stamp"),
+          "and it is reported as broken, naming the reason")
+    check(rc == 1, "a read before the send began is FATAL (exit %d)" % rc)
+
+
 def main():
     print("=== the report's refusals, on inputs whose answers are known ===")
     for t in (test_clean_run_joins_the_right_records,
@@ -370,7 +425,10 @@ def main():
               test_fill_the_exchange_never_saw_is_fatal,
               test_census_tags_only_the_chains_that_stopped,
               test_census_absent_means_no_p999,
-              test_fixture_round_trips_from_cpp):
+              test_fixture_round_trips_from_cpp,
+              test_transport_is_bracketed_and_the_bounds_order,
+              test_a_negative_lower_bound_inside_its_window_is_not_fatal,
+              test_a_read_before_the_pre_send_stamp_is_fatal):
         print("\n%s" % t.__name__)
         t()
     print()

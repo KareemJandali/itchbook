@@ -1,0 +1,22 @@
+# LF in the working tree, on every platform. This changes nothing that git
+# stores -- blobs are already LF -- only what lands on disk at checkout.
+#
+# core.autocrlf=true on Windows checks text files out with CRLF, and this repo
+# compares generated output against committed artifacts BYTE FOR BYTE. A CRLF
+# checkout makes those comparisons fail on files whose visible content is
+# identical: scripts/regression-gate.sh reported "THE FEED CHANGED, not the
+# book" over a diff in which both sides printed the same two hashes, and
+# paper-figures.sh called four SVGs stale for the same reason. Neither had
+# changed.
+#
+# It is worse than a false alarm for shell scripts: bash dies on the carriage
+# returns outright, and scripts/make-boot-kit.sh packages run-12-8.sh onto a USB
+# stick that boots a bare-metal machine, where there is no editor to fix it.
+* text=auto eol=lf
+
+# Binary, so never examined for line endings at all.
+*.trace binary
+*.gz binary
+*.tar binary
+*.png binary
+*.pdf binary

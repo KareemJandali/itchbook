@@ -735,6 +735,11 @@ int main(int argc, char** argv) {
         }
 
         if (!out.empty()) {
+            // Before the syscall, not after. Loopback delivery runs in this
+            // thread's own call stack, so the exchange can read and stamp its
+            // receipt while we are still inside ::write() -- which made t3->t3'
+            // negative for 27.2% of orders. t3_pre and t3 bracket the real send.
+            const uint64_t t3_pre = bench::mono_ns();
             const ssize_t w = ::write(tcp, out.data(), out.size());
             if (w > 0) {
                 out.consume(static_cast<size_t>(w));
@@ -749,6 +754,7 @@ int main(int argc, char** argv) {
                     for (size_t i = 0; i < awaiting_t3.size(); ++i) {
                         if (awaiting_t3[i].second <= out.written) {
                             if (bench::ChainA* c = chain_a.at(awaiting_t3[i].first)) {
+                                c->t3_pre = t3_pre;
                                 c->t3 = t3;
                                 c->cpu_t3 = cpu_at_t3;
                                 c->tsc3 = tsc3;

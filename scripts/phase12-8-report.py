@@ -24,6 +24,14 @@ WHAT THIS REFUSES TO DO, AND WHY EACH REFUSAL CAN ACTUALLY FIRE
     and is counted, printed, and vetoes the run if it exceeds the offset bound.
     Nothing is clamped: wire_to_book's `now > arrival ? now - arrival : 0` is
     safe within one thread and destroys the evidence across two.
+  * EXCEPT where a stamp is known to sit on the far side of the event it marks.
+    t3 is taken after ::write() returns, and Linux delivers loopback inside the
+    sender's own call stack, so the exchange can read and stamp before write()
+    has returned here: t3->t3' was negative for 27.2% of 12,000 orders on bare
+    metal and none of it was the clock. Such a hop is declared a LOWER BOUND and
+    its negatives do not veto -- but the shortfall must never exceed the window
+    the send happened in, and THAT is checked and can fail. The UDP side stamps
+    before ::sendto and has no negatives at all in 20,841 fills: the control.
   * A percentile computed over fewer samples than it can resolve is not printed.
     p99.9 of n=800 is the first sample; saying "p99.9" of that is a decoration.
 
@@ -37,12 +45,20 @@ import struct
 import sys
 
 MAGIC = 0x38324254   # "TB28"
-VERSION = 1
+VERSION = 2
+READABLE_VERSIONS = (1, 2)
 
 # Must match include/itchbook/bench/trace.hpp exactly. A silent layout change
 # would be read here as plausible numbers, which is why the file carries a
 # version and this asserts the record size the writer declared.
-CHAINA = "<QQQQQQQQQQQIIIIHHBBBB"
+#
+# v2 inserted t3_pre after t2. v1 traces are still read -- the 2026-08-28 bare
+# metal boots are v1 and re-deriving their numbers must stay possible -- but
+# they carry no pre-write stamp, so the transport bracket falls back to t2 as
+# its upper end, which is looser and is labelled as such.
+CHAINA_V1 = "<QQQQQQQQQQQIIIIHHBBBB"
+CHAINA_V2 = "<QQQQQQQQQQQQIIIIHHBBBB"
+CHAINA = CHAINA_V2
 CHAINA_SIZE = struct.calcsize(CHAINA)
 FILLREC = "<QQIIIBBH"
 FILLREC_SIZE = struct.calcsize(FILLREC)
@@ -63,9 +79,10 @@ def read_trace(path):
     magic, ver = struct.unpack_from("<II", blob, 0)
     if magic != MAGIC:
         raise SystemExit("error: %s is not a 12.8 trace (magic %#x)" % (path, magic))
-    if ver != VERSION:
-        raise SystemExit("error: %s is trace version %d, this reads %d" % (path, ver, VERSION))
-    out = {}
+    if ver not in READABLE_VERSIONS:
+        raise SystemExit("error: %s is trace version %d, this reads %s"
+                         % (path, ver, "/".join(str(v) for v in READABLE_VERSIONS)))
+    out = {"__version__": ver}
     off = 8
     while off + 12 <= len(blob):
         tag = blob[off:off + 4].decode("ascii", "replace")
@@ -99,7 +116,12 @@ def resolvable(n, p):
 
 
 class Hop:
-    def __init__(self, name, cross_process=False):
+    def __init__(self, name, cross_process=False, lower_bound=False):
+        # lower_bound: this hop's start stamp is known to sit AFTER the event it
+        # marks, so the value understates the true interval and may legitimately
+        # come out negative. Such a hop is a bound, never an estimate, and its
+        # negatives are not evidence about the clock.
+        self.lower_bound = lower_bound
         self.name = name
         self.cross = cross_process
         self.vals = []
@@ -155,9 +177,11 @@ def main():
         raise SystemExit("error: exchange trace has no ACPT section")
     rec_a, blob_a = st["CHNA"]
     rec_p, blob_p = ex["ACPT"]
-    if rec_a != CHAINA_SIZE:
-        fatal.append("ChainA record is %d bytes on the wire, %d here -- the "
-                     "layouts have diverged" % (rec_a, CHAINA_SIZE))
+    want_a = struct.calcsize(CHAINA_V2 if st.get("__version__", 1) >= 2
+                             else CHAINA_V1)
+    if rec_a != want_a:
+        fatal.append("ChainA record is %d bytes on the wire, %d for the version "
+                     "it declares -- the layouts have diverged" % (rec_a, want_a))
     if rec_p != ACCEPTEX_SIZE:
         fatal.append("AcceptEx record is %d bytes on the wire, %d here" %
                      (rec_p, ACCEPTEX_SIZE))
@@ -169,14 +193,21 @@ def main():
     HAVE_T0, HAVE_T1, HAVE_T1P, HAVE_T2, HAVE_T3 = 1, 2, 4, 8, 16
 
     chains = {}
+    fmt_a = CHAINA_V2 if st.get("__version__", 1) >= 2 else CHAINA_V1
     for i in range(len(blob_a) // rec_a):
-        (t0, t1, t1p, t2, t3, iter_start, iter_end, tsc0, tsc3,
-         cpu_t1p, cpu_t3,
-         ref_seq, stride, dg, msgs, cpu0, cpu3, resp, have, term, _pad) = \
-            struct.unpack_from(CHAINA, blob_a, i * rec_a)
+        f = struct.unpack_from(fmt_a, blob_a, i * rec_a)
+        if fmt_a is CHAINA_V1:
+            (t0, t1, t1p, t2, t3, iter_start, iter_end, tsc0, tsc3,
+             cpu_t1p, cpu_t3,
+             ref_seq, stride, dg, msgs, cpu0, cpu3, resp, have, term, _pad) = f
+            t3_pre = 0          # v1 took no pre-write stamp; see the banner
+        else:
+            (t0, t1, t1p, t2, t3_pre, t3, iter_start, iter_end, tsc0, tsc3,
+             cpu_t1p, cpu_t3,
+             ref_seq, stride, dg, msgs, cpu0, cpu3, resp, have, term, _pad) = f
         if have == 0:
             continue
-        chains[i] = dict(t0=t0, t1=t1, t1p=t1p, t2=t2, t3=t3,
+        chains[i] = dict(t0=t0, t1=t1, t1p=t1p, t2=t2, t3=t3, t3_pre=t3_pre,
                          iter_start=iter_start, iter_end=iter_end,
                          tsc0=tsc0, tsc3=tsc3, stride=stride,
                          cpu_t1p=cpu_t1p, cpu_t3=cpu_t3,
@@ -220,7 +251,14 @@ def main():
         Hop("t1->t1'  post-trigger drain"),
         Hop("t1'->t2  decision"),
         Hop("t2->t3   encode, frame, write"),
-        Hop("t3->t3'  loopback TCP", cross_process=True),
+        # t3 is stamped after ::write() returns and the send happens inside
+        # that call, so t3' - t3 UNDERstates the transport: a lower bound, not
+        # an estimate. The upper bound uses the pre-write stamp where the trace
+        # has one (v2) and t2 where it does not (v1). Neither endpoint IS the
+        # transport; it lies between them and this harness cannot say where.
+        Hop("t3->t3'  transport, LOWER bound", cross_process=True,
+            lower_bound=True),
+        Hop("t3pre->t3' transport, UPPER bound", cross_process=True),
         Hop("t3'->t4  parse, validate, submit"),
     ]
     head_react = Hop("t1'->t3  HEADLINE reaction path")
@@ -246,6 +284,8 @@ def main():
         off_cpus.append(off)
         gap_free[k] = (off < GAP_NS)
 
+    overshoot_violations = []
+    chain_rows = []
     cyc_per_ns = None
     for k in sorted(joined):
         c = chains[k]
@@ -258,7 +298,32 @@ def main():
         hops[2].add(int(c["t2"]) - int(c["t1p"]), gf)
         hops[3].add(int(c["t3"]) - int(c["t2"]), gf)
         hops[4].add(int(a["t3p"]) - int(c["t3"]), gf)
-        hops[5].add(int(a["t4"]) - int(a["t3p"]), gf)
+        # The upper end of the bracket. v2 carries t3_pre; v1 does not, and t2
+        # is then the tightest pre-send stamp that exists.
+        pre = int(c["t3_pre"]) or int(c["t2"])
+        hops[5].add(int(a["t3p"]) - pre, gf)
+        hops[6].add(int(a["t4"]) - int(a["t3p"]), gf)
+        # THE CHECK THAT CAN FAIL. If t3 merely overshoots the send, the
+        # shortfall cannot exceed the window the send happened in. A violation
+        # means the reader stamped before the writer had begun, which no stamp
+        # placement explains -- that would be the join or the clock.
+        if int(a["t3p"]) < pre:
+            overshoot_violations.append(k)
+        # One row per chain, so a figure can show what a SINGLE order at the
+        # p50 rank and at the p99 rank actually spent its time on. Percentiles
+        # do not decompose -- the p99 of a sum is not the sum of the p99s -- so
+        # a stacked bar built from per-hop percentiles would be a picture of
+        # something that never happened to any order.
+        if c["have"] & HAVE_T0:
+            chain_rows.append({
+                "headline": int(c["t3"]) - int(c["t1p"]),
+                "hops": {
+                    "t0->t1": int(c["t1"]) - int(c["t0"]),
+                    "t1->t1'": int(c["t1p"]) - int(c["t1"]),
+                    "t1'->t2": int(c["t2"]) - int(c["t1p"]),
+                    "t2->t3": int(c["t3"]) - int(c["t2"]),
+                },
+            })
         head_react.add(int(c["t3"]) - int(c["t1p"]), gf)
         if c["iter_end"] and c["iter_start"]:
             wall = int(c["iter_end"]) - int(c["iter_start"])
@@ -278,7 +343,10 @@ def main():
     # ---- negatives -------------------------------------------------------------
     intra_neg = sum(len(h.negatives) for h in hops if not h.cross)
     intra_neg += len(head_react.negatives) + len(head_arrival.negatives)
-    cross_neg = sum(len(h.negatives) for h in hops if h.cross)
+    cross_neg = sum(len(h.negatives) for h in hops
+                    if h.cross and not h.lower_bound)
+    bound_neg = sum(len(h.negatives) for h in hops
+                    if h.cross and h.lower_bound)
     if intra_neg:
         worst = min(min(h.negatives) for h in hops
                     if not h.cross and h.negatives)
@@ -552,8 +620,31 @@ def main():
     else:
         not_quotable.append("no tsc_offset bound supplied for the pinned pair")
 
+    # A hop declared a LOWER bound is allowed to be negative: its start stamp
+    # sits after the event. What is NOT allowed is a shortfall wider than the
+    # window the event happened in, and that is checked rather than assumed.
+    if bound_neg:
+        lb = [h for h in hops if h.cross and h.lower_bound and h.negatives]
+        worst_lb = -min(min(h.negatives) for h in lb)
+        print("    %d samples of a LOWER-bound hop are negative, worst %d ns"
+              % (bound_neg, worst_lb))
+        print("      Expected: t3 is stamped after ::write() returns, and loopback")
+        print("      delivery runs in the sender's own call stack, so the reader")
+        print("      can stamp its receipt before write() has returned. t3")
+        print("      overshoots the send; t3'-t3 understates the transport.")
+        if overshoot_violations:
+            fatal.append("%d orders have t3' BEFORE the pre-send stamp. The "
+                         "reader saw bytes the writer had not begun to send: "
+                         "that is not stamp placement, it is the join or the "
+                         "clock" % len(overshoot_violations))
+        else:
+            print("      0 of %d exceed their own send window, which is the tell:"
+                  % bound_neg)
+            print("      an overshoot must respect that bound; noise need not.")
+
     if cross_neg:
-        worst = -min(min(h.negatives) for h in hops if h.cross and h.negatives)
+        worst = -min(min(h.negatives) for h in hops
+                     if h.cross and not h.lower_bound and h.negatives)
         print("    %d cross-process hops are negative, worst %d ns" % (cross_neg, worst))
         if args.offset_bound_ns is None:
             print("      Whether that is the clock or the scheduler cannot be said "
@@ -603,6 +694,30 @@ def main():
             json.dump(doc, f)
         print("wrote " + args.samples_out)
 
+    # ---- figure inputs ---------------------------------------------------------
+    rank_decomp, tail_cond = {}, []
+    if chain_rows:
+        ordered = sorted(chain_rows, key=lambda r: r["headline"])
+        for label, q in (("p50", 0.50), ("p99", 0.99)):
+            i = min(int(q * len(ordered)), len(ordered) - 1)
+            rank_decomp[label] = {
+                "rank": i, "of": len(ordered),
+                "headline_ns": ordered[i]["headline"],
+                "hops_ns": ordered[i]["hops"],
+            }
+        heads = [r["headline"] for r in ordered]
+        for q in (0.0, 0.50, 0.90, 0.99, 0.999):
+            i = min(int(q * len(heads)), len(heads) - 1)
+            thr = heads[i]
+            above = [h for h in heads if h >= thr]
+            if above:
+                tail_cond.append({
+                    "threshold_pct": q * 100.0,
+                    "threshold_ns": thr,
+                    "n_at_or_above": len(above),
+                    "mean_ns": int(sum(above) / len(above)),
+                })
+
     if args.json_out:
         doc = {
             "quotable": (not fatal and not not_quotable),
@@ -617,6 +732,36 @@ def main():
                               "cross_process": h.cross} for h in hops},
             "headline_t1p_t3": {"n": head_react.n, "p50": pct(head_react.vals, 50)},
             "coverage_p50_pct": pct(coverage, 50) if coverage else None,
+            # The falsifiable half of the stamp-placement account. A negative
+            # LOWER-bound hop is expected; one whose shortfall exceeds the
+            # window the send happened in is not, and would mean the join or
+            # the clock rather than the stamp. Recorded so a document can cite
+            # the zero instead of asserting it.
+            # FIGURE INPUTS. Per-sample decompositions at two ranks, and the
+            # tail-conditional mean. Both answer questions percentiles cannot:
+            # what a slow order actually spent its time on, and how far above a
+            # threshold the orders that cross it land.
+            "rank_decomposition": rank_decomp,
+            "tail_conditional_mean": tail_cond,
+            "transport_bound": {
+                "negatives": sum(len(h.negatives) for h in hops
+                                 if h.cross and h.lower_bound),
+                "worst_negative_ns": min(
+                    [min(h.negatives) for h in hops
+                     if h.cross and h.lower_bound and h.negatives] or [0]),
+                "overshoot_violations": len(overshoot_violations),
+                # Ruling out stamp sharing: if one syscall covered several
+                # orders they would carry the same stamp, and the two ends
+                # would stop measuring the same instant. They do not.
+                "orders": len(joined),
+                "distinct_t3": len({chains[k]["t3"] for k in joined}),
+                "distinct_t3p": len({accepts[k]["t3p"] for k in joined}),
+                "why": "t3 is stamped after ::write() returns; loopback "
+                       "delivery runs in the sender's own call stack, so the "
+                       "reader can stamp receipt before write() returns. "
+                       "t3'-t3 is a lower bound on the transport, not an "
+                       "estimate.",
+            },
             "gap_census": ({
                 "available": True,
                 "threshold_ns": GAP_NS,

@@ -188,7 +188,7 @@ static void test_trace_layout_and_round_trip() {
     // Pinned to what scripts/phase12-8-report.py unpacks. These catch a
     // padding change inside C++; tests/test_report_join.py catches the two
     // languages disagreeing, by reading the fixture this test writes.
-    CHECK_EQ(sizeof(ChainA), size_t(112));    // "<QQQQQQQQQQQIIIIHHBBBB"
+    CHECK_EQ(sizeof(ChainA), size_t(120));    // "<QQQQQQQQQQQQIIIIHHBBBB"
     CHECK_EQ(sizeof(FillRec), size_t(32));    // "<QQIIIBBH"
     CHECK_EQ(sizeof(AcceptEx), size_t(24));   // "<QQIB3x"
     CHECK_EQ(sizeof(EmitEx), size_t(32));     // "<QQQII"
@@ -309,11 +309,11 @@ static void write_fixture() {
     Arena<PktEx> pk;    pk.reserve(1);
 
     ChainA* c = ca.push();
-    c->t0 = 1; c->t1 = 2; c->t1p = 3; c->t2 = 4; c->t3 = 5;
-    c->iter_start = 6; c->iter_end = 7; c->tsc0 = 8; c->tsc3 = 9;
-    c->cpu_t1p = 10; c->cpu_t3 = 11;
-    c->ref_seq = 12; c->stride = 13; c->dgrams_after_trigger = 14;
-    c->msgs_after_trigger = 15; c->cpu0 = 16; c->cpu3 = 17;
+    c->t0 = 1; c->t1 = 2; c->t1p = 3; c->t2 = 4; c->t3_pre = 5; c->t3 = 6;
+    c->iter_start = 7; c->iter_end = 8; c->tsc0 = 9; c->tsc3 = 10;
+    c->cpu_t1p = 11; c->cpu_t3 = 12;
+    c->ref_seq = 13; c->stride = 14; c->dgrams_after_trigger = 15;
+    c->msgs_after_trigger = 16; c->cpu0 = 17; c->cpu3 = 18;
     c->resp = 'A'; c->have = 31; c->terminal = 2;
 
     // Every field a DIFFERENT number, so a swap of any two shows up in
