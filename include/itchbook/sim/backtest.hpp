@@ -62,6 +62,11 @@ struct Lane {
     Ledger ledger;
     MarkoutEngine markout;
     std::vector<SimFill> pending;
+    // Every fill this lane took, kept only when recording is asked for. The
+    // Ledger's LedgerFill is the accounting view and drops order_id and
+    // ahead_at_arrival; phase 12.9 needs both to say which order filled and
+    // how deep in the queue it had been sitting.
+    std::vector<SimFill> filled;
     // Counted separately because a run dominated by price-priority fills is a
     // run in which the queue assumption is not what is being measured, and the
     // reader has to be able to see that.
@@ -130,6 +135,19 @@ public:
         }
     }
 
+    // Off by default: see the banner on Lane::filled.
+    void record_fills(bool on) { record_fills_ = on; }
+
+    // The fills one lane took, in the order they happened. Empty unless
+    // record_fills(true) was called before the run.
+    const std::vector<SimFill>& fills_for(Model m) const {
+        for (const Lane& l : lanes_) {
+            if (l.queue.model() == m) return l.filled;
+        }
+        static const std::vector<SimFill> none;
+        return none;
+    }
+
     void on_message(char type, const uint8_t* p, uint16_t) {
         // 1. Session and trading state first, so every lane sees identical
         //    eligibility. Only 'T' trades: 'H', 'P' and 'Q' (quotation only,
@@ -165,6 +183,7 @@ public:
             l.queue.commit(r, book_, &l.pending);
             l.queue.apply_price_priority(book_, ts, &l.pending);
             for (const SimFill& f : l.pending) {
+                if (record_fills_) l.filled.push_back(f);
                 l.ledger.on_fill(f, mid);
                 l.markout.on_fill(f, mid);
                 if (f.trigger == Trigger::Lock) ++l.lock_fills;
@@ -287,6 +306,7 @@ private:
                         f.ts = arrival_ts;
                         f.trigger = Trigger::Taking;
                         f.liquidity = Liquidity::Removed;
+                        if (record_fills_) l.filled.push_back(f);
                         l.ledger.on_fill(f, mid);
                         l.markout.on_fill(f, mid);
                         {
@@ -351,6 +371,7 @@ private:
     uint64_t action_seq_ = 0;
     book::Book book_{100, 20, 1u << 20};
     std::vector<Lane> lanes_;
+    bool record_fills_ = false;
     uint64_t event_index_ = 0;
     char trading_state_ = '\0';
     bool in_continuous_ = false;

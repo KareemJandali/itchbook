@@ -8,6 +8,13 @@
 // Usage:
 //   queue_backtest <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]
 //                  [--size N] [--json out.json] [--fees base|top|inverted]
+//                  [--fills-out out.jsonl]
+//
+// --fills-out writes one JSON object per fill per model. Phase 12.9 diffs the
+// backtester's fills against the live loop's, and a count cannot be diffed:
+// the question is WHICH order filled and where in the queue it had been, which
+// is order_id and ahead_at_arrival. All four models are written, tagged, so the
+// diff can show which model's error is smallest rather than assuming one.
 #include <cinttypes>
 #include <cerrno>
 #include <cstdint>
@@ -153,10 +160,71 @@ bool write_json(const char* path, const std::vector<LaneResult>& rs, uint64_t ev
     return true;
 }
 
+const char* trigger_name(Trigger t) {
+    switch (t) {
+        case Trigger::Execution: return "execution";
+        case Trigger::Lock:      return "lock";
+        case Trigger::Through:   return "through";
+        case Trigger::Naive:     return "naive";
+        case Trigger::Taking:    return "taking";
+    }
+    return "?";
+}
+
+const char* liquidity_name(Liquidity l) {
+    switch (l) {
+        case Liquidity::Added:   return "added";
+        case Liquidity::Removed: return "removed";
+        case Liquidity::Cross:   return "cross";
+    }
+    return "?";
+}
+
+// Same rule as write_json: a file that never landed has produced no result, so
+// every step is checked and a failure is loud rather than a missing file nobody
+// notices until the diff comes back empty and looks like agreement.
+template <typename S>
+bool write_fills(const char* path, const Backtest<S>& bt, const char* strategy) {
+    std::FILE* f = std::fopen(path, "w");
+    if (f == nullptr) {
+        std::fprintf(stderr, "error: cannot open %s: %s\n", path, std::strerror(errno));
+        return false;
+    }
+    uint64_t written = 0;
+    for (Model m : {Model::Naive, Model::Optimistic, Model::Mbo, Model::Pessimistic}) {
+        uint64_t ordinal = 0;
+        for (const SimFill& x : bt.fills_for(m)) {
+            if (std::fprintf(f,
+                    "{\"model\":\"%s\",\"strategy\":\"%s\",\"ordinal\":%" PRIu64
+                    ",\"order_id\":%" PRIu64 ",\"side\":\"%c\",\"price\":%" PRId64
+                    ",\"shares\":%u,\"ts\":%" PRIu64 ",\"trigger\":\"%s\""
+                    ",\"liquidity\":\"%s\",\"ahead_at_arrival\":%" PRIu64 "}\n",
+                    to_string(m), strategy, ordinal++, x.order_id,
+                    x.side == Side::Buy ? 'B' : 'S',
+                    static_cast<int64_t>(x.price), x.shares, x.ts,
+                    trigger_name(x.trigger), liquidity_name(x.liquidity),
+                    x.ahead_at_arrival) < 0) {
+                std::fprintf(stderr, "error: writing %s failed\n", path);
+                std::fclose(f);
+                return false;
+            }
+            ++written;
+        }
+    }
+    if (std::fclose(f) != 0) {
+        std::fprintf(stderr, "error: closing %s failed: %s\n", path, std::strerror(errno));
+        return false;
+    }
+    std::printf("wrote %s (%" PRIu64 " fills across four models)\n", path, written);
+    return true;
+}
+
 template <typename S>
 int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
-        RiskLimits limits, risk::KillSwitchConfig kill, const char* json_path) {
+        RiskLimits limits, risk::KillSwitchConfig kill, const char* json_path,
+        const char* fills_path) {
     Backtest<S> bt(strategy, fees, latency, limits, kill);
+    if (fills_path != nullptr) bt.record_fills(true);
     try {
         Reader reader(feed);
         parse(reader, bt);
@@ -171,6 +239,9 @@ int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
     if (json_path != nullptr && !write_json(json_path, rs, bt.events(), S::name())) {
         return 1;
     }
+    if (fills_path != nullptr && !write_fills(fills_path, bt, S::name())) {
+        return 1;
+    }
     return 0;
 }
 
@@ -181,6 +252,7 @@ int main(int argc, char** argv) {
     std::string strategy = "touch-maker";
     std::string fee_tier = "base";
     const char* json_path = nullptr;
+    const char* fills_path = nullptr;
     uint32_t size = 100;
     LatencyModel latency;   // deliberately non-zero by default
     RiskLimits risk;        // no position limit unless asked for
@@ -191,6 +263,7 @@ int main(int argc, char** argv) {
         if (a == "--strategy" && i + 1 < argc) strategy = argv[++i];
         else if (a == "--fees" && i + 1 < argc) fee_tier = argv[++i];
         else if (a == "--json" && i + 1 < argc) json_path = argv[++i];
+        else if (a == "--fills-out" && i + 1 < argc) fills_path = argv[++i];
         else if (a == "--size" && i + 1 < argc) size = static_cast<uint32_t>(std::atol(argv[++i]));
         else if (a == "--latency-ns" && i + 1 < argc)
             latency = LatencyModel::uniform(std::strtoull(argv[++i], nullptr, 10));
@@ -233,24 +306,24 @@ int main(int argc, char** argv) {
     if (strategy == "touch-maker") {
         TouchMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
     }
     if (strategy == "patient-maker") {
         PatientMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
     }
     if (strategy == "crosser") {
         Crosser s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
     }
     if (strategy == "far-quoter") {
         FarQuoter s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
     }
-    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, kill, json_path);
+    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, kill, json_path, fills_path);
     std::fprintf(stderr, "error: unknown strategy '%s'\n", strategy.c_str());
     return 2;
 }

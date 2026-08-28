@@ -232,6 +232,44 @@ void test_naive_never_fills_less_than_a_queue_model() {
     }
 }
 
+void test_recorded_fills_match_the_count_the_report_publishes() {
+    // r.fills has always come from the Ledger; the recorded SimFills are a
+    // second path to the same event. If they disagree, one of them is wrong --
+    // and the dangerous direction is the recorder dropping fills, because a
+    // shorter file makes the 12.9 A/B show fewer disagreements, which reads as
+    // better agreement rather than as a bug.
+    TouchMaker t;
+    t.size = 100;
+    Backtest<TouchMaker> bt{t, {}};
+    bt.record_fills(true);
+    feed_market(bt);
+    uint64_t total = 0;
+    for (const LaneResult& r : bt.results()) {
+        CHECK_EQ(bt.fills_for(r.model).size(), size_t(r.fills));
+        total += r.fills;
+    }
+    // Guards the guard: if this strategy stopped filling, the loop above would
+    // pass by comparing zero against zero on every lane.
+    CHECK(total > 0);
+}
+
+void test_fills_are_not_recorded_unless_asked() {
+    // Recording allocates per fill. It is opt-in so that every existing run's
+    // memory behaviour -- a measured property of this code -- is unchanged.
+    TouchMaker t;
+    t.size = 100;
+    Backtest<TouchMaker> bt{t, {}};
+    feed_market(bt);
+    uint64_t total = 0;
+    for (const LaneResult& r : bt.results()) {
+        CHECK_EQ(bt.fills_for(r.model).size(), size_t(0));
+        total += r.fills;
+    }
+    // The lanes DID fill; they just were not recorded. Without this the test
+    // would pass on a strategy that never traded.
+    CHECK(total > 0);
+}
+
 void test_a_quote_nobody_can_reach_never_fills() {
     // Far from the touch, with nothing trading through it. Any fill here would
     // mean the simulator reached a price the market never traded at.
@@ -420,6 +458,8 @@ int main() {
     test_a_taker_loses_money_and_fees_make_it_worse();
     test_taking_is_identical_in_every_fill_model();
     test_naive_never_fills_less_than_a_queue_model();
+    test_recorded_fills_match_the_count_the_report_publishes();
+    test_fills_are_not_recorded_unless_asked();
     test_a_quote_nobody_can_reach_never_fills();
     test_nothing_trades_before_the_market_opens();
     test_a_position_limit_is_never_breached();
