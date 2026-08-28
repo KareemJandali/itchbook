@@ -135,6 +135,9 @@ def main():
     ap.add_argument("--jitter-json", default=None,
                     help="cpu_jitter on the exact pinned cores; the decisive gate")
     ap.add_argument("--json-out", default=None)
+    ap.add_argument("--samples-out", default=None,
+                    help="per-hop samples, for scripts/phase12-8-pool.py")
+    ap.add_argument("--run-tag", default="run")
     args = ap.parse_args()
 
     st = read_trace(args.strategy_trace)
@@ -582,6 +585,23 @@ def main():
             print("  - " + f)
     if not fatal and not not_quotable:
         print("=== QUOTABLE ===")
+
+    if args.samples_out:
+        # Samples, not summaries: the pooling step has to compare distributions.
+        doc = {
+            "run": args.run_tag,
+            "orders_sent": orders_sent,
+            "joined": len(joined),
+            "census_available": census_available,
+            "gap_threshold_ns": GAP_NS if census_available else None,
+            "gap_tagged": (sum(1 for k in joined if gap_free.get(k) is False)
+                           if census_available else None),
+            "hops": {h.name: {"vals": h.vals, "clean": h.clean}
+                     for h in [head_react, head_arrival] + hops + b_hops},
+        }
+        with open(args.samples_out, "w") as f:
+            json.dump(doc, f)
+        print("wrote " + args.samples_out)
 
     if args.json_out:
         doc = {
