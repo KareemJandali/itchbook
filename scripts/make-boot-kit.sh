@@ -117,7 +117,8 @@ fi
 # ---- 2. the scripts the run needs ---------------------------------------------
 echo
 echo "=== scripts"
-for f in tick-to-trade.sh phase12-8-report.py tick-to-trade-mtu-sweep.sh; do
+for f in tick-to-trade.sh phase12-8-report.py phase12-8-pool.py \
+         tick-to-trade-mtu-sweep.sh; do
     cp "scripts/$f" "$KIT/scripts/" && echo "  $f"
 done
 cp docs/phase12-8-design.md "$KIT/" && echo "  phase12-8-design.md (the checklist is section 9)"
@@ -182,7 +183,18 @@ and everything is lost at reboot. Do step 6 before you shut down.
    Exit 0 means quotable. Exit 3 means it ran correctly and the numbers may
    not be published -- the artifact is written either way and says why.
 
-5. THE SWEEPS, if step 4 came back 0. Each is one run.
+5. POOL THE REPEATS. This is the question ten runs exist to answer.
+
+       python3 scripts/phase12-8-pool.py out/*-samples.json --json-out out/pooled.json
+
+   It reports, per hop, how far the median moved between runs and whether a
+   permutation test can tell the runs apart. On the WSL2 box nine of twelve hops
+   came back RUN EFFECT at p=0.0005, moving 13-18% between identical runs. If
+   this machine comes back "poolable", that IS the result the boot was for.
+   A verdict marked (rising) or (falling) is a DRIFT, not scatter: let the
+   machine settle, or drop the first run and say which.
+
+6. THE SWEEPS, if step 4 came back 0. Each is one run.
        - MULTIPLIER=500 and MULTIPLIER=2000, TAG=mult500 / mult2000
          (the resting interval must scale as 1/multiplier; the reaction path
           must not move. That is what proves which hops are the machine.)
@@ -191,7 +203,7 @@ and everything is lost at reboot. Do step 6 before you shut down.
        - one run with --ack-delay-ms 250 passed through, as the t6 placement
          test: fills must still be counted and the shares must still agree.
 
-6. SAVE EVERYTHING BEFORE YOU REBOOT. This session forgets.
+7. SAVE EVERYTHING BEFORE YOU REBOOT. This session forgets.
 
        ./save-to-stick.sh /media/<you>/<stick>
 

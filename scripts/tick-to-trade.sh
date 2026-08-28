@@ -359,6 +359,7 @@ for r in $(seq 1 "$REPEATS"); do
             --strategy-trace "$WORK/run$r-st.trace" --exchange-trace "$WORK/run$r-ex.trace" \
             --strategy-json "$WORK/run$r-st.json" --exchange-json "$WORK/run$r-ex.json" \
             --offset-bound-ns "$BOUND_NS" --jitter-json "$JIT" \
+            --run-tag "run$r" --samples-out "$WORK/run$r-samples.json" \
             --json-out "$WORK/run$r-report.json" > "$WORK/run$r-report.txt" 2>&1
         rc=$?
         if (( rc == 1 )); then
@@ -370,6 +371,32 @@ for r in $(seq 1 "$REPEATS"); do
         say "  run $r: did not complete"; exit 1
     fi
 done
+
+# ---- 7b. pool the repeats ------------------------------------------------------
+#
+# The question ten runs exist to answer. Its exit code folds into the verdict:
+# runs that cannot be pooled are runs whose percentiles describe a mixture of
+# machine states, and a confidence interval over that implies a precision that
+# is not there.
+if (( OK >= 2 )); then
+    step "7b. are the $OK runs the same experiment?"
+    if python3 scripts/phase12-8-pool.py "$WORK"/run*-samples.json \
+            --json-out "$WORK/pooled.json" > "$WORK/pooled.txt" 2>&1; then
+        sed -n '/per-run medians/,/^$/p' "$WORK/pooled.txt" | head -20
+        say "  the runs are one experiment"
+    else
+        POOL_RC=$?
+        sed -n '/per-run medians/,/^$/p' "$WORK/pooled.txt" | head -20
+        if (( POOL_RC == 3 )); then
+            NOTQ+=("the repeats are not one experiment: see pooled.txt for which \
+hops differ between runs and by how much")
+        else
+            say "  pooling failed (exit $POOL_RC)"
+            tail -5 "$WORK/pooled.txt"
+            exit 1
+        fi
+    fi
+fi
 
 # ---- 8. after: the machine must not have moved under the run -----------------
 step "8. post-flight: the machine must be the machine it was"

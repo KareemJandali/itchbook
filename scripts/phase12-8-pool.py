@@ -55,24 +55,54 @@ def median(vals):
     return pct(sorted(vals), 50)
 
 
-def median_ci(sorted_vals, conf=0.95):
-    """Exact order-statistic interval for the median. No normal approximation.
+# Above this, the exact sum needs thousands of terms of an n-choose-k big
+# integer. Exact below, normal approximation above, and the caller is told which.
+EXACT_MAX_N = 1000
 
-    Coverage of [x_(k), x_(n+1-k)] is 1 - 2*sum_{i<k} C(n,i)/2^n. Walk k up from
-    1 until the coverage drops below conf, then step back one."""
+
+def median_ci(sorted_vals, conf=0.95):
+    """Order-statistic interval for the median, and which method produced it.
+
+    Returns (lo, hi, method). Coverage of [x_(k), x_(n+1-k)] is
+    1 - 2*sum_{i<k} C(n,i)/2^n.
+
+    EXACT for n <= EXACT_MAX_N, in integer arithmetic -- 2**n is a 2,400-bit
+    number at n=2,400 and converting it to a float raises OverflowError, so the
+    comparison is done as 2*cum*10^6 <= round((1-conf)*10^6)*total and the
+    binomial terms are built incrementally rather than by calling math.comb per
+    term.
+
+    NORMAL above it, where the exact sum would need thousands of big-integer
+    terms to move the answer by less than one order statistic. An interval that
+    silently switched method would be an interval whose width meant two
+    different things at two sample sizes, so the method is returned."""
     n = len(sorted_vals)
     if n < 8:
-        return (None, None)
-    total = 2 ** n
-    cum = 0
-    best = 1
-    for k in range(1, n // 2 + 1):
-        cum += math.comb(n, k - 1)
-        cover = 1.0 - 2.0 * cum / total
-        if cover < conf:
-            break
-        best = k
-    return (sorted_vals[best - 1], sorted_vals[n - best])
+        return (None, None, "n too small")
+
+    if n <= EXACT_MAX_N:
+        total = 1 << n
+        alpha = int(round((1.0 - conf) * 1_000_000))
+        term = 1                      # C(n, 0)
+        cum = 0
+        best = 1
+        for k in range(1, n // 2 + 1):
+            cum += term               # sum_{i<k} C(n,i)
+            if 2 * cum * 1_000_000 > alpha * total:
+                break
+            best = k
+            term = term * (n - k + 1) // k    # C(n,k) from C(n,k-1), exactly
+        return (sorted_vals[best - 1], sorted_vals[n - best], "exact")
+
+    # z for a two-sided 95% interval. Only 0.95 is used here; anything else
+    # would want its own quantile rather than a silently wrong constant.
+    z = 1.959964 if abs(conf - 0.95) < 1e-9 else None
+    if z is None:
+        return (None, None, "unsupported confidence at this n")
+    k = int(math.floor(n / 2.0 - z * math.sqrt(n) / 2.0))
+    if k < 1:
+        k = 1
+    return (sorted_vals[k - 1], sorted_vals[n - k], "normal")
 
 
 def spread_of_medians(groups):
@@ -217,8 +247,9 @@ def main():
             meds = out[name]["per_run_medians_in_run_order"]
             interval = "[%s, %s] runs" % (min(meds), max(meds))
         else:
-            lo, hi = median_ci(pooled)
-            interval = ("[%s, %s]" % (lo, hi)) if lo is not None else "-"
+            lo, hi, method = median_ci(pooled)
+            interval = (("[%s, %s] %s" % (lo, hi, method))
+                        if lo is not None else "-")
         print("  %-34s %9d %11s %11s %19s"
               % (name, n, pct(pooled, 50),
                  p99 if p99 is not None else "n too small", interval))
@@ -226,7 +257,7 @@ def main():
             "n": n, "p50": pct(pooled, 50), "p99": p99,
             "interval": interval,
             "interval_is": ("per-run range" if name in not_poolable
-                            else "exact order-statistic CI"),
+                            else "order-statistic CI"),
         }
 
     # ---- the tail, and the census that gates it ---------------------------------
