@@ -611,13 +611,35 @@ rather than against two copies of a constant. That is what would catch a padding
 change that the Python reader would otherwise go on unpacking into plausible
 numbers.
 
-**Not yet built:** the two figures (the p50-rank and p99-rank per-sample
-decompositions, and the tail-conditional mean) and `docs/phase12-8-results.md`,
-which is generated and not typed. Both want real numbers to be worth writing.
+**Built, 2026-08-28.** `scripts/phase12-8-figures.py` draws both figures from
+the artifact — the per-sample decompositions at the p50 and p99 ranks, and the
+tail-conditional mean — and `scripts/phase12-8-results.py` generates
+`docs/phase12-8-results.md`. Both are wired into `verify-local`'s
+tracked-files-only gate, so a stale figure or table fails the build rather than
+waiting for a reader to notice.
+
+Both figures are built from **single orders and conditional means, never from
+per-hop percentiles**: the p99 of a sum is not the sum of the p99s, so a stacked
+bar of per-hop p99s draws an order that never existed.
 
 ---
 
-## 11. The first bare-metal boot, 2026-08-28
+## 11. The bare-metal boots, 2026-08-28
+
+Three, all on the same day and the same machine. The first ran at the powersave
+governor and is kept as evidence rather than results. The second produced the
+numbers. The third was taken only to tie those numbers to a commit — and found
+that the gate meant to establish that could never have passed.
+
+| | governor | trace | provenance | what it settled |
+|---|---|---|---|---|
+| 1 | `powersave` | v1 | — | that the machine holds a CPU; that the harness must SET the governor, not just print it |
+| 2 | `performance` | v1 | — | the numbers: headline 8,169 ns p50 |
+| 3 | `performance` | v2 | `a0fdd2c`, verified | reproduction to 0.4%, and the write syscall isolated at 7,824 ns |
+
+The third boot's headline came back 8,139 ns against the second's 8,169 — 0.4%
+apart, on a different pair of cores, from a separately built kit. That is the
+strongest statement in the phase, and it is one no single run could make.
 
 Ten repeats plus the sweeps, on the live USB. **The harness did its job and the
 numbers are not usable**, for one reason, and the distinction is the point of
