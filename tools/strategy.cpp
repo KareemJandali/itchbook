@@ -47,6 +47,10 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#if defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#endif
 #include <signal.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -356,6 +360,31 @@ struct FeedHandler {
     void on_gap(uint64_t, uint64_t) {}
 };
 
+// Pinning, and what to do where it does not exist.
+//
+// cpu_set_t and pthread_setaffinity_np are glibc; macOS cannot bind a thread to
+// a named core. Compiling this away would turn --cpu into a silent no-op, and a
+// run that asked to be pinned and quietly was not is a run whose numbers were
+// taken on a moving process and labelled as pinned. So the caller refuses
+// instead -- see the use site.
+//
+// The affinity call is not trusted on its own: sched_getcpu() is read back and
+// must agree, because a mask the scheduler has not acted on yet would otherwise
+// report success before the thread had moved.
+int pin_to_cpu(int cpu) {
+#if defined(__linux__)
+    if (cpu < 0) return -1;
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    if (::pthread_setaffinity_np(::pthread_self(), sizeof(set), &set) != 0) return -1;
+    return ::sched_getcpu();
+#else
+    (void)cpu;
+    return -1;
+#endif
+}
+
 int set_nonblock(int fd) {
     const int fl = ::fcntl(fd, F_GETFL, 0);
     return ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
@@ -440,15 +469,17 @@ int main(int argc, char** argv) {
     // report back and records an intention rather than a fact.
     int pinned_cpu = -1;
     if (opt.cpu >= 0) {
-        cpu_set_t set;
-        CPU_ZERO(&set);
-        CPU_SET(opt.cpu, &set);
-        if (::pthread_setaffinity_np(::pthread_self(), sizeof(set), &set) == 0) {
-            pinned_cpu = ::sched_getcpu();
-        }
+        pinned_cpu = pin_to_cpu(opt.cpu);
         if (pinned_cpu != opt.cpu) {
+#if defined(__linux__)
             std::fprintf(stderr, "error: --cpu %d requested, running on %d\n",
                          opt.cpu, pinned_cpu);
+#else
+            std::fprintf(stderr, "error: --cpu %d requested, but this platform "
+                                 "cannot pin a thread to a named core. Refusing "
+                                 "rather than running unpinned and calling it "
+                                 "pinned.\n", opt.cpu);
+#endif
             return 4;
         }
     }

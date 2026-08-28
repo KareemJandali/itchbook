@@ -479,14 +479,55 @@ stick before rebooting.
 
 ## 10. Status
 
-Landed: the design of record, and the hot-path fixes of §8 with their
-measurements.
+**Built and exercised.** The design of record above; the hot-path fixes of §8;
+`bench/rdtsc.hpp`'s `mono_ns()` and `cycles_end_cpu()`; `bench/histogram.hpp`'s
+saturation counter; `bench/trace.hpp` (arenas that drop and count rather than
+wrap); `bench/topology.hpp` (three-state probes, SMT and cross-package vetoes);
+`Publisher::sequence_of_next_add()`; `SplitReplayer::set_fill_trace()`; chain A
+and chain B stamped in both processes with `--cpu` and `--trace-out`;
+`scripts/phase12-8-report.py` (the offline join and the refusals);
+`scripts/tick-to-trade.sh` (the run harness and its pre-flight);
+`scripts/tick-to-trade-selftest.sh` and `scripts/tick-to-trade-mtu-sweep.sh`.
 
-Next, and buildable without the boot: `mono_ns()` and `cycles_end_cpu()` in
-`bench/rdtsc.hpp`; saturation counting in `bench/histogram.hpp`; `bench/trace.hpp`
-(the arenas); `bench/topology.hpp` (three-state probes); the `--cpu`,
-`--trace-out` and stamp plumbing in both tools; `scripts/tick-to-trade.sh`;
-`scripts/phase12-8-report.py`; the join, sign and census unit tests and the two
-mutation arms.
+**What the harness has been shown to do**, on this machine, where none of the
+numbers may be published:
 
-Blocked on bare metal: every number.
+| | |
+|---|---|
+| chain A join | 800 of 800, no orphans, no duplicate tokens |
+| chain B join | 33 of 33 on (reference, fill ordinal), every datagram found |
+| two instruments on t₀→t₃ | 3.600 cycles/ns implied, against `tsc_offset`'s 3.599 |
+| coverage of the completing iteration | p50 99.2% |
+| MTU sweep, packing delay p50 | 144.5 µs → 117.1 µs → 84.4 µs at 1400 / 700 / 350 |
+
+**The pre-flight refuses, and each refusal has been watched firing.** It will not
+choose CPUs for you — it prints the machine's real topology, marks which cores
+are isolated, and stops, because phase 10's numbering must not be inherited and
+`nproc` reports the calling shell's affinity mask rather than the machine (16
+CPUs in sysfs here against `nproc`'s 13). It vetoes the same CPU twice, SMT
+siblings, and different physical packages. It checks every tool's exit code
+before reading the file that tool was told to write. It runs `cpu_jitter` on
+exactly the two chosen cores and treats that as the decisive gate; it runs
+`tsc_offset` on exactly the chosen pair and takes the *larger* of the method's
+resolution and its estimate as the bound, so the figure quoted beside a hop is
+never optimistic. It does a short dry run and refuses to spend the long one
+unless **every hop took samples and chain B joined at least one fill** — a hop
+with zero samples scored as a pass is the failure that already happened twice in
+12.7. Afterwards it re-runs both probes and re-reads the clocksource, and a
+machine that moved under the run fails it.
+
+It also records using non-isolated cores when the machine has isolated ones:
+here cpus 13/14 are isolated and measurably quieter than 2/6 — 23 and 42 gaps
+over 100 µs against 170 and 167 — which is a five-fold difference nobody would
+have found by reading the output.
+
+**Blocked on bare metal: every number.** On this box the run completes, joins
+cleanly, and is refused for five separate measured reasons, of which the
+load-bearing one is that a cross-process hop comes out 1467× more negative than
+the clock bound can explain.
+
+**Not yet built:** the ten-repeat pooling and the two figures (the p50-rank and
+p99-rank per-sample decompositions, and the tail-conditional mean), which want
+real numbers to be worth writing; `docs/phase12-8-results.md`, which is
+generated and not typed; and the join/sign/census unit tests wired into
+`verify-local`.
