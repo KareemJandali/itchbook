@@ -668,6 +668,9 @@ int main(int argc, char** argv) {
         // an order this phase cannot observe.
         if (client.state() == sb::State::LoggedIn && orders_sent < opt.max_orders &&
             belief.have_locate && belief.applied - last_quote_at >= opt.quote_every) {
+            // The CPU-time bracket opens BEFORE t1', so its ~145 ns cost lands
+            // outside the interval being measured rather than inside it.
+            const uint64_t cpu_at_t1p = bench::thread_cpu_ns();
             // t1': the drain has finished and the decision is about to be made
             // off the post-drain book. This, not t0, anchors the headline.
             const uint64_t t1p = bench::mono_ns();
@@ -709,6 +712,7 @@ int main(int argc, char** argv) {
                     c->tsc0 = belief.trig_tsc0;
                     c->cpu0 = belief.trig_cpu0;
                     c->iter_start = iter_start;
+                    c->cpu_t1p = cpu_at_t1p;
                     c->stride = static_cast<uint32_t>(stride);
                     c->dgrams_after_trigger = belief.trig_dgrams;
                     c->msgs_after_trigger = belief.trig_msgs;
@@ -739,11 +743,14 @@ int main(int argc, char** argv) {
                     unsigned aux3 = 0xFFFFu;
                     const uint64_t tsc3 = bench::cycles_end_cpu(&aux3);
                     const uint64_t t3 = bench::mono_ns();
+                    // ...and closes AFTER t3, for the same reason.
+                    const uint64_t cpu_at_t3 = bench::thread_cpu_ns();
                     size_t keep = 0;
                     for (size_t i = 0; i < awaiting_t3.size(); ++i) {
                         if (awaiting_t3[i].second <= out.written) {
                             if (bench::ChainA* c = chain_a.at(awaiting_t3[i].first)) {
                                 c->t3 = t3;
+                                c->cpu_t3 = cpu_at_t3;
                                 c->tsc3 = tsc3;
                                 c->cpu3 = static_cast<uint16_t>(aux3);
                                 c->have |= bench::kHaveT3;

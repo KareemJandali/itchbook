@@ -107,12 +107,73 @@ descheduling events wearing a hop's label, and the contaminated fraction is a
 property of the machine and the chain length, **not of n** — more runs estimate
 the same contaminated quantity better.
 
-**Resolution.** The headline tail is **p99**, where n = 12,000 gives 120 samples
-and contamination is under ~6%. p99.9 is published only with a **gap-overlap
-census** beside it: a co-pinned watchdog records the scheduler gaps during the
-measurement, every chain whose window overlaps a recorded gap is tagged, and two
-values are printed — all chains and gap-free chains — with the tagged count. A
-p99.9 without that census is not printed at all.
+**Resolution.** The headline tail is **p99**. p99.9 is published only with a
+**gap-overlap census** beside it, and two values are printed — all chains and
+gap-free chains — with the tagged count. A p99.9 without that census is not
+printed at all.
+
+### 1.2.1 The gap-overlap census, built — and there is no watchdog
+
+The design above asked for a co-pinned watchdog. There is no good version of
+that: pinned to the **same** core it contends with the thread it exists to
+observe, destroying what it measures; pinned to a **different** core it observes
+the wrong core, because gaps are per-core.
+
+The kernel answers directly instead. Over any window,
+
+    off_cpu = wall_elapsed − thread_cpu_elapsed
+
+is the time the thread was not running, attributed exactly to that window, with
+no second thread and no contention — the same quantity `cpu_jitter` already
+reports in aggregate. `CLOCK_THREAD_CPUTIME_ID` was measured before it was
+trusted:
+
+| | |
+|---|---|
+| observed granularity | **131 ns** (`clock_getres` claims 1 ns) |
+| across a 5 ms sleep | wall 5,392,950 ns, CPU 42,708 ns → **off_cpu 5,350,242 ns** |
+| over 2,000 × ~11 µs of pure work | off_cpu p50 **0 ns**, p99 130 ns, 1 of 2,000 over 5 µs |
+| cost | 522 cycles, against 68 for `CLOCK_MONOTONIC` |
+
+It sees a deschedule exactly and almost never reports one that did not happen.
+The threshold is **5 µs**: far above the instrument's 130 ns noise floor and far
+below the 15,092 ns median gap it exists to catch.
+
+**The clock is read outside the interval**, immediately before t₁′ and
+immediately after t₃, so its ~145 ns cost does not inflate a headline hop that
+may be single-digit microseconds on bare metal. The consequence is that the CPU
+window strictly contains the wall window, so a chain that never stopped reads
+slightly **below** zero — a typical −626 ns here. That is the bracket's own zero,
+it is reported as such, and it biases toward **missing** a gap rather than
+inventing one.
+
+**The census checks itself every run**, because one that tags nothing is
+indistinguishable from one that cannot tag. Each report states whether the
+*slowest* chains carried off-CPU time.
+
+### 1.2.2 What the census disproved, in this document
+
+An earlier commit message for this phase said of a 17.7 µs `t2→t3`: *"That is
+the scheduler, on a box cpu_jitter says does not hold a CPU."* **The census says
+otherwise and the census is right.** Measured on the release build, cpus 13/14:
+
+| hop | Debug + ASan | Release |
+|---|---:|---:|
+| `t1′→t2` decision | 1,224 ns | **90 ns** |
+| `t2→t3` encode, frame, write | 17,702 ns | **8,733 ns** |
+| headline `t1′→t3` | 19,214 ns | **8,845 ns** |
+
+Roughly half of it was **AddressSanitizer**, and the remaining 8.7 µs is genuine
+CPU time — off_cpu is ~0 for every chain, including the twelve slowest, which
+ran 27–40 µs against a median of 8.8 µs and were **running the whole time**.
+That tail is the loopback `write()` syscall path, not descheduling. So the hop
+is also misnamed: the encode is the 90 ns in `t1′→t2`, and `t2→t3` is
+overwhelmingly the write.
+
+Two things follow for the boot. Measurements must be taken on the **release**
+build, with the sanitised build used only for the correctness gates; and the
+per-hop names in the results document must say `write` where they currently say
+`encode, frame, write`.
 
 ### 1.3 Every chain-A sample is taken at the loop's most favourable instant
 
@@ -499,6 +560,7 @@ numbers may be published:
 | two instruments on t₀→t₃ | 3.600 cycles/ns implied, against `tsc_offset`'s 3.599 |
 | coverage of the completing iteration | p50 99.2% |
 | MTU sweep, packing delay p50 | 144.5 µs → 117.1 µs → 84.4 µs at 1400 / 700 / 350 |
+| gap-overlap census | 0 of 800 chains descheduled; the 12 slowest were all running |
 
 **The pre-flight refuses, and each refusal has been watched firing.** It will not
 choose CPUs for you — it prints the machine's real topology, marks which cores

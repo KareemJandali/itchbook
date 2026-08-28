@@ -42,7 +42,7 @@ VERSION = 1
 # Must match include/itchbook/bench/trace.hpp exactly. A silent layout change
 # would be read here as plausible numbers, which is why the file carries a
 # version and this asserts the record size the writer declared.
-CHAINA = "<QQQQQQQQQIIIIHHBBBB"
+CHAINA = "<QQQQQQQQQQQIIIIHHBBBB"
 CHAINA_SIZE = struct.calcsize(CHAINA)
 FILLREC = "<QQIIIBBH"
 FILLREC_SIZE = struct.calcsize(FILLREC)
@@ -103,15 +103,21 @@ class Hop:
         self.name = name
         self.cross = cross_process
         self.vals = []
+        self.clean = []          # samples from chains with no scheduler gap
         self.negatives = []
 
-    def add(self, v):
+    def add(self, v, gap_free=None):
         if v < 0:
             self.negatives.append(v)
         self.vals.append(v)
+        # The same sample again, kept separately, when the chain it came from
+        # was running for the whole interval. See the gap-overlap census.
+        if gap_free is True:
+            self.clean.append(v)
 
     def finalize(self):
         self.vals.sort()
+        self.clean.sort()
 
     @property
     def n(self):
@@ -162,6 +168,7 @@ def main():
     chains = {}
     for i in range(len(blob_a) // rec_a):
         (t0, t1, t1p, t2, t3, iter_start, iter_end, tsc0, tsc3,
+         cpu_t1p, cpu_t3,
          ref_seq, stride, dg, msgs, cpu0, cpu3, resp, have, term, _pad) = \
             struct.unpack_from(CHAINA, blob_a, i * rec_a)
         if have == 0:
@@ -169,6 +176,7 @@ def main():
         chains[i] = dict(t0=t0, t1=t1, t1p=t1p, t2=t2, t3=t3,
                          iter_start=iter_start, iter_end=iter_end,
                          tsc0=tsc0, tsc3=tsc3, stride=stride,
+                         cpu_t1p=cpu_t1p, cpu_t3=cpu_t3,
                          dgrams=dg, msgs=msgs, cpu0=cpu0, cpu3=cpu3, have=have)
 
     accepts = {}
@@ -217,19 +225,38 @@ def main():
     coverage = []
     two_instrument = []
 
+    # ---- the gap-overlap census ----------------------------------------------
+    #
+    # off_cpu = wall - thread_cpu over the headline hop is the time the thread
+    # was NOT RUNNING inside it. Chains with any is tagged, and every hop keeps
+    # its clean samples separately so a tail can be reported twice.
+    GAP_NS = 5000        # see the module docstring for why this number
+    census_available = any(c.get("cpu_t1p") and c.get("cpu_t3") for c in chains.values())
+    gap_free = {}
+    off_cpus = []
+    for k, c in chains.items():
+        if not (c.get("cpu_t1p") and c.get("cpu_t3") and c.get("t3") and c.get("t1p")):
+            gap_free[k] = None       # unknown, and unknown is not clean
+            continue
+        off = (int(c["t3"]) - int(c["t1p"])) - (int(c["cpu_t3"]) - int(c["cpu_t1p"]))
+        c["off_cpu"] = off
+        off_cpus.append(off)
+        gap_free[k] = (off < GAP_NS)
+
     cyc_per_ns = None
     for k in sorted(joined):
         c = chains[k]
         a = accepts[k]
+        gf = gap_free.get(k)
         if c["have"] & HAVE_T0:
-            hops[0].add(int(c["t1"]) - int(c["t0"]))
-            hops[1].add(int(c["t1p"]) - int(c["t1"]))
-            head_arrival.add(int(c["t3"]) - int(c["t0"]))
-        hops[2].add(int(c["t2"]) - int(c["t1p"]))
-        hops[3].add(int(c["t3"]) - int(c["t2"]))
-        hops[4].add(int(a["t3p"]) - int(c["t3"]))
-        hops[5].add(int(a["t4"]) - int(a["t3p"]))
-        head_react.add(int(c["t3"]) - int(c["t1p"]))
+            hops[0].add(int(c["t1"]) - int(c["t0"]), gf)
+            hops[1].add(int(c["t1p"]) - int(c["t1"]), gf)
+            head_arrival.add(int(c["t3"]) - int(c["t0"]), gf)
+        hops[2].add(int(c["t2"]) - int(c["t1p"]), gf)
+        hops[3].add(int(c["t3"]) - int(c["t2"]), gf)
+        hops[4].add(int(a["t3p"]) - int(c["t3"]), gf)
+        hops[5].add(int(a["t4"]) - int(a["t3p"]), gf)
+        head_react.add(int(c["t3"]) - int(c["t1p"]), gf)
         if c["iter_end"] and c["iter_start"]:
             wall = int(c["iter_end"]) - int(c["iter_start"])
             # The chain spans the top of the iteration to the write. What is NOT
@@ -344,6 +371,73 @@ def main():
     print()
     line(head_react)
     line(head_arrival)
+
+    # ---- the census, and the only place p99.9 is allowed to appear -----------
+    print()
+    print("=== gap-overlap census ===")
+    if not census_available:
+        print("  ABSENT. Without it a tail percentile cannot be told apart from the")
+        print("  scheduler, so p99.9 is NOT PRINTED -- see the design doc.")
+        not_quotable.append("no gap-overlap census: p99.9 cannot be attributed")
+    else:
+        tagged = sum(1 for k in joined if gap_free.get(k) is False)
+        unknown = sum(1 for k in joined if gap_free.get(k) is None)
+        off_cpus.sort()
+        print("  chains that were NOT running for the whole headline hop: "
+              "%d of %d (%.1f%%)" % (tagged, len(joined),
+                                     100.0 * tagged / max(1, len(joined))))
+        if unknown:
+            print("  chains with no census data: %d (counted as not clean)" % unknown)
+        print("  off-CPU inside the headline hop: p50 %s ns  p90 %s ns  max %s ns"
+              % (pct(off_cpus, 50), pct(off_cpus, 90),
+                 off_cpus[-1] if off_cpus else "-"))
+        if off_cpus and off_cpus[0] < 0:
+            print("  Negative is the BRACKET'S OWN ZERO, not a bug: the CPU clock is")
+            print("  read outside the interval so its ~145 ns cost lands outside too,")
+            print("  and a chain that never stopped reads just below zero. Typical")
+            print("  zero %s ns (p10), against a %d ns threshold." % (pct(off_cpus, 10), GAP_NS))
+            if off_cpus[0] < 10 * (pct(off_cpus, 10) or -1):
+                print("  A few run to %d ns, which is the thread CPU clock's own"
+                      % off_cpus[0])
+                print("  accounting slop under a hypervisor. It is in the safe")
+                print("  direction: a negative can only MISS a gap, never invent one.")
+        print("  threshold %d ns; the instrument's own floor on this machine was "
+              "p99 130 ns over pure work, and it reported 5,350,242 ns across a "
+              "5 ms sleep" % GAP_NS)
+
+        # A census that tags nothing is indistinguishable from one that CANNOT
+        # tag. So every run says whether the SLOWEST chains stopped running.
+        slow = sorted(((int(chains[k]["t3"]) - int(chains[k]["t1p"]),
+                        chains[k].get("off_cpu", 0), k)
+                       for k in joined
+                       if chains[k].get("off_cpu") is not None
+                       and chains[k].get("t3") and chains[k].get("t1p")),
+                      reverse=True)
+        if slow:
+            med = slow[len(slow) // 2][0]
+            big = [x for x in slow if x[0] > 3 * med]
+            hit = [x for x in big if x[1] > GAP_NS]
+            print("  chains over 3x the median headline (%d ns): %d, of which %d "
+                  "had stopped running" % (med, len(big), len(hit)))
+            if big and not hit:
+                print("    -> that tail is WORK, not the scheduler. The census could")
+                print("       have said otherwise and did not.")
+            elif hit:
+                print("    -> that tail is the SCHEDULER on %d of %d slow chains."
+                      % (len(hit), len(big)))
+        print()
+        print("  %-34s %8s %10s %10s" % ("tail, all chains vs gap-free", "n", "p99", "p99.9"))
+        for h in [head_react, head_arrival] + hops:
+            n_all, n_cl = h.n, len(h.clean)
+            def cell(vals, p):
+                return pct(vals, p) if resolvable(len(vals), p) else "n too small"
+            print("  %-34s %8d %10s %10s" % (h.name + "  [all]", n_all,
+                                             cell(h.vals, 99), cell(h.vals, 99.9)))
+            print("  %-34s %8d %10s %10s" % ("  gap-free", n_cl,
+                                             cell(h.clean, 99), cell(h.clean, 99.9)))
+        print()
+        print("  Where the two columns differ, the difference is the scheduler and")
+        print("  not the code. Reporting one number would have hidden it.")
 
     if b_hops:
         print()
@@ -503,6 +597,18 @@ def main():
                               "cross_process": h.cross} for h in hops},
             "headline_t1p_t3": {"n": head_react.n, "p50": pct(head_react.vals, 50)},
             "coverage_p50_pct": pct(coverage, 50) if coverage else None,
+            "gap_census": ({
+                "available": True,
+                "threshold_ns": GAP_NS,
+                "tagged": sum(1 for k in joined if gap_free.get(k) is False),
+                "unknown": sum(1 for k in joined if gap_free.get(k) is None),
+                "off_cpu_p50_ns": pct(sorted(off_cpus), 50) if off_cpus else None,
+                "off_cpu_max_ns": max(off_cpus) if off_cpus else None,
+                "headline_p999_all": (pct(head_react.vals, 99.9)
+                                      if resolvable(head_react.n, 99.9) else None),
+                "headline_p999_gap_free": (pct(head_react.clean, 99.9)
+                                           if resolvable(len(head_react.clean), 99.9) else None),
+            } if census_available else {"available": False}),
             "implied_cycles_per_ns": cyc_per_ns,
         }
         with open(args.json_out, "w") as f:

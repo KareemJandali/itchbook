@@ -57,6 +57,12 @@ struct ChainA {
     uint64_t iter_end = 0;     // bottom of the same iteration
     uint64_t tsc0 = 0;      // paired rdtscp at t0, second instrument
     uint64_t tsc3 = 0;      // paired rdtscp at t3
+    // Thread CPU time bracketing the headline hop, for the gap-overlap census:
+    // (t3 - t1p) - (cpu_t3 - cpu_t1p) is the time this thread was NOT RUNNING
+    // inside the interval. Read outside the interval, so the bias is toward
+    // under-tagging and is bounded by the reads' own cost.
+    uint64_t cpu_t1p = 0;
+    uint64_t cpu_t3 = 0;
     uint32_t ref_seq = 0;   // from the OUCH Accepted; 0 until it lands
     uint32_t stride = 0;    // messages actually applied since the last quote
     uint32_t dgrams_after_trigger = 0;

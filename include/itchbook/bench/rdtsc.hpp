@@ -163,6 +163,24 @@ inline uint64_t mono_ns() {
            static_cast<uint64_t>(ts.tv_nsec);
 }
 
+// CPU time consumed by THIS THREAD, for telling "the code was slow" apart from
+// "the thread was not running".
+//
+// wall_elapsed - thread_cpu_elapsed over a window is the time the thread spent
+// off-CPU in it, which is what phase 12.8 needs to know before it prints a tail
+// percentile: on a box whose median scheduler gap is 15 us, a p99.9 over ~1,200
+// samples is mostly deschedules wearing a hop's label.
+//
+// Measured on this machine rather than assumed: observed granularity 131 ns
+// (clock_getres claims 1), and it costs ~522 cycles against ~68 for a
+// CLOCK_MONOTONIC read -- so it is read at chain boundaries and never per stamp.
+inline uint64_t thread_cpu_ns() {
+    timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+           static_cast<uint64_t>(ts.tv_nsec);
+}
+
 // Cycles per nanosecond, measured rather than assumed: the nominal clock in the
 // model name is not necessarily the TSC rate.
 inline double calibrate_cycles_per_ns(unsigned millis = 50) {
