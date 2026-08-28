@@ -1,0 +1,1156 @@
+{
+  "what": "phase 12.8 tick-to-trade, decomposed - bare metal",
+  "runs": 10,
+  "quotable": false,
+  "not_quotable_because": [
+    "[harness] the working tree is dirty: the binaries may not be the commit",
+    "a cross-process hop is 1831 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 1913 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 2627 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 2738 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 3446 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 3923 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 4350 ns negative, beyond the 55.6 ns offset bound",
+    "a cross-process hop is 7691 ns negative against a 55.6 ns clock bound -- 138x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise.",
+    "a cross-process hop is 9391 ns negative against a 55.6 ns clock bound -- 169x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise.",
+    "a cross-process hop is 9928 ns negative against a 55.6 ns clock bound -- 179x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise.",
+    "the repeats are not one experiment (see pooled)"
+  ],
+  "pooled": {
+    "runs": 10,
+    "seed": 20261208,
+    "permutations": 2000,
+    "alpha": 0.05,
+    "census_in_every_run": true,
+    "not_poolable": [
+      "t1'->t2  decision"
+    ],
+    "hops": {
+      "t0->t1   arrival to applied": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          2805,
+          2727,
+          2787,
+          2878,
+          2756,
+          2783,
+          2855,
+          2811,
+          2832,
+          2813
+        ],
+        "median_of_medians": 2811,
+        "spread_of_medians": 151,
+        "spread_pct_of_median": 5.37,
+        "monotone": null,
+        "run_effect_p": 0.6826586706646677,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 2803,
+          "p99": 12354,
+          "interval": "[2771, 2844] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t0->t3   arrival to write (incl. drain)": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          19726,
+          21039,
+          19999,
+          20683,
+          20228,
+          19861,
+          20400,
+          20019,
+          19623,
+          19053
+        ],
+        "median_of_medians": 20019,
+        "spread_of_medians": 1986,
+        "spread_pct_of_median": 9.92,
+        "monotone": null,
+        "run_effect_p": 0.47876061969015493,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 20026,
+          "p99": 59983,
+          "interval": "[19669, 20420] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t1'->t2  decision": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          105,
+          250,
+          267,
+          258,
+          262,
+          250,
+          259,
+          253,
+          235,
+          127
+        ],
+        "median_of_medians": 253,
+        "spread_of_medians": 162,
+        "spread_pct_of_median": 64.03,
+        "monotone": null,
+        "run_effect_p": 0.0014992503748125937,
+        "poolable": false,
+        "pooled": {
+          "n": 12000,
+          "p50": 244,
+          "p99": 742,
+          "interval": "[105, 267] runs",
+          "interval_is": "per-run range"
+        }
+      },
+      "t1'->t3  HEADLINE reaction path": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          8133,
+          8158,
+          8213,
+          8238,
+          8154,
+          8170,
+          8144,
+          8230,
+          8150,
+          8091
+        ],
+        "median_of_medians": 8158,
+        "spread_of_medians": 147,
+        "spread_pct_of_median": 1.8,
+        "monotone": null,
+        "run_effect_p": 0.7146426786606697,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 8169,
+          "p99": 23837,
+          "interval": "[8135, 8206] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t1->t1'  post-trigger drain": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          5962,
+          6211,
+          6222,
+          6485,
+          6206,
+          6071,
+          6062,
+          6084,
+          6045,
+          5826
+        ],
+        "median_of_medians": 6084,
+        "spread_of_medians": 659,
+        "spread_pct_of_median": 10.83,
+        "monotone": null,
+        "run_effect_p": 0.4867566216891554,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 6106,
+          "p99": 32508,
+          "interval": "[5969, 6229] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t2->t3   encode, frame, write": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          8001,
+          8039,
+          8036,
+          8120,
+          8008,
+          8063,
+          8012,
+          8090,
+          8006,
+          7965
+        ],
+        "median_of_medians": 8036,
+        "spread_of_medians": 155,
+        "spread_pct_of_median": 1.93,
+        "monotone": null,
+        "run_effect_p": 0.5612193903048476,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 8036,
+          "p99": 23357,
+          "interval": "[8001, 8067] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t3'->t4  parse, validate, submit": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          2152,
+          2537,
+          2593,
+          2606,
+          2629,
+          2574,
+          2509,
+          2502,
+          2512,
+          2354
+        ],
+        "median_of_medians": 2537,
+        "spread_of_medians": 477,
+        "spread_pct_of_median": 18.8,
+        "monotone": null,
+        "run_effect_p": 0.12543728135932034,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 2515,
+          "p99": 13701,
+          "interval": "[2447, 2578] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t3->t3'  loopback TCP": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          1687,
+          1761,
+          1720,
+          1762,
+          1690,
+          1723,
+          1697,
+          1807,
+          1756,
+          1704
+        ],
+        "median_of_medians": 1723,
+        "spread_of_medians": 120,
+        "spread_pct_of_median": 6.96,
+        "monotone": null,
+        "run_effect_p": 0.6496751624187906,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 1728,
+          "p99": 47264,
+          "interval": "[1702, 1755] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t5a->t5b PACKING DELAY (--mtu)": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          20702,
+          22045,
+          22581,
+          22152,
+          22075,
+          21476,
+          21300,
+          21735,
+          20803,
+          20039
+        ],
+        "median_of_medians": 21735,
+        "spread_of_medians": 2542,
+        "spread_pct_of_median": 11.7,
+        "monotone": null,
+        "run_effect_p": 0.05247376311844078,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 21543,
+          "p99": 1296067,
+          "interval": "[21134, 21897] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t5b->t6' loopback UDP": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          21456,
+          19753,
+          21641,
+          23033,
+          22626,
+          20624,
+          22159,
+          21577,
+          19319,
+          23026
+        ],
+        "median_of_medians": 21641,
+        "spread_of_medians": 3714,
+        "spread_pct_of_median": 17.16,
+        "monotone": null,
+        "run_effect_p": 0.053973013493253376,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 21391,
+          "p99": 157005,
+          "interval": "[20899, 21934] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "t6'->t6  drain, sequence, parse, apply": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          3333,
+          3183,
+          3153,
+          3209,
+          3237,
+          3294,
+          3356,
+          3315,
+          3338,
+          3305
+        ],
+        "median_of_medians": 3305,
+        "spread_of_medians": 203,
+        "spread_pct_of_median": 6.14,
+        "monotone": null,
+        "run_effect_p": 0.5082458770614693,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 3268,
+          "p99": 15042,
+          "interval": "[3227, 3310] normal",
+          "interval_is": "order-statistic CI"
+        }
+      },
+      "tA->t5a  aggressor walk and match": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          918,
+          935,
+          964,
+          1047,
+          965,
+          917,
+          997,
+          946,
+          967,
+          926
+        ],
+        "median_of_medians": 964,
+        "spread_of_medians": 130,
+        "spread_pct_of_median": 13.49,
+        "monotone": null,
+        "run_effect_p": 0.6091954022988506,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 955,
+          "p99": 18754,
+          "interval": "[927, 984] normal",
+          "interval_is": "order-statistic CI"
+        }
+      }
+    }
+  },
+  "harness_verdict": {
+    "what": "phase 12.8 tick-to-trade, decomposed",
+    "commit": "unknown",
+    "dirty_tree": true,
+    "cpus": {
+      "exchange": 1,
+      "strategy": 2
+    },
+    "clocksource": "tsc",
+    "tsc_offset_bound_ns": 52.501,
+    "completed_runs": 1,
+    "quotable": false,
+    "not_quotable_because": [
+      "the working tree is dirty: the binaries may not be the commit"
+    ],
+    "runs": [
+      {
+        "quotable": false,
+        "broken": [],
+        "not_quotable": [
+          "a cross-process hop is 5975 ns negative against a 52.5 ns clock bound -- 114x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise."
+        ],
+        "orders_sent": 1200,
+        "joined": 1200,
+        "hops": {
+          "t0->t1   arrival to applied": {
+            "n": 1200,
+            "p50": 2921,
+            "p99": 12676,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t1->t1'  post-trigger drain": {
+            "n": 1200,
+            "p50": 6439,
+            "p99": 35863,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t1'->t2  decision": {
+            "n": 1200,
+            "p50": 265,
+            "p99": 739,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t2->t3   encode, frame, write": {
+            "n": 1200,
+            "p50": 8137,
+            "p99": 23398,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t3->t3'  loopback TCP": {
+            "n": 1200,
+            "p50": 1704,
+            "p99": 44145,
+            "negatives": 317,
+            "cross_process": true
+          },
+          "t3'->t4  parse, validate, submit": {
+            "n": 1200,
+            "p50": 2677,
+            "p99": 13933,
+            "negatives": 0,
+            "cross_process": false
+          }
+        },
+        "headline_t1p_t3": {
+          "n": 1200,
+          "p50": 8291
+        },
+        "coverage_p50_pct": 99.97398038631943,
+        "gap_census": {
+          "available": true,
+          "threshold_ns": 5000,
+          "tagged": 0,
+          "unknown": 0,
+          "off_cpu_p50_ns": -686,
+          "off_cpu_max_ns": -171,
+          "headline_p999_all": null,
+          "headline_p999_gap_free": null
+        },
+        "implied_cycles_per_ns": 3.5986599161041113
+      }
+    ],
+    "notes": [
+      "The decisive gate is cpu_jitter on the exact pinned pair, not the clock checks: every clock check this repository owns passes on a WSL2 box whose scheduler makes a microsecond decomposition meaningless.",
+      "Sum(hops) == t_last - t_first is arithmetic, not a check: differences of stored stamps telescope. Coverage, two-instruments, sign gates and count identities are what can fail.",
+      "Both cross-process hops carry the clock offset with opposite sign, so their SUM is offset-free and only their SPLIT is exposed. The headline t1'->t3 is entirely strategy-local and carries none of it."
+    ]
+  },
+  "per_run": [
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 9391 ns negative against a 55.6 ns clock bound -- 169x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise."
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2805,
+          "p99": 14086,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 5962,
+          "p99": 31848,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 105,
+          "p99": 807,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8001,
+          "p99": 26256,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1687,
+          "p99": 49234,
+          "negatives": 336,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2152,
+          "p99": 13292,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8133
+      },
+      "coverage_p50_pct": 99.97444497960797,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -562,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.598924148327637
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 2738 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2813,
+          "p99": 12001,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 5826,
+          "p99": 28838,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 127,
+          "p99": 714,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 7965,
+          "p99": 24791,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1704,
+          "p99": 44401,
+          "negatives": 334,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2354,
+          "p99": 13666,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8091
+      },
+      "coverage_p50_pct": 99.97326360763641,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -576,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5984779882588644
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 9928 ns negative against a 55.6 ns clock bound -- 179x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise."
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2727,
+          "p99": 12225,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6211,
+          "p99": 31548,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 250,
+          "p99": 817,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8039,
+          "p99": 23154,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1761,
+          "p99": 48012,
+          "negatives": 325,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2537,
+          "p99": 13769,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8158
+      },
+      "coverage_p50_pct": 99.97305827111077,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -580,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.597604301721728
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 3446 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2787,
+          "p99": 13037,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6222,
+          "p99": 31885,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 267,
+          "p99": 655,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8036,
+          "p99": 23228,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1720,
+          "p99": 47063,
+          "negatives": 320,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2593,
+          "p99": 14092,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8213
+      },
+      "coverage_p50_pct": 99.97336360580674,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -576,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5989520957716588
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 1913 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2878,
+          "p99": 12761,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6485,
+          "p99": 35654,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 258,
+          "p99": 735,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8120,
+          "p99": 23104,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1762,
+          "p99": 47104,
+          "negatives": 307,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2606,
+          "p99": 13795,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8238
+      },
+      "coverage_p50_pct": 99.97383187810702,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -587,
+        "off_cpu_max_ns": -173,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5985053392647717
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 1831 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2756,
+          "p99": 12678,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6206,
+          "p99": 34505,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 262,
+          "p99": 684,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8008,
+          "p99": 23078,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1690,
+          "p99": 46695,
+          "negatives": 321,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2629,
+          "p99": 14435,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8154
+      },
+      "coverage_p50_pct": 99.9739978945,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -600,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5986779061968166
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 2627 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2783,
+          "p99": 11899,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6071,
+          "p99": 33431,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 250,
+          "p99": 795,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8063,
+          "p99": 23114,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1723,
+          "p99": 48115,
+          "negatives": 332,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2574,
+          "p99": 12903,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8170
+      },
+      "coverage_p50_pct": 99.97388398403626,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -628,
+        "off_cpu_max_ns": -176,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5986533237851734
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 3923 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2855,
+          "p99": 12779,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6062,
+          "p99": 32950,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 259,
+          "p99": 978,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8012,
+          "p99": 22889,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1697,
+          "p99": 48181,
+          "negatives": 361,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2509,
+          "p99": 13757,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8144
+      },
+      "coverage_p50_pct": 99.97371936472457,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -583,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5987304488812164
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 4350 ns negative, beyond the 55.6 ns offset bound"
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2811,
+          "p99": 11324,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6084,
+          "p99": 34496,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 253,
+          "p99": 796,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8090,
+          "p99": 23640,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1807,
+          "p99": 46566,
+          "negatives": 306,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2502,
+          "p99": 13785,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8230
+      },
+      "coverage_p50_pct": 99.97457824970384,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -570,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5984107507281955
+    },
+    {
+      "quotable": false,
+      "broken": [],
+      "not_quotable": [
+        "a cross-process hop is 7691 ns negative against a 55.6 ns clock bound -- 138x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise."
+      ],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2832,
+          "p99": 12299,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6045,
+          "p99": 32053,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 235,
+          "p99": 552,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8006,
+          "p99": 23295,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  loopback TCP": {
+          "n": 1200,
+          "p50": 1756,
+          "p99": 47795,
+          "negatives": 327,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2512,
+          "p99": 14243,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8150
+      },
+      "coverage_p50_pct": 99.97410948242211,
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -606,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5986694090892577
+    }
+  ],
+  "notes": [
+    "Every number here was re-derived from the raw traces by scripts/phase12-8-report.py, not read from the live session's transcript. A transcript cannot be re-checked and a number in it cannot be traced to the samples that produced it.",
+    "Sum(hops) == t_last - t_first is arithmetic, not a check: differences of stored stamps telescope. Coverage, the two instruments, the sign gates and the count identities are what can fail.",
+    "p99.9 appears only where the gap-overlap census does, and then twice: over all chains and over the chains that were running throughout."
+  ]
+}

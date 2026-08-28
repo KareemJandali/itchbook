@@ -118,6 +118,16 @@ build_with build-verify-gcc gcc g++ Debug
 # It reads the fixture tests/test_tick_to_trade.cpp writes, which is how the C++
 # structs and the Python reader are checked against each other rather than
 # against two copies of a constant. ctest has run by now, so the fixture exists.
+# The results document is generated from artifacts, never typed. --check
+# regenerates and diffs, so a stale table fails rather than being noticed.
+step "phase 12.8 results document matches its artifacts"
+if python3 scripts/phase12-8-results.py --check; then
+    :
+else
+    echo "  FAILED: docs/phase12-8-results.md is stale"
+    fail=1
+fi
+
 step "phase 12.8 report: join, sign gates, census"
 if python3 tests/test_report_join.py > /tmp/vl-report-join.txt 2>&1; then
     grep -c "^  ok" /tmp/vl-report-join.txt | sed 's/^/  checks passed: /'
