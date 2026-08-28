@@ -3606,8 +3606,25 @@ disagreement categorised as unexplained is a finding and may stand; an
       either fill path. Watched failing on a suppressed ITCH delete.)*
 - [x] **12.7** — strategy trades against your own exchange over real sockets,
       inside a replayed historical day, under the 12.0 topology.
-- [ ] **12.8** — tick-to-trade p50/p99.9 reported and decomposed per hop; every
-      hop explained. **Needs bare metal.**
+- [x] **12.8** — tick-to-trade p50/p99.9 reported and decomposed per hop; every
+      hop explained. Bare metal, 2026-08-28, three boots.
+      *(Headline `t1'→t3` 8,139 ns p50 / 38,244 ns p99.9 over n=12,000, at a
+      verified `performance` governor on a provenance-checked build. It
+      reproduces: 8,139 against the previous boot's 8,169, 0.4% apart on a
+      different core pair from a separately built kit.*
+      *Restructured from the plan's single seven-hop chain into two chains and
+      one resting interval — the accept-to-fill gap is how long a quote sat in
+      the book waiting for the tape, which is market structure divided by the
+      replay multiplier and not a latency. The plan's "hops sum to the total"
+      was dropped as vacuous: differences of stored stamps telescope, so it
+      holds even with a stamp in the wrong function. Coverage, two instruments,
+      sign gates and count identities replace it, and those can fail.*
+      *NOT established, both recorded rather than argued away: `t1'→t2` and the
+      packing delay fail the run-effect test, so they pool into no p99.9; and
+      the reaction path is NOT flat across `--multiplier` as §7.2 predicted —
+      it moves 3.3× across a 4× range, in the direction where a slower feed
+      gives a slower reaction, making the headline a function of offered load.
+      See `docs/phase12-8-results.md`, which is generated from the artifact.)*
 - [ ] **12.9** — replay-vs-live A/B published with every disagreement
       categorised.
 
