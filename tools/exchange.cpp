@@ -55,6 +55,9 @@
 #include <string>
 #include <vector>
 
+#include "itchbook/bench/rdtsc.hpp"
+#include "itchbook/bench/trace.hpp"
+#include "itchbook/bench/topology.hpp"
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/emit/sink.hpp"
 #include "itchbook/engine/gateway.hpp"
@@ -69,16 +72,13 @@ namespace eng = itchbook::engine;
 namespace sb = itchbook::soupbin;
 namespace bk = itchbook::book;
 namespace rp = itchbook::replay;
+namespace bench = itchbook::bench;
 
 constexpr uint16_t kLocate = 1;
 constexpr uint64_t kTickPeriodNs = 100'000'000;   // 100ms; see the banner
 
-uint64_t wall_now_ns() {
-    timespec ts{};
-    ::clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
-           static_cast<uint64_t>(ts.tv_nsec);
-}
+// One epoch and one scale, shared with the strategy. See bench/rdtsc.hpp.
+inline uint64_t wall_now_ns() { return bench::mono_ns(); }
 
 struct Opt {
     std::string feed;
@@ -92,7 +92,9 @@ struct Opt {
     uint64_t heartbeat_ms = 250;
     bool suppress_strategy_exec_itch = false;
     bool wait_for_client = false;
-    uint64_t client_timeout_s = 30;   // the negative arm
+    uint64_t client_timeout_s = 30;
+    int cpu = -1;                  // pin here, and report what was granted
+    std::string trace_out;         // raw records, written before anything is formatted   // the negative arm
     std::string json;
     uint64_t trace = 0;
 };
@@ -148,6 +150,12 @@ struct OuchIn : sb::Sink {
     uint64_t wall = 0;
     uint64_t trace = 0;
     uint64_t delivered = 0, refused = 0;
+    // t3': the read that completed this order's frame, set by the caller just
+    // before the session dispatches it.
+    uint64_t t3p = 0;
+    bench::Arena<bench::AcceptEx>* accepts = nullptr;
+    bench::StampCounts* sc = nullptr;
+    uint64_t accepted_before = 0, rejected_before = 0;
     void on_message(const uint8_t* p, size_t n) override {
         if (gw == nullptr) return;
         ++delivered;
@@ -164,7 +172,37 @@ struct OuchIn : sb::Sink {
                         ha ? std::to_string(ask).c_str() : "none");
             std::fflush(stdout);
         }
+        // The token's decimal suffix is the strategy's own dense sample index,
+        // so this is an array subscript on both sides of the socket.
+        uint32_t token_seq = 0;
+        if (n >= itchbook::ouch::kEnterOrderLen &&
+            static_cast<char>(p[0]) == 'O') {
+            const uint8_t* t = itchbook::ouch::enter_order::order_token(p);
+            for (int i = 1; i < 14; ++i) {
+                if (t[i] >= '0' && t[i] <= '9') token_seq = token_seq * 10 + uint32_t(t[i] - '0');
+            }
+        }
+        const uint64_t acc0 = gw->accepts_sent();
+        const uint64_t rej0 = gw->rejects_sent();
+
         if (!gw->on_ouch(p, n, wall)) ++refused;
+
+        // t4: the FIRST response for this order, whatever it was. A reject is
+        // the cheap path -- send_reject returns before the book walk -- so its
+        // type is recorded rather than the sample dropped.
+        if (token_seq != 0 && accepts != nullptr) {
+            const uint64_t acc1 = gw->accepts_sent();
+            const uint64_t rej1 = gw->rejects_sent();
+            if (acc1 != acc0 || rej1 != rej0) {
+                if (bench::AcceptEx* a = accepts->push()) {
+                    a->t3p = t3p;
+                    a->t4 = bench::mono_ns();
+                    a->token_seq = token_seq;
+                    a->resp = (acc1 != acc0) ? 'A' : 'J';
+                    if (sc != nullptr) { ++sc->t3p; ++sc->t4; }
+                }
+            }
+        }
     }
 };
 
@@ -203,6 +241,8 @@ int main(int argc, char** argv) {
         else if (a == "--suppress-strategy-exec-itch") opt.suppress_strategy_exec_itch = true;
         else if (a == "--wait-for-client") opt.wait_for_client = true;
         else if (a == "--client-timeout-s") opt.client_timeout_s = std::strtoull(next("--client-timeout-s"), nullptr, 10);
+        else if (a == "--cpu") opt.cpu = std::atoi(next("--cpu"));
+        else if (a == "--trace-out") opt.trace_out = next("--trace-out");
         else if (a == "--json") opt.json = next("--json");
         else if (a == "--trace") opt.trace = std::strtoull(next("--trace"), nullptr, 10);
         else { std::fprintf(stderr, "error: unknown option %s\n", a.c_str()); return 2; }
@@ -239,6 +279,23 @@ int main(int argc, char** argv) {
 
     uint64_t next_tick_ns = wall_now_ns() + kTickPeriodNs;
 
+    // Pin in-process and report what was GRANTED. Never taskset: it cannot
+    // report back, so it records an intention rather than a fact.
+    int pinned_cpu = -1;
+    if (opt.cpu >= 0) {
+        cpu_set_t cset;
+        CPU_ZERO(&cset);
+        CPU_SET(opt.cpu, &cset);
+        if (::pthread_setaffinity_np(::pthread_self(), sizeof(cset), &cset) == 0) {
+            pinned_cpu = ::sched_getcpu();
+        }
+        if (pinned_cpu != opt.cpu) {
+            std::fprintf(stderr, "error: --cpu %d requested, running on %d\n",
+                         opt.cpu, pinned_cpu);
+            return 4;
+        }
+    }
+
     // ---- the exchange ----------------------------------------------------------
     bk::BookSet set{1u << 22, 100, 20, 512};
     bk::Book& book = set.at(opt.locate);
@@ -253,6 +310,10 @@ int main(int argc, char** argv) {
     rp::SplitReplayer replayer{set};
     replayer.set_matcher(&matcher);
     replayer.set_sink(&feed);
+
+    bench::Arena<bench::AcceptEx> accept_ex;
+    bench::StampCounts stamps;
+    accept_ex.reserve(1u << 14);
 
     OutQueue out;
     OuchIn ouch_in;
@@ -345,6 +406,8 @@ int main(int argc, char** argv) {
                     ouch_in.gw = gw;
                     ouch_in.book = &book;
                     ouch_in.trace = opt.trace;
+                    ouch_in.accepts = &accept_ex;
+                    ouch_in.sc = &stamps;
                     // Nothing to register: the poll set is rebuilt from cfd
                     // every iteration, so the new client is watched from the
                     // next one.
@@ -362,6 +425,8 @@ int main(int argc, char** argv) {
                         break;
                     }
                     if (r > 0) {
+                        // t3': this read completed whatever frames it completed.
+                        ouch_in.t3p = bench::mono_ns();
                         ouch_in.wall = wall;
                         session->on_bytes(rb, size_t(r), wall);
                         if (session->state() == sb::State::LoginReceived) {
@@ -461,6 +526,22 @@ int main(int argc, char** argv) {
         }
     }
 
+    // RAW RECORDS FIRST, before anything is formatted.
+    if (!opt.trace_out.empty()) {
+        std::FILE* tf = bench::trace_open(opt.trace_out.c_str());
+        if (tf == nullptr) {
+            std::fprintf(stderr, "error: cannot write --trace-out %s\n",
+                         opt.trace_out.c_str());
+            return 1;
+        }
+        const bool ok = bench::write_section(tf, "ACPT", accept_ex, accept_ex.size());
+        std::fclose(tf);
+        if (!ok) {
+            std::fprintf(stderr, "error: short write to %s\n", opt.trace_out.c_str());
+            return 1;
+        }
+    }
+
     const uint64_t wall_end = wall_now_ns();
     const auto& rc = replayer.counters();
 
@@ -482,6 +563,11 @@ int main(int argc, char** argv) {
         std::printf("%-30s %16" PRId64 "\n", "gateway position", gw->position());
         std::printf("%-30s %16" PRIu64 "\n", "live orders", gw->live_orders());
     }
+    std::printf("%-30s %16d\n", "pinned to cpu", pinned_cpu);
+    std::printf("%-30s %16zu\n", "chain A accept records", accept_ex.size());
+    std::printf("%-30s %16" PRIu64 "\n", "  t3' stamps", stamps.t3p);
+    std::printf("%-30s %16" PRIu64 "\n", "  t4 stamps", stamps.t4);
+    std::printf("%-30s %16" PRIu64 "\n", "  samples dropped (arena full)", accept_ex.dropped());
     std::printf("%-30s %16" PRIu64 "\n", "OUCH inbound delivered", ouch_in.delivered);
     std::printf("%-30s %16" PRIu64 "\n", "OUCH inbound refused", ouch_in.refused);
     if (false) {
@@ -500,7 +586,10 @@ int main(int argc, char** argv) {
                 "  \"datagrams_sent\": %" PRIu64 ",\n  \"ouch_accepted\": %" PRIu64 ",\n"
                 "  \"ouch_executed\": %" PRIu64 ",\n  \"gateway_position\": %" PRId64 ",\n"
                 "  \"conserves_shares\": %s,\n  \"agrees_with_book\": %s,\n"
-                "  \"wall_ns\": %" PRIu64 "\n}\n",
+                "  \"wall_ns\": %" PRIu64 ",\n"
+                "  \"pinned_cpu\": %d,\n  \"clock\": \"CLOCK_MONOTONIC\",\n"
+                "  \"accept_records\": %zu,\n  \"samples_dropped\": %" PRIu64 ",\n"
+                "  \"stamps\": {\"t3p\": %" PRIu64 ", \"t4\": %" PRIu64 "}\n}\n",
                 read, applied, rc.aggressors, rc.strategy_shares_taken,
                 rc.partition_violations, feed.published, feed.suppressed,
                 pub.packets(), pub.heartbeats(), udp.datagrams,
@@ -508,7 +597,9 @@ int main(int argc, char** argv) {
                 gw ? gw->position() : 0,
                 matcher.conserves_shares() ? "true" : "false",
                 matcher.agrees_with_book() ? "true" : "false",
-                wall_end - wall_start);
+                wall_end - wall_start,
+                pinned_cpu, accept_ex.size(), accept_ex.dropped(),
+                stamps.t3p, stamps.t4);
             std::fclose(j);
         }
     }

@@ -62,6 +62,9 @@
 #include <unordered_set>
 #include <vector>
 
+#include "itchbook/bench/rdtsc.hpp"
+#include "itchbook/bench/trace.hpp"
+#include "itchbook/bench/topology.hpp"
 #include "itchbook/book/book_set.hpp"
 #include "itchbook/book/dispatch.hpp"
 #include "itchbook/itch/messages.hpp"
@@ -78,15 +81,12 @@ namespace sb = itchbook::soupbin;
 namespace bk = itchbook::book;
 namespace ouch = itchbook::ouch;
 namespace m = itchbook::itch;
+namespace bench = itchbook::bench;
 
 constexpr uint64_t kTickPeriodNs = 100'000'000;
 
-uint64_t wall_now_ns() {
-    timespec ts{};
-    ::clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
-           static_cast<uint64_t>(ts.tv_nsec);
-}
+// One epoch and one scale, shared with the exchange. See bench/rdtsc.hpp.
+inline uint64_t wall_now_ns() { return bench::mono_ns(); }
 
 struct Opt {
     std::string symbol = "TEST";
@@ -99,6 +99,9 @@ struct Opt {
     uint64_t max_orders = 200;
     bool drop_ouch_executed = false;  // the positive arm
     uint64_t ack_delay_ms = 0;        // hold Accepted this long; see the banner
+    int cpu = -1;                     // pin here, and report what was granted
+    std::string trace_out;            // raw chain records, written before anything is formatted
+    uint64_t expect_messages = 2'000'000;   // arena sizing; overflow is refused, never wrapped
     std::string json;
     uint64_t trace = 0;
 };
@@ -109,11 +112,20 @@ struct Opt {
 struct OutQueue : sb::Sink {
     std::vector<uint8_t> buf;
     size_t sent = 0;
-    void on_message(const uint8_t* p, size_t n) override { buf.insert(buf.end(), p, p + n); }
+    // Cumulative, never reset: an order's t3 is the write whose running total
+    // first covers the end of that order's own frame, and a partial write takes
+    // part of one. See the banner.
+    uint64_t produced = 0;
+    uint64_t written = 0;
+    void on_message(const uint8_t* p, size_t n) override {
+        buf.insert(buf.end(), p, p + n);
+        produced += n;
+    }
     const uint8_t* data() const { return buf.data() + sent; }
     size_t size() const { return buf.size() - sent; }
     bool empty() const { return sent >= buf.size(); }
     void consume(size_t n) {
+        written += n;
         sent += n;
         if (sent == buf.size()) { buf.clear(); sent = 0; }
         else if (sent >= 4096) { buf.erase(buf.begin(), buf.begin() + sent); sent = 0; }
@@ -159,6 +171,24 @@ struct Belief {
     int64_t position = 0;
     uint16_t locate = 0;                       // learned from the feed
     bool have_locate = false;
+
+    // ---- chain A arming ------------------------------------------------------
+    // The trigger is the message whose apply crosses the quote counter. It is
+    // stamped when it happens rather than reconstructed afterwards, because
+    // afterwards the drain has already run and the message is gone.
+    uint64_t armed_at = 0;        // applied-count at which the next quote arms
+    bool trigger_seen = false;
+    uint64_t trig_t0 = 0, trig_t1 = 0, trig_tsc0 = 0;
+    uint16_t trig_cpu0 = 0xFFFF;
+    uint32_t trig_dgrams = 0;     // datagrams drained after the trigger
+    uint32_t trig_msgs = 0;       // messages applied after the trigger
+    uint64_t trig_applied = 0;    // applied-count at the trigger, for the stride
+
+    // The datagram currently being parsed, so a message can reach back to the
+    // recvfrom that carried it.
+    uint64_t cur_t0 = 0, cur_tsc0 = 0;
+    uint16_t cur_cpu0 = 0xFFFF;
+    bench::StampCounts* sc = nullptr;
 
     // The Accepted for `ref` has just landed. Anything the feed already said
     // about it counts now, exactly as it would have counted then.
@@ -261,7 +291,24 @@ struct FeedHandler {
             }
         }
 
-        if (bk::apply(b->set, type, p)) ++b->applied;
+        if (bk::apply(b->set, type, p)) {
+            ++b->applied;
+            // t1: the message that arms the next quote. Stamped here because
+            // the drain that follows would otherwise have to be unwound.
+            if (!b->trigger_seen && b->armed_at != 0 && b->applied >= b->armed_at) {
+                b->trigger_seen = true;
+                b->trig_t1 = bench::mono_ns();
+                b->trig_t0 = b->cur_t0;
+                b->trig_tsc0 = b->cur_tsc0;
+                b->trig_cpu0 = b->cur_cpu0;
+                b->trig_applied = b->applied;
+                b->trig_dgrams = 0;
+                b->trig_msgs = 0;
+                if (b->sc != nullptr) { ++b->sc->t0; ++b->sc->t1; }
+            } else if (b->trigger_seen) {
+                ++b->trig_msgs;   // drain residue, published beside the hop
+            }
+        }
     }
 
     // A gap means the book is no longer trustworthy. Recording it is enough
@@ -295,6 +342,9 @@ int main(int argc, char** argv) {
         else if (a == "--max-orders") opt.max_orders = std::strtoull(next("--max-orders"), nullptr, 10);
         else if (a == "--drop-ouch-executed") opt.drop_ouch_executed = true;
         else if (a == "--ack-delay-ms") opt.ack_delay_ms = std::strtoull(next("--ack-delay-ms"), nullptr, 10);
+        else if (a == "--cpu") opt.cpu = std::atoi(next("--cpu"));
+        else if (a == "--trace-out") opt.trace_out = next("--trace-out");
+        else if (a == "--expect-messages") opt.expect_messages = std::strtoull(next("--expect-messages"), nullptr, 10);
         else if (a == "--json") opt.json = next("--json");
         else if (a == "--trace") opt.trace = std::strtoull(next("--trace"), nullptr, 10);
         else { std::fprintf(stderr, "error: unknown option %s\n", a.c_str()); return 2; }
@@ -345,6 +395,24 @@ int main(int argc, char** argv) {
     // at the top of the loop cannot be skipped by any path through it. poll()
     // rather than epoll because epoll is Linux-only and there are two fds.
     uint64_t next_tick_ns = wall_now_ns() + kTickPeriodNs;
+
+    // Pin in-process and report what was GRANTED, the way wire_to_book,
+    // tsc_offset and cpu_jitter already do -- never taskset, which cannot
+    // report back and records an intention rather than a fact.
+    int pinned_cpu = -1;
+    if (opt.cpu >= 0) {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(opt.cpu, &set);
+        if (::pthread_setaffinity_np(::pthread_self(), sizeof(set), &set) == 0) {
+            pinned_cpu = ::sched_getcpu();
+        }
+        if (pinned_cpu != opt.cpu) {
+            std::fprintf(stderr, "error: --cpu %d requested, running on %d\n",
+                         opt.cpu, pinned_cpu);
+            return 4;
+        }
+    }
 
     Belief belief;
     FeedHandler handler;
@@ -418,6 +486,21 @@ int main(int argc, char** argv) {
     ouch_in.delay_ns = opt.ack_delay_ms * 1'000'000ULL;
     ouch_in.late = &late_acks;
 
+    // Arenas, sized before READY. An index past the end is dropped and
+    // counted; nothing wraps.
+    bench::Arena<bench::ChainA> chain_a;
+    bench::Arena<bench::FillRec> fills;
+    bench::StampCounts stamps;
+    chain_a.reserve(opt.max_orders + 2);
+    fills.reserve(1u << 16);
+    belief.sc = &stamps;
+    // Arm the FIRST chain. Without this `armed_at` stays 0, the trigger test
+    // never fires before the first quote, and chain 1 carries no t0 and no t1.
+    belief.armed_at = opt.quote_every;
+    // Pending t3: orders enqueued but not yet covered by a completed write.
+    std::vector<std::pair<uint32_t, uint64_t>> awaiting_t3;   // token_seq, frame_end
+    awaiting_t3.reserve(256);
+
     const uint64_t wall_start = wall_now_ns();
     sb::ClientSession client(ccfg, wall_start, "STRAT", "PASSWORD", "", "1", &out, &ouch_in);
 
@@ -435,7 +518,17 @@ int main(int argc, char** argv) {
     uint64_t ended_at = 0;
     bool exchange_gone = false;
 
+    // The coverage check needs the wall of the iteration a chain completed in,
+    // so the report can subtract the hops stamped inside it and publish what is
+    // left as un-instrumented time -- the failure the telescoping identity
+    // structurally cannot see. Only chains that finished THIS iteration are
+    // touched, so this stays O(orders completed) and not O(orders).
+    uint64_t iter_start = 0;
+    std::vector<uint32_t> closed_this_iter;
+    closed_this_iter.reserve(64);
     while (true) {
+        iter_start = bench::mono_ns();
+        closed_this_iter.clear();
         int timeout_ms = 20;
         const uint64_t before = wall_now_ns();
         const int to_tick = next_tick_ns > before
@@ -482,6 +575,13 @@ int main(int argc, char** argv) {
                 for (;;) {
                     const ssize_t r = ::recvfrom(ufd, dg.data(), dg.size(), 0, nullptr, nullptr);
                     if (r <= 0) break;
+                    // t0, per datagram, with a paired rdtscp: a second
+                    // instrument on the same interval and a migration witness.
+                    unsigned aux0 = 0xFFFFu;
+                    belief.cur_tsc0 = bench::cycles_end_cpu(&aux0);
+                    belief.cur_cpu0 = static_cast<uint16_t>(aux0);
+                    belief.cur_t0 = bench::mono_ns();
+                    if (belief.trigger_seen) ++belief.trig_dgrams;
                     ++datagrams;
                     seq.on_packet(dg.data(), size_t(r), handler);
                 }
@@ -497,6 +597,10 @@ int main(int argc, char** argv) {
         // an order this phase cannot observe.
         if (client.state() == sb::State::LoggedIn && orders_sent < opt.max_orders &&
             belief.have_locate && belief.applied - last_quote_at >= opt.quote_every) {
+            // t1': the drain has finished and the decision is about to be made
+            // off the post-drain book. This, not t0, anchors the headline.
+            const uint64_t t1p = bench::mono_ns();
+            ++stamps.t1p;
             const bk::Book* b = belief.set.peek(belief.locate);
             int32_t bid = 0;
             int32_t ask = 0;
@@ -510,7 +614,13 @@ int main(int argc, char** argv) {
             }
             const int32_t px = base > 0 ? base - opt.quote_offset_ticks * opt.tick : 0;
             if (px > 0) {
+                // t2: the decision exists. Before the token is minted, so the
+                // token writer's cost lands in the encode hop where it belongs.
+                const uint64_t t2 = bench::mono_ns();
+                ++stamps.t2;
+                const uint64_t stride = belief.applied - last_quote_at;
                 last_quote_at = belief.applied;
+                const uint32_t token_seq = static_cast<uint32_t>(next_token);
                 char tok[15];
                 write_token(tok, next_token++);
                 uint8_t msg[ouch::kEnterOrderLen];
@@ -518,6 +628,28 @@ int main(int argc, char** argv) {
                     msg, tok, 'B', opt.quote_shares, opt.symbol.c_str(), px, 0,
                     "STRT", 'Y', 'A', 'N', 0, 'N', ' ');
                 client.send_unsequenced(msg, mn, wall);
+                // The order is bytes in a queue now. Its t3 is the write whose
+                // running total first covers the end of its own frame.
+                if (bench::ChainA* c = chain_a.at(token_seq)) {
+                    c->t0 = belief.trig_t0;
+                    c->t1 = belief.trig_t1;
+                    c->t1p = t1p;
+                    c->t2 = t2;
+                    c->tsc0 = belief.trig_tsc0;
+                    c->cpu0 = belief.trig_cpu0;
+                    c->iter_start = iter_start;
+                    c->stride = static_cast<uint32_t>(stride);
+                    c->dgrams_after_trigger = belief.trig_dgrams;
+                    c->msgs_after_trigger = belief.trig_msgs;
+                    c->have = bench::kHaveT1p | bench::kHaveT2 |
+                              (belief.trigger_seen ? (bench::kHaveT0 | bench::kHaveT1) : 0);
+                    c->terminal = bench::kTermInFlight;
+                    chain_a.note_used(token_seq + 1);
+                    awaiting_t3.emplace_back(token_seq, out.produced);
+                }
+                // Re-arm: the NEXT trigger is quote_every applies from here.
+                belief.trigger_seen = false;
+                belief.armed_at = belief.applied + opt.quote_every;
                 ++orders_sent;
                 if (orders_sent <= opt.trace) {
                     std::printf("quote %-3" PRIu64 " after %8" PRIu64 " msgs  bid=%d ask=%d px=%d\n",
@@ -529,13 +661,47 @@ int main(int argc, char** argv) {
 
         if (!out.empty()) {
             const ssize_t w = ::write(tcp, out.data(), out.size());
-            if (w > 0) out.consume(static_cast<size_t>(w));
+            if (w > 0) {
+                out.consume(static_cast<size_t>(w));
+                // t3 for every order this write finished putting on the wire.
+                if (!awaiting_t3.empty()) {
+                    unsigned aux3 = 0xFFFFu;
+                    const uint64_t tsc3 = bench::cycles_end_cpu(&aux3);
+                    const uint64_t t3 = bench::mono_ns();
+                    size_t keep = 0;
+                    for (size_t i = 0; i < awaiting_t3.size(); ++i) {
+                        if (awaiting_t3[i].second <= out.written) {
+                            if (bench::ChainA* c = chain_a.at(awaiting_t3[i].first)) {
+                                c->t3 = t3;
+                                c->tsc3 = tsc3;
+                                c->cpu3 = static_cast<uint16_t>(aux3);
+                                c->have |= bench::kHaveT3;
+                                if (c->cpu0 != 0xFFFF && c->cpu3 != 0xFFFF &&
+                                    c->cpu0 != c->cpu3) ++stamps.migrations;
+                                ++stamps.t3;
+                                closed_this_iter.push_back(awaiting_t3[i].first);
+                            }
+                        } else {
+                            awaiting_t3[keep++] = awaiting_t3[i];
+                        }
+                    }
+                    awaiting_t3.resize(keep);
+                }
+            }
             else if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
                      errno != EINTR) {
                 // The exchange has gone. Stop quoting and let the run finish
                 // reporting rather than spinning on a broken pipe.
                 out.reset();
                 exchange_gone = true;
+            }
+        }
+
+        // Close the coverage window for anything that finished here.
+        if (!closed_this_iter.empty()) {
+            const uint64_t iter_end = bench::mono_ns();
+            for (uint32_t ts : closed_this_iter) {
+                if (bench::ChainA* c = chain_a.at(ts)) c->iter_end = iter_end;
             }
         }
 
@@ -565,11 +731,39 @@ int main(int argc, char** argv) {
         belief.retire(r);
     }
 
+    // RAW RECORDS FIRST. Before sorting, before percentiles, before JSON.
+    if (!opt.trace_out.empty()) {
+        std::FILE* tf = bench::trace_open(opt.trace_out.c_str());
+        if (tf == nullptr) {
+            std::fprintf(stderr, "error: cannot write --trace-out %s\n",
+                         opt.trace_out.c_str());
+            return 1;
+        }
+        const bool ok =
+            bench::write_section(tf, "CHNA", chain_a, chain_a.high_water()) &&
+            bench::write_section(tf, "FILL", fills, fills.size());
+        std::fclose(tf);
+        if (!ok) {
+            std::fprintf(stderr, "error: short write to %s\n", opt.trace_out.c_str());
+            return 1;
+        }
+    }
+
     seq.flush(handler);
     const auto& st = seq.stats();
 
     std::printf("\n=== strategy ===\n");
     std::printf("%-32s %14" PRIu64 "\n", "datagrams received", datagrams);
+    std::printf("%-32s %14d\n", "pinned to cpu", pinned_cpu);
+    std::printf("%-32s %14zu\n", "chain A records", chain_a.high_water());
+    std::printf("%-32s %14" PRIu64 "\n", "  t0 stamps", stamps.t0);
+    std::printf("%-32s %14" PRIu64 "\n", "  t1 stamps", stamps.t1);
+    std::printf("%-32s %14" PRIu64 "\n", "  t1' stamps", stamps.t1p);
+    std::printf("%-32s %14" PRIu64 "\n", "  t2 stamps", stamps.t2);
+    std::printf("%-32s %14" PRIu64 "\n", "  t3 stamps", stamps.t3);
+    std::printf("%-32s %14" PRIu64 "\n", "  core migrations", stamps.migrations);
+    std::printf("%-32s %14" PRIu64 "\n", "  samples dropped (arena full)",
+                chain_a.dropped() + fills.dropped());
     std::printf("%-32s %14d\n", "UDP rcvbuf actually granted", rcvbuf_granted);
     std::printf("%-32s %14" PRIu64 "\n", "feed messages applied", belief.applied);
     std::printf("%-32s %14" PRIu64 "\n", "sequencer gaps", st.gaps);
@@ -600,13 +794,25 @@ int main(int argc, char** argv) {
                 "  \"own_adds_seen_on_feed\": %" PRIu64 ",\n  \"adds_before_ack\": %" PRIu64 ",\n  \"execs_before_ack\": %" PRIu64 ",\n  \"execs_before_ack_shares\": %" PRIu64 ",\n"
                 "  \"maker_fills_from_feed\": %" PRIu64 ",\n  \"maker_fills_in_my_book\": %" PRIu64 ",\n  \"maker_fill_shares\": %" PRIu64 ",\n"
                 "  \"ouch_executed_received\": %" PRIu64 ",\n  \"ouch_executed_shares\": %" PRIu64 ",\n"
-                "  \"position_from_feed\": %" PRId64 "\n}\n",
+                "  \"position_from_feed\": %" PRId64 ",\n"
+                "  \"pinned_cpu\": %d,\n  \"clock\": \"CLOCK_MONOTONIC\",\n"
+                "  \"chain_a_records\": %zu,\n  \"chain_a_capacity\": %zu,\n"
+                "  \"samples_dropped\": %" PRIu64 ",\n"
+                "  \"stamps\": {\"t0\": %" PRIu64 ", \"t1\": %" PRIu64
+                ", \"t1p\": %" PRIu64 ", \"t2\": %" PRIu64 ", \"t3\": %" PRIu64 "},\n"
+                "  \"core_migrations\": %" PRIu64 ",\n"
+                "  \"virtualised\": %s\n}\n",
                 datagrams, rcvbuf_granted, belief.applied, st.gaps, st.messages_lost,
                 orders_sent, accepted, rejected, canceled, belief.own_adds_seen,
                 belief.adds_before_ack, belief.execs_before_ack,
                 belief.execs_before_ack_shares,
                 belief.maker_fills, belief.maker_fills_in_book, belief.maker_fill_shares,
-                ouch_executed_received, ouch_executed_shares, belief.position);
+                ouch_executed_received, ouch_executed_shares, belief.position,
+                pinned_cpu, chain_a.high_water(), chain_a.capacity(),
+                chain_a.dropped() + fills.dropped(),
+                stamps.t0, stamps.t1, stamps.t1p, stamps.t2, stamps.t3,
+                stamps.migrations,
+                bench::looks_virtualised(bench::read_environment()) ? "true" : "false");
             std::fclose(j);
         }
     }

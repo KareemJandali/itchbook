@@ -34,6 +34,17 @@ namespace itchbook::bench {
 
 #if ITCHBOOK_HAVE_RDTSC
 
+// The CPU the last rdtscp ran on, alongside the counter. Linux puts
+// (numa_node << 12) | cpu_id in IA32_TSC_AUX, so the low 12 bits are the CPU.
+// Two paired stamps that disagree crossed cores between them.
+inline uint64_t cycles_end_cpu(unsigned* cpu) {
+    unsigned aux = 0;
+    uint64_t t = __rdtscp(&aux);
+    _mm_lfence();
+    if (cpu != nullptr) *cpu = aux & 0xFFFu;
+    return t;
+}
+
 // lfence, then rdtsc: nothing after this line starts before the read.
 inline uint64_t cycles_begin() {
     _mm_lfence();
@@ -79,6 +90,13 @@ inline uint64_t cycles_begin() {
 }
 inline uint64_t cycles_end() { return cycles_begin(); }
 
+// No rdtscp, so no CPU to report. Absent, not zero -- a caller that reads this
+// as "cpu 0" would conclude two stamps agreed when neither was measured.
+inline uint64_t cycles_end_cpu(unsigned* cpu) {
+    if (cpu != nullptr) *cpu = 0xFFFFu;   // sentinel: unavailable
+    return cycles_end();
+}
+
 #endif
 
 // What a build is ACTUALLY timing with, for anything that reports it.
@@ -118,6 +136,31 @@ inline bool tsc_is_invariant() {
 #else
     return false;
 #endif
+}
+
+// ONE EPOCH AND ONE SCALE, SHARED BY EVERY PROCESS ON THE MACHINE.
+//
+// Both 12.7 tools hand-rolled this identically. 12.8 takes twelve stamps across
+// two processes and subtracts them, so which clock is not a detail: rdtsc is
+// per-core and each process would need its own cycles-per-ns calibration, and
+// two 50 ms calibrations of the same counter differ by ~1e-4 relative -- a
+// second cross-process error term underneath the one everyone is looking at.
+//
+// The cost objection does not survive measurement. Net of the instrument's own
+// 28-cycle zero, on this box at 3.599 GHz: clock_gettime(CLOCK_MONOTONIC) 40
+// cycles, serialised rdtscp 40 cycles. A wash.
+//
+// What this does NOT buy, because claiming it would repeat the error
+// tools/tsc_offset.cpp exists to correct: on x86 with clocksource=tsc the vDSO
+// computes CLOCK_MONOTONIC as a GLOBAL mult/shift/offset over a raw rdtsc, with
+// no per-CPU correction term. Cross-core skew passes straight through. What is
+// bought is one epoch and one scale for free, plus the kernel's own TSC
+// synchronisation check and watchdog.
+inline uint64_t mono_ns() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+           static_cast<uint64_t>(ts.tv_nsec);
 }
 
 // Cycles per nanosecond, measured rather than assumed: the nominal clock in the

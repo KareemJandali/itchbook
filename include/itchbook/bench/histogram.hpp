@@ -28,9 +28,17 @@ public:
     // process was descheduled, and clamping keeps one such sample from
     // swamping the tail.
     void add(uint64_t cycles) {
+        if (cycles > UINT32_MAX) ++saturated_;
         samples_.push_back(cycles > UINT32_MAX ? UINT32_MAX
                                                : static_cast<uint32_t>(cycles));
     }
+
+    // How many samples hit the clamp. A max() of exactly UINT32_MAX is
+    // indistinguishable from a real one; this is not. At 3.599 cycles/ns the
+    // clamp is 1.193 s, which phase 12.8's resting interval reaches at low
+    // replay multipliers -- so a clamped sample is not hypothetical, and a
+    // percentile computed over clamped samples is a floor rather than a value.
+    uint64_t saturated() const { return saturated_; }
 
     size_t count() const { return samples_.size(); }
     bool empty() const { return samples_.empty(); }
@@ -134,6 +142,7 @@ public:
 private:
     std::vector<uint32_t> samples_;
     bool sorted_ = false;
+    uint64_t saturated_ = 0;
 };
 
 }  // namespace itchbook::bench
