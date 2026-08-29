@@ -9,9 +9,15 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > auction prices exact, 7 absences agreed, 0 failures. Phase 10, the wire-to-book pipeline, is
 > **seven of seven**: taken on bare metal, wire-to-book p50 holds at 5.3–6.2 µs
 > from real-time rates to 25× real time, sustaining 2.1 M msg/s before the first
-> drop. Phase 11, the paper, is **five of six**: its results are **run and
-> graded**, and the one open item is a review by someone who did not write it.
-> Phase 12 is designed and unbuilt.
+> drop. Phase 11, the paper, is **five of seven**: its results are **run and
+> graded**, and two items are open — a review by someone who did not write it,
+> and a closed-loop restart test driven through a snapshot.
+> **Phase 12, order entry and the closed loop, is ten of ten.** OUCH 4.2 over
+> SoupBinTCP into a matching engine that publishes ITCH consumed by the same
+> feed handler — two processes, real sockets — with tick-to-trade decomposed per
+> hop on bare metal: **8,139 ns p50, 38,244 ns p99.9** over n=12,000, at a
+> verified `performance` governor on a provenance-checked build, reproducing to
+> **0.4%** across two independently built boots.
 >
 > Every claim below is measured on a real
 > NASDAQ trading day, 30 December 2019 — the whole feed where it says so, and
@@ -359,6 +365,60 @@ libFuzzer where its runtime is available:
 clang++ -fsanitize=fuzzer,address -DITCHBOOK_LIBFUZZER \
     -Iinclude tests/fuzz/fuzz_matcher.cpp -o fuzz_libfuzzer
 ```
+
+## Order entry, and the closed loop
+
+Phases 12.3–12.9. The book and the backtester read a market; this half of the
+project *is* one, and then trades into it over real sockets.
+
+**OUCH 4.2 and SoupBinTCP 3.00, from the spec.** Nine core message types, with
+every field offset triangulated three independent ways out of the vendor PDF —
+a font-decoding bug in one extraction pass was found by the second. Gaps and
+overlaps are checked per message by `static_assert`. There is no live OUCH
+session behind this and never will be, so the round-trip tests and 5-of-5
+mutation kills are the whole defence; that is stated rather than glossed.
+
+**A matching engine that borrows the book it matches against.** An earlier
+design gave the matcher a private book, which the topology document forbids by
+name — two books that must agree is the failure the phase exists to rule out.
+The kill switch's flatten-on-trip is proven by tests that assert **the book**,
+not the cancel count.
+
+**The closed loop.** `tools/exchange.cpp` replays a historical day, matches
+against strategy orders, and publishes ITCH over MoldUDP64;
+`tools/strategy.cpp` receives that UDP, rebuilds the book from it, and quotes
+back over TCP. Two OS processes, two real sockets, no shared memory. The subtle
+part is that **nothing orders UDP against TCP**: an order's ITCH `Add` and
+`Execution` can arrive before its OUCH acknowledgement, which silently cost 202
+shares before the cause was known. Fills are parked and retired when the ack
+lands.
+
+**Tick-to-trade, decomposed.** Bare metal, three boots, ten repeats:
+
+| hop | p50 |
+|---|---:|
+| arrival → applied | 2,756 ns |
+| post-trigger drain | 6,045 ns |
+| decision | 251 ns |
+| encode, frame, **write** | 8,002 ns |
+| **headline, decision → wire** | **8,139 ns** |
+
+The headline is the *write*, not the encode: a pre-syscall stamp brackets
+`::write()` at **7,824 ns**, leaving roughly 178 ns of real encoding. The
+cross-process hop came out negative for 27% of orders and the cause was neither
+the clock nor the join — Linux delivers loopback inside the sender's own call
+stack, so the busy-polling reader stamps its receipt before `write()` has
+returned. Transport is reported as a bracket rather than a point.
+
+**Replay versus live.** The same strategy, the same window, through the
+backtester and through the live loop. The live loop fills *less* than every
+fill model — and the reason is structural rather than statistical: the replayer
+routes everything except `'E'` to its state path, so the live loop has **no
+price-priority fill at all**, which is 60% of `mbo`'s fills. The backtester's
+band excludes the live result until those paths are removed, and then contains
+it. Written up in
+[`docs/phase12-results.md`](docs/phase12-results.md), generated from the
+artifact.
 
 ## Recovery
 
@@ -709,8 +769,8 @@ reconstruction rather than an aggregate; it is also a paid subscription, which
 means this particular check is not one a reader can reproduce for free. Why the
 two free sources do not answer the question, and what does,
 is in [`validation/`](validation/) — along with the one subtlety the first
-grading run turned up, and a free check of the auction prices that is still
-ungraded.
+grading run turned up, and the auction-price check, which has since been graded:
+13 prices exact, 7 absences agreed, 0 failures.
 
 ### Grading a reconstruction
 

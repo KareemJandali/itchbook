@@ -86,9 +86,24 @@ results are most often ambiguous.
 
 **Phase 6's band is four gradings of one world.** A strategy that cannot see its
 fills emits one intent stream; four fill models score that identical stream four
-ways. The difference between lanes is attributable to the model alone — not by
-argument but *structurally*, because no feedback path exists by which the
-decisions could have differed.
+ways. The difference between lanes is attributable to the model *almost* alone,
+and the qualifier is load-bearing.
+
+**One feedback path survives, and it is not small.** `backtest.hpp:274` gates
+every quote on `risk_.blocks(l.ledger.position(), …)` — the position is the
+lane's own, so a lane that fills more reaches the inventory cap sooner and is
+refused quotes the other lanes still send. It fired at materially different
+rates: **5,618 / 3,888 / 3,893 / 3,905** suppressed quotes across naive,
+optimistic, `mbo` and pessimistic (`docs/figures/touch-maker.json`), all four
+hitting the same `peak_position` of 1,000. So the intent streams are identical
+only until the first lane hits its cap, and the phase-6 band is a band over
+gradings *plus* one inventory-mediated divergence.
+
+That is a weaker claim than "structurally attributable to the model alone", and
+it is the true one. The construction is still sound for its purpose — the
+divergence enters through a single, countable channel rather than through the
+strategy's pricing — but it is not the clean separation an earlier draft of this
+section asserted.
 
 **That construction is impossible for an inventory-aware strategy.** A-S's
 reservation price is a function of inventory `q`, and inventory is a function of
@@ -98,16 +113,26 @@ from the first fill onward, and there is no longer one intent stream to grade.
 
 **So the band becomes four closed-loop runs — a band over worlds.** Each is a
 complete, internally consistent answer to *what would this strategy have done if
-fills worked like this*. It is wider than the phase-6 band for a reason that is
-not noise: it now includes the strategy's own reaction to being filled
-differently.
+fills worked like this*, and it should be wider than the phase-6 band, because
+it now includes the strategy's own reaction to being filled differently.
+
+**That expectation was pre-registered and it barely held.** P5 in §8 grades it
+at **5 of 9 symbol-days (56%)** against a majority bar — kept, and only just.
+Stating it here as a structural certainty would contradict the paper's own
+grading two hundred lines later, so it is stated as what it is: a prediction
+that survived on a bare majority, which is evidence that the two constructions
+differ and is not proof that they must.
 
 Both constructions are legitimate and they answer different questions. Phase 6
 asks how much the fill model matters to the *score* of a fixed strategy; this
 paper asks how much it matters to a strategy that *reacts*. Reporting one while
 describing the other would be the single most misleading thing this work could
 do, so the two live in separate code paths — `backtest.hpp` and
-`closed_loop.hpp` — and produce differently-labelled output.
+`closed_loop.hpp` — and produce differently-shaped artifacts:
+`docs/figures/touch-maker.json` is keyed by fill model, while
+`validation/as-experiment.json` carries one record per run with its own `arm`,
+`gamma` and `model`. Neither carries an explicit field naming which construction
+produced it, which would be the stronger guard and does not exist today.
 
 **Half the wall stays up.** The strategy is told its fills and its position. It
 is *not* told its queue position: `SimFill` carries the shares resting ahead of

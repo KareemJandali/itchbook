@@ -2401,6 +2401,12 @@ Two bugs in the replacement, both caught by running it rather than reading it:
       2019-08-30 — `validation/as-experiment.json`, 288 runs. Tables and the
       seven graded predictions are generated from it.)*
 - [x] `InventoryStrategy` has `State`/`restore` and a restart test.
+- [ ] A full closed-loop run driven through a snapshot and compared against one
+      that never died — `restart_check` pointed at `closed_loop.hpp`.
+      *(Declared open in 11.1 above and tracked by no checkbox until 2026-08-28,
+      so every count of what remained missed it. The existing restart test covers
+      `InventoryStrategy`'s own state round trip, which 11.1 says explicitly is
+      NOT this item.)*
 - [ ] The band-over-worlds methodology paragraph written and reviewed by someone
       who did not write it.
       *(Written — paper §4. Not reviewed. This is the item most likely to be
@@ -3651,7 +3657,7 @@ disagreement categorised as unexplained is a finding and may stand; an
 
 **CV line unlocked:** "Protocol-complete exchange system: OUCH 4.2 over
 SoupBinTCP into my own matching engine, which publishes ITCH 5.0 consumed by my
-own feed handler — tick-to-trade measured end-to-end at p50 X µs, every hop
+own feed handler — tick-to-trade measured end-to-end at p50 8.1 µs, every hop
 decomposed, backtester validated against the live loop."
 
 ---

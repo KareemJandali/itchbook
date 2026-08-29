@@ -5,9 +5,11 @@ written down, and corrected by three findings that would each have produced a
 published number that was wrong. Every figure below is measured on this machine
 or read from an artifact in `validation/`; none is estimated.
 
-The measurement itself **needs bare metal** and has not been taken. What is
-recorded here is the design, the corrections, the prerequisites already landed,
-and the checklist for the boot.
+The measurement **needed bare metal and has now been taken**: three boots on
+2026-08-28, recorded in §11. What follows is the design and the corrections that
+preceded them, kept in the order they were found rather than rewritten to look
+like it went smoothly. The results are in
+[`phase12-8-results.md`](phase12-8-results.md), generated from the artifacts.
 
 ---
 
@@ -634,12 +636,23 @@ that the gate meant to establish that could never have passed.
 | | governor | trace | provenance | what it settled |
 |---|---|---|---|---|
 | 1 | `powersave` | v1 | — | that the machine holds a CPU; that the harness must SET the governor, not just print it |
-| 2 | `performance` | v1 | — | the numbers: headline 8,169 ns p50 |
+| 2 | `performance` | v1 | dirty tree | the numbers: headline 8,169 ns p50 (`validation/tick-to-trade-boot2-2026-08-28.json`) |
 | 3 | `performance` | v2 | `a0fdd2c`, verified | reproduction to 0.4%, and the write syscall isolated at 7,824 ns |
 
 The third boot's headline came back 8,139 ns against the second's 8,169 — 0.4%
 apart, on a different pair of cores, from a separately built kit. That is the
 strongest statement in the phase, and it is one no single run could make.
+
+**Both artifacts are committed, and for a while only one was.** Re-ingesting the
+third boot wrote over `validation/tick-to-trade-baremetal.json`, which had held
+the second, and the 8,169 above then appeared in no artifact anywhere in the
+tree — the phase's strongest claim resting on a number a reader could not check.
+That is exactly the defect this phase had already fixed once, in
+`c5c178f` ("p99.9 was printed to a terminal and never written down"). The second
+boot is kept separately now, as
+`validation/tick-to-trade-boot2-2026-08-28.json`, and it is marked not-quotable
+on its own terms: its kit was built from a dirty tree, which is what the third
+boot existed to fix.
 
 Ten repeats plus the sweeps, on the live USB. **The harness did its job and the
 numbers are not usable**, for one reason, and the distinction is the point of

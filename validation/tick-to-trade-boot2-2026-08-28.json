@@ -1,0 +1,1973 @@
+{
+  "what": "phase 12.8 tick-to-trade, decomposed - bare metal",
+  "runs": 10,
+  "provenance": {
+    "verified": false,
+    "source": null,
+    "reason": "no PROVENANCE.txt found"
+  },
+  "other_configurations": {
+    "w-ack-dry": {
+      "joined": 482,
+      "headline_t1p_t3_p50": 7794,
+      "packing_p50": null,
+      "quotable": true
+    },
+    "w-ack-run1": {
+      "joined": 1200,
+      "headline_t1p_t3_p50": 8291,
+      "packing_p50": null,
+      "quotable": true
+    },
+    "w-m2000-dry": {
+      "joined": 488,
+      "headline_t1p_t3_p50": 5010,
+      "packing_p50": null,
+      "quotable": false
+    },
+    "w-m2000-run1": {
+      "joined": 1200,
+      "headline_t1p_t3_p50": 5855,
+      "packing_p50": null,
+      "quotable": false
+    },
+    "w-m500-dry": {
+      "joined": 507,
+      "headline_t1p_t3_p50": 9410,
+      "packing_p50": null,
+      "quotable": true
+    },
+    "w-m500-run1": {
+      "joined": 1200,
+      "headline_t1p_t3_p50": 19293,
+      "packing_p50": null,
+      "quotable": true
+    },
+    "w-main-dry": {
+      "joined": 483,
+      "headline_t1p_t3_p50": 7873,
+      "packing_p50": null,
+      "quotable": true
+    }
+  },
+  "quotable": false,
+  "not_quotable_because": [
+    "[harness] the working tree is dirty: the binaries may not be the commit",
+    "the repeats are not one experiment (see pooled)"
+  ],
+  "pooled": {
+    "runs": 10,
+    "seed": 20261208,
+    "permutations": 2000,
+    "alpha": 0.05,
+    "census_in_every_run": true,
+    "not_poolable": [
+      "t1'->t2  decision",
+      "t5a->t5b PACKING DELAY (--mtu)"
+    ],
+    "hops": {
+      "t0->t1   arrival to applied": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          2805,
+          2727,
+          2787,
+          2878,
+          2756,
+          2783,
+          2855,
+          2811,
+          2832,
+          2813
+        ],
+        "median_of_medians": 2811,
+        "spread_of_medians": 151,
+        "spread_pct_of_median": 5.37,
+        "monotone": null,
+        "run_effect_p": 0.6826586706646677,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 2803,
+          "p99": 12354,
+          "interval": "[2771, 2844] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 16960,
+          "p999_gap_free": 16960,
+          "p999_unavailable_because": null
+        }
+      },
+      "t0->t3   arrival to write (incl. drain)": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          19726,
+          21039,
+          19999,
+          20683,
+          20228,
+          19861,
+          20400,
+          20019,
+          19623,
+          19053
+        ],
+        "median_of_medians": 20019,
+        "spread_of_medians": 1986,
+        "spread_pct_of_median": 9.92,
+        "monotone": null,
+        "run_effect_p": 0.47876061969015493,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 20026,
+          "p99": 59983,
+          "interval": "[19669, 20420] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 74045,
+          "p999_gap_free": 74045,
+          "p999_unavailable_because": null
+        }
+      },
+      "t1'->t2  decision": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          105,
+          250,
+          267,
+          258,
+          262,
+          250,
+          259,
+          253,
+          235,
+          127
+        ],
+        "median_of_medians": 253,
+        "spread_of_medians": 162,
+        "spread_pct_of_median": 64.03,
+        "monotone": null,
+        "run_effect_p": 0.0014992503748125937,
+        "poolable": false,
+        "pooled": {
+          "n": 12000,
+          "p50": 244,
+          "p99": 742,
+          "interval": "[105, 267] runs",
+          "interval_is": "per-run range",
+          "p999_all": null,
+          "p999_gap_free": null,
+          "p999_unavailable_because": "the runs are not one experiment"
+        }
+      },
+      "t1'->t3  HEADLINE reaction path": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          8133,
+          8158,
+          8213,
+          8238,
+          8154,
+          8170,
+          8144,
+          8230,
+          8150,
+          8091
+        ],
+        "median_of_medians": 8158,
+        "spread_of_medians": 147,
+        "spread_pct_of_median": 1.8,
+        "monotone": null,
+        "run_effect_p": 0.7146426786606697,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 8169,
+          "p99": 23837,
+          "interval": "[8135, 8206] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 32131,
+          "p999_gap_free": 32131,
+          "p999_unavailable_because": null
+        }
+      },
+      "t1->t1'  post-trigger drain": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          5962,
+          6211,
+          6222,
+          6485,
+          6206,
+          6071,
+          6062,
+          6084,
+          6045,
+          5826
+        ],
+        "median_of_medians": 6084,
+        "spread_of_medians": 659,
+        "spread_pct_of_median": 10.83,
+        "monotone": null,
+        "run_effect_p": 0.4867566216891554,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 6106,
+          "p99": 32508,
+          "interval": "[5969, 6229] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 43037,
+          "p999_gap_free": 43037,
+          "p999_unavailable_because": null
+        }
+      },
+      "t2->t3   encode, frame, write": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          8001,
+          8039,
+          8036,
+          8120,
+          8008,
+          8063,
+          8012,
+          8090,
+          8006,
+          7965
+        ],
+        "median_of_medians": 8036,
+        "spread_of_medians": 155,
+        "spread_pct_of_median": 1.93,
+        "monotone": null,
+        "run_effect_p": 0.5612193903048476,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 8036,
+          "p99": 23357,
+          "interval": "[8001, 8067] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 31753,
+          "p999_gap_free": 31753,
+          "p999_unavailable_because": null
+        }
+      },
+      "t3'->t4  parse, validate, submit": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          2152,
+          2537,
+          2593,
+          2606,
+          2629,
+          2574,
+          2509,
+          2502,
+          2512,
+          2354
+        ],
+        "median_of_medians": 2537,
+        "spread_of_medians": 477,
+        "spread_pct_of_median": 18.8,
+        "monotone": null,
+        "run_effect_p": 0.12543728135932034,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 2515,
+          "p99": 13701,
+          "interval": "[2447, 2578] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 50120,
+          "p999_gap_free": 50120,
+          "p999_unavailable_because": null
+        }
+      },
+      "t3->t3'  transport, LOWER bound": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          1687,
+          1761,
+          1720,
+          1762,
+          1690,
+          1723,
+          1697,
+          1807,
+          1756,
+          1704
+        ],
+        "median_of_medians": 1723,
+        "spread_of_medians": 120,
+        "spread_pct_of_median": 6.96,
+        "monotone": null,
+        "run_effect_p": 0.6496751624187906,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 1728,
+          "p99": 47264,
+          "interval": "[1702, 1755] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 124447,
+          "p999_gap_free": 124447,
+          "p999_unavailable_because": null
+        }
+      },
+      "t3pre->t3' transport, UPPER bound": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          9795,
+          9875,
+          9872,
+          9856,
+          9783,
+          9881,
+          9761,
+          9888,
+          9895,
+          9717
+        ],
+        "median_of_medians": 9872,
+        "spread_of_medians": 178,
+        "spread_pct_of_median": 1.8,
+        "monotone": null,
+        "run_effect_p": 0.9715142428785607,
+        "poolable": true,
+        "pooled": {
+          "n": 12000,
+          "p50": 9837,
+          "p99": 62377,
+          "interval": "[9763, 9894] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 126620,
+          "p999_gap_free": 126620,
+          "p999_unavailable_because": null
+        }
+      },
+      "t5a->t5b PACKING DELAY (--mtu)": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          20702,
+          22045,
+          22581,
+          22152,
+          22075,
+          21476,
+          21300,
+          21735,
+          20803,
+          20039
+        ],
+        "median_of_medians": 21735,
+        "spread_of_medians": 2542,
+        "spread_pct_of_median": 11.7,
+        "monotone": null,
+        "run_effect_p": 0.03948025987006497,
+        "poolable": false,
+        "pooled": {
+          "n": 20841,
+          "p50": 21543,
+          "p99": 1296067,
+          "interval": "[20039, 22581] runs",
+          "interval_is": "per-run range",
+          "p999_all": null,
+          "p999_gap_free": null,
+          "p999_unavailable_because": "the runs are not one experiment"
+        }
+      },
+      "t5b->t6' loopback UDP": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          21456,
+          19753,
+          21641,
+          23033,
+          22626,
+          20624,
+          22159,
+          21577,
+          19319,
+          23026
+        ],
+        "median_of_medians": 21641,
+        "spread_of_medians": 3714,
+        "spread_pct_of_median": 17.16,
+        "monotone": null,
+        "run_effect_p": 0.05147426286856572,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 21391,
+          "p99": 157005,
+          "interval": "[20899, 21934] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 176418,
+          "p999_gap_free": null,
+          "p999_unavailable_because": null
+        }
+      },
+      "t6'->t6  drain, sequence, parse, apply": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          3333,
+          3183,
+          3153,
+          3209,
+          3237,
+          3294,
+          3356,
+          3315,
+          3338,
+          3305
+        ],
+        "median_of_medians": 3305,
+        "spread_of_medians": 203,
+        "spread_pct_of_median": 6.14,
+        "monotone": null,
+        "run_effect_p": 0.5002498750624688,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 3268,
+          "p99": 15042,
+          "interval": "[3227, 3310] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 25597,
+          "p999_gap_free": null,
+          "p999_unavailable_because": null
+        }
+      },
+      "tA->t5a  aggressor walk and match": {
+        "runs": 10,
+        "per_run_medians_in_run_order": [
+          918,
+          935,
+          964,
+          1047,
+          965,
+          917,
+          997,
+          946,
+          967,
+          926
+        ],
+        "median_of_medians": 964,
+        "spread_of_medians": 130,
+        "spread_pct_of_median": 13.49,
+        "monotone": null,
+        "run_effect_p": 0.6231884057971014,
+        "poolable": true,
+        "pooled": {
+          "n": 20841,
+          "p50": 955,
+          "p99": 18754,
+          "interval": "[927, 984] normal",
+          "interval_is": "order-statistic CI",
+          "p999_all": 55249,
+          "p999_gap_free": null,
+          "p999_unavailable_because": null
+        }
+      }
+    }
+  },
+  "harness_verdict": {
+    "what": "phase 12.8 tick-to-trade, decomposed",
+    "commit": "unknown",
+    "dirty_tree": true,
+    "cpus": {
+      "exchange": 1,
+      "strategy": 2
+    },
+    "clocksource": "tsc",
+    "tsc_offset_bound_ns": 52.501,
+    "completed_runs": 1,
+    "quotable": false,
+    "not_quotable_because": [
+      "the working tree is dirty: the binaries may not be the commit"
+    ],
+    "runs": [
+      {
+        "quotable": false,
+        "broken": [],
+        "not_quotable": [
+          "a cross-process hop is 5975 ns negative against a 52.5 ns clock bound -- 114x too large to be the clock. Two processes are being descheduled relative to each other; the hop split is noise."
+        ],
+        "orders_sent": 1200,
+        "joined": 1200,
+        "hops": {
+          "t0->t1   arrival to applied": {
+            "n": 1200,
+            "p50": 2921,
+            "p99": 12676,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t1->t1'  post-trigger drain": {
+            "n": 1200,
+            "p50": 6439,
+            "p99": 35863,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t1'->t2  decision": {
+            "n": 1200,
+            "p50": 265,
+            "p99": 739,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t2->t3   encode, frame, write": {
+            "n": 1200,
+            "p50": 8137,
+            "p99": 23398,
+            "negatives": 0,
+            "cross_process": false
+          },
+          "t3->t3'  loopback TCP": {
+            "n": 1200,
+            "p50": 1704,
+            "p99": 44145,
+            "negatives": 317,
+            "cross_process": true
+          },
+          "t3'->t4  parse, validate, submit": {
+            "n": 1200,
+            "p50": 2677,
+            "p99": 13933,
+            "negatives": 0,
+            "cross_process": false
+          }
+        },
+        "headline_t1p_t3": {
+          "n": 1200,
+          "p50": 8291
+        },
+        "coverage_p50_pct": 99.97398038631943,
+        "gap_census": {
+          "available": true,
+          "threshold_ns": 5000,
+          "tagged": 0,
+          "unknown": 0,
+          "off_cpu_p50_ns": -686,
+          "off_cpu_max_ns": -171,
+          "headline_p999_all": null,
+          "headline_p999_gap_free": null
+        },
+        "implied_cycles_per_ns": 3.5986599161041113
+      }
+    ],
+    "notes": [
+      "The decisive gate is cpu_jitter on the exact pinned pair, not the clock checks: every clock check this repository owns passes on a WSL2 box whose scheduler makes a microsecond decomposition meaningless.",
+      "Sum(hops) == t_last - t_first is arithmetic, not a check: differences of stored stamps telescope. Coverage, two-instruments, sign gates and count identities are what can fail.",
+      "Both cross-process hops carry the clock offset with opposite sign, so their SUM is offset-free and only their SPLIT is exposed. The headline t1'->t3 is entirely strategy-local and carries none of it."
+    ]
+  },
+  "per_run": [
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2805,
+          "p99": 14086,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 5962,
+          "p99": 31848,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 105,
+          "p99": 807,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8001,
+          "p99": 26256,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1687,
+          "p99": 49234,
+          "negatives": 336,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9795,
+          "p99": 64737,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2152,
+          "p99": 13292,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8133
+      },
+      "coverage_p50_pct": 99.97444497960797,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8133,
+          "hops_ns": {
+            "t0->t1": 2655,
+            "t1->t1'": 2433,
+            "t1'->t2": 97,
+            "t2->t3": 8036
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 26543,
+          "hops_ns": {
+            "t0->t1": 2071,
+            "t1->t1'": 13909,
+            "t1'->t2": 287,
+            "t2->t3": 26256
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1721,
+          "n_at_or_above": 1200,
+          "mean_ns": 11045
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8133,
+          "n_at_or_above": 600,
+          "mean_ns": 16655
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21545,
+          "n_at_or_above": 120,
+          "mean_ns": 23468
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 26543,
+          "n_at_or_above": 12,
+          "mean_ns": 32194
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 36232,
+          "n_at_or_above": 2,
+          "mean_ns": 46782
+        }
+      ],
+      "transport_bound": {
+        "negatives": 336,
+        "worst_negative_ns": -9391,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -562,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.598924148327637
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2813,
+          "p99": 12001,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 5826,
+          "p99": 28838,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 127,
+          "p99": 714,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 7965,
+          "p99": 24791,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1704,
+          "p99": 44401,
+          "negatives": 334,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9717,
+          "p99": 62137,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2354,
+          "p99": 13666,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8091
+      },
+      "coverage_p50_pct": 99.97326360763641,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8091,
+          "hops_ns": {
+            "t0->t1": 1949,
+            "t1->t1'": 6173,
+            "t1'->t2": 90,
+            "t2->t3": 8001
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 25273,
+          "hops_ns": {
+            "t0->t1": 3523,
+            "t1->t1'": 3645,
+            "t1'->t2": 482,
+            "t2->t3": 24791
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1831,
+          "n_at_or_above": 1200,
+          "mean_ns": 11163
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8091,
+          "n_at_or_above": 600,
+          "mean_ns": 16909
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 22060,
+          "n_at_or_above": 120,
+          "mean_ns": 23007
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 25273,
+          "n_at_or_above": 12,
+          "mean_ns": 26735
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 28944,
+          "n_at_or_above": 2,
+          "mean_ns": 29674
+        }
+      ],
+      "transport_bound": {
+        "negatives": 334,
+        "worst_negative_ns": -2738,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -576,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5984779882588644
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2727,
+          "p99": 12225,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6211,
+          "p99": 31548,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 250,
+          "p99": 817,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8039,
+          "p99": 23154,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1761,
+          "p99": 48012,
+          "negatives": 325,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9875,
+          "p99": 63807,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2537,
+          "p99": 13769,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8158
+      },
+      "coverage_p50_pct": 99.97305827111077,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8158,
+          "hops_ns": {
+            "t0->t1": 2617,
+            "t1->t1'": 3334,
+            "t1'->t2": 118,
+            "t2->t3": 8040
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23515,
+          "hops_ns": {
+            "t0->t1": 6604,
+            "t1->t1'": 18470,
+            "t1'->t2": 475,
+            "t2->t3": 23040
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1833,
+          "n_at_or_above": 1200,
+          "mean_ns": 11556
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8158,
+          "n_at_or_above": 600,
+          "mean_ns": 17527
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21882,
+          "n_at_or_above": 120,
+          "mean_ns": 22905
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23515,
+          "n_at_or_above": 12,
+          "mean_ns": 27578
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 36223,
+          "n_at_or_above": 2,
+          "mean_ns": 40398
+        }
+      ],
+      "transport_bound": {
+        "negatives": 325,
+        "worst_negative_ns": -9928,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -580,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.597604301721728
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2787,
+          "p99": 13037,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6222,
+          "p99": 31885,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 267,
+          "p99": 655,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8036,
+          "p99": 23228,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1720,
+          "p99": 47063,
+          "negatives": 320,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9872,
+          "p99": 61032,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2593,
+          "p99": 14092,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8213
+      },
+      "coverage_p50_pct": 99.97336360580674,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8213,
+          "hops_ns": {
+            "t0->t1": 4069,
+            "t1->t1'": 7715,
+            "t1'->t2": 105,
+            "t2->t3": 8108
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23627,
+          "hops_ns": {
+            "t0->t1": 1347,
+            "t1->t1'": 6183,
+            "t1'->t2": 399,
+            "t2->t3": 23228
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1848,
+          "n_at_or_above": 1200,
+          "mean_ns": 11491
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8213,
+          "n_at_or_above": 600,
+          "mean_ns": 17427
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21808,
+          "n_at_or_above": 120,
+          "mean_ns": 22804
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23627,
+          "n_at_or_above": 12,
+          "mean_ns": 27265
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 30380,
+          "n_at_or_above": 2,
+          "mean_ns": 37576
+        }
+      ],
+      "transport_bound": {
+        "negatives": 320,
+        "worst_negative_ns": -3446,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -576,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5989520957716588
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2878,
+          "p99": 12761,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6485,
+          "p99": 35654,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 258,
+          "p99": 735,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8120,
+          "p99": 23104,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1762,
+          "p99": 47104,
+          "negatives": 307,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9856,
+          "p99": 61600,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2606,
+          "p99": 13795,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8238
+      },
+      "coverage_p50_pct": 99.97383187810702,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8238,
+          "hops_ns": {
+            "t0->t1": 4895,
+            "t1->t1'": 5945,
+            "t1'->t2": 345,
+            "t2->t3": 7893
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23442,
+          "hops_ns": {
+            "t0->t1": 9157,
+            "t1->t1'": 8736,
+            "t1'->t2": 363,
+            "t2->t3": 23079
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1965,
+          "n_at_or_above": 1200,
+          "mean_ns": 11551
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8238,
+          "n_at_or_above": 601,
+          "mean_ns": 17492
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21892,
+          "n_at_or_above": 120,
+          "mean_ns": 23068
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23442,
+          "n_at_or_above": 12,
+          "mean_ns": 28869
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 27515,
+          "n_at_or_above": 2,
+          "mean_ns": 45536
+        }
+      ],
+      "transport_bound": {
+        "negatives": 307,
+        "worst_negative_ns": -1913,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -587,
+        "off_cpu_max_ns": -173,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5985053392647717
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2756,
+          "p99": 12678,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6206,
+          "p99": 34505,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 262,
+          "p99": 684,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8008,
+          "p99": 23078,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1690,
+          "p99": 46695,
+          "negatives": 321,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9783,
+          "p99": 62009,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2629,
+          "p99": 14435,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8154
+      },
+      "coverage_p50_pct": 99.9739978945,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8154,
+          "hops_ns": {
+            "t0->t1": 1060,
+            "t1->t1'": 2387,
+            "t1'->t2": 103,
+            "t2->t3": 8051
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23638,
+          "hops_ns": {
+            "t0->t1": 8777,
+            "t1->t1'": 6191,
+            "t1'->t2": 560,
+            "t2->t3": 23078
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1645,
+          "n_at_or_above": 1200,
+          "mean_ns": 11210
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8154,
+          "n_at_or_above": 600,
+          "mean_ns": 16874
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21657,
+          "n_at_or_above": 120,
+          "mean_ns": 22583
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23638,
+          "n_at_or_above": 12,
+          "mean_ns": 25830
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 27827,
+          "n_at_or_above": 2,
+          "mean_ns": 29077
+        }
+      ],
+      "transport_bound": {
+        "negatives": 321,
+        "worst_negative_ns": -1831,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -600,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5986779061968166
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2783,
+          "p99": 11899,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6071,
+          "p99": 33431,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 250,
+          "p99": 795,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8063,
+          "p99": 23114,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1723,
+          "p99": 48115,
+          "negatives": 332,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9881,
+          "p99": 64066,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2574,
+          "p99": 12903,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8170
+      },
+      "coverage_p50_pct": 99.97388398403626,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8170,
+          "hops_ns": {
+            "t0->t1": 2497,
+            "t1->t1'": 6133,
+            "t1'->t2": 102,
+            "t2->t3": 8068
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23522,
+          "hops_ns": {
+            "t0->t1": 5330,
+            "t1->t1'": 4759,
+            "t1'->t2": 386,
+            "t2->t3": 23136
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1943,
+          "n_at_or_above": 1200,
+          "mean_ns": 11520
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8170,
+          "n_at_or_above": 600,
+          "mean_ns": 17480
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21921,
+          "n_at_or_above": 120,
+          "mean_ns": 22841
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23522,
+          "n_at_or_above": 12,
+          "mean_ns": 26783
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 29300,
+          "n_at_or_above": 2,
+          "mean_ns": 35464
+        }
+      ],
+      "transport_bound": {
+        "negatives": 332,
+        "worst_negative_ns": -2627,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -628,
+        "off_cpu_max_ns": -176,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5986533237851734
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2855,
+          "p99": 12779,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6062,
+          "p99": 32950,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 259,
+          "p99": 978,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8012,
+          "p99": 22889,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1697,
+          "p99": 48181,
+          "negatives": 361,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9761,
+          "p99": 63023,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2509,
+          "p99": 13757,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8144
+      },
+      "coverage_p50_pct": 99.97371936472457,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8144,
+          "hops_ns": {
+            "t0->t1": 1940,
+            "t1->t1'": 10268,
+            "t1'->t2": 102,
+            "t2->t3": 8042
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23303,
+          "hops_ns": {
+            "t0->t1": 6943,
+            "t1->t1'": 5853,
+            "t1'->t2": 439,
+            "t2->t3": 22864
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1881,
+          "n_at_or_above": 1200,
+          "mean_ns": 11503
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8144,
+          "n_at_or_above": 600,
+          "mean_ns": 17483
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21829,
+          "n_at_or_above": 120,
+          "mean_ns": 22938
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23303,
+          "n_at_or_above": 12,
+          "mean_ns": 28287
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 44911,
+          "n_at_or_above": 2,
+          "mean_ns": 45598
+        }
+      ],
+      "transport_bound": {
+        "negatives": 361,
+        "worst_negative_ns": -3923,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -583,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5987304488812164
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2811,
+          "p99": 11324,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6084,
+          "p99": 34496,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 253,
+          "p99": 796,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8090,
+          "p99": 23640,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1807,
+          "p99": 46566,
+          "negatives": 306,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9888,
+          "p99": 62310,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2502,
+          "p99": 13785,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8230
+      },
+      "coverage_p50_pct": 99.97457824970384,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8230,
+          "hops_ns": {
+            "t0->t1": 2934,
+            "t1->t1'": 5764,
+            "t1'->t2": 127,
+            "t2->t3": 8103
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 24000,
+          "hops_ns": {
+            "t0->t1": 7518,
+            "t1->t1'": 11361,
+            "t1'->t2": 272,
+            "t2->t3": 23728
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1822,
+          "n_at_or_above": 1200,
+          "mean_ns": 11463
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8230,
+          "n_at_or_above": 600,
+          "mean_ns": 17339
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21735,
+          "n_at_or_above": 120,
+          "mean_ns": 22806
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 24000,
+          "n_at_or_above": 12,
+          "mean_ns": 27521
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 29277,
+          "n_at_or_above": 2,
+          "mean_ns": 40771
+        }
+      ],
+      "transport_bound": {
+        "negatives": 306,
+        "worst_negative_ns": -4350,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -570,
+        "off_cpu_max_ns": -174,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5984107507281955
+    },
+    {
+      "quotable": true,
+      "broken": [],
+      "not_quotable": [],
+      "orders_sent": 1200,
+      "joined": 1200,
+      "hops": {
+        "t0->t1   arrival to applied": {
+          "n": 1200,
+          "p50": 2832,
+          "p99": 12299,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1->t1'  post-trigger drain": {
+          "n": 1200,
+          "p50": 6045,
+          "p99": 32053,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t1'->t2  decision": {
+          "n": 1200,
+          "p50": 235,
+          "p99": 552,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t2->t3   encode, frame, write": {
+          "n": 1200,
+          "p50": 8006,
+          "p99": 23295,
+          "negatives": 0,
+          "cross_process": false
+        },
+        "t3->t3'  transport, LOWER bound": {
+          "n": 1200,
+          "p50": 1756,
+          "p99": 47795,
+          "negatives": 327,
+          "cross_process": true
+        },
+        "t3pre->t3' transport, UPPER bound": {
+          "n": 1200,
+          "p50": 9895,
+          "p99": 63086,
+          "negatives": 0,
+          "cross_process": true
+        },
+        "t3'->t4  parse, validate, submit": {
+          "n": 1200,
+          "p50": 2512,
+          "p99": 14243,
+          "negatives": 0,
+          "cross_process": false
+        }
+      },
+      "headline_t1p_t3": {
+        "n": 1200,
+        "p50": 8150
+      },
+      "coverage_p50_pct": 99.97410948242211,
+      "trace_version": 1,
+      "rank_decomposition": {
+        "p50": {
+          "rank": 600,
+          "of": 1200,
+          "headline_ns": 8150,
+          "hops_ns": {
+            "t0->t1": 3149,
+            "t1->t1'": 13252,
+            "t1'->t2": 98,
+            "t2->t3": 8052
+          }
+        },
+        "p99": {
+          "rank": 1188,
+          "of": 1200,
+          "headline_ns": 23811,
+          "hops_ns": {
+            "t0->t1": 6980,
+            "t1->t1'": 9313,
+            "t1'->t2": 516,
+            "t2->t3": 23295
+          }
+        }
+      },
+      "tail_conditional_mean": [
+        {
+          "threshold_pct": 0.0,
+          "threshold_ns": 1844,
+          "n_at_or_above": 1200,
+          "mean_ns": 11350
+        },
+        {
+          "threshold_pct": 50.0,
+          "threshold_ns": 8150,
+          "n_at_or_above": 600,
+          "mean_ns": 17248
+        },
+        {
+          "threshold_pct": 90.0,
+          "threshold_ns": 21732,
+          "n_at_or_above": 120,
+          "mean_ns": 22570
+        },
+        {
+          "threshold_pct": 99.0,
+          "threshold_ns": 23811,
+          "n_at_or_above": 12,
+          "mean_ns": 25532
+        },
+        {
+          "threshold_pct": 99.9,
+          "threshold_ns": 26018,
+          "n_at_or_above": 2,
+          "mean_ns": 28876
+        }
+      ],
+      "transport_bound": {
+        "negatives": 327,
+        "worst_negative_ns": -7691,
+        "overshoot_violations": 0,
+        "orders": 1200,
+        "distinct_t3": 1200,
+        "distinct_t3p": 1200,
+        "why": "t3 is stamped after ::write() returns; loopback delivery runs in the sender's own call stack, so the reader can stamp receipt before write() returns. t3'-t3 is a lower bound on the transport, not an estimate."
+      },
+      "gap_census": {
+        "available": true,
+        "threshold_ns": 5000,
+        "tagged": 0,
+        "unknown": 0,
+        "off_cpu_p50_ns": -606,
+        "off_cpu_max_ns": -172,
+        "headline_p999_all": null,
+        "headline_p999_gap_free": null
+      },
+      "implied_cycles_per_ns": 3.5986694090892577
+    }
+  ],
+  "notes": [
+    "Every number here was re-derived from the raw traces by scripts/phase12-8-report.py, not read from the live session's transcript. A transcript cannot be re-checked and a number in it cannot be traced to the samples that produced it.",
+    "Sum(hops) == t_last - t_first is arithmetic, not a check: differences of stored stamps telescope. Coverage, the two instruments, the sign gates and the count identities are what can fail.",
+    "p99.9 appears only where the gap-overlap census does, and then twice: over all chains and over the chains that were running throughout."
+  ]
+}
