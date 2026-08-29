@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "itchbook/sim/backtest.hpp"
+#include "itchbook/sim/parity_maker.hpp"
 #include "itchbook/sim/strategies.hpp"
 #include "tests/check.hpp"
 
@@ -270,6 +271,108 @@ void test_fills_are_not_recorded_unless_asked() {
     CHECK(total > 0);
 }
 
+// ---- ParityMaker, the 12.9 mirror of tools/strategy.cpp --------------------
+
+void test_parity_maker_prices_exactly_like_the_live_strategy() {
+    // strategy.cpp:689 -- px = best_bid - offset_ticks*tick, buy side only.
+    itchbook::book::Book b;
+    b.add(1, 'B', 1000000, 500);
+    b.add(2, 'S', 1000300, 500);
+    MarketView v;
+    v.book = &b;
+    ParityMaker s;
+    s.stride = 1;
+    s.offset_ticks = 2;
+    s.tick = 100;
+    s.size = 100;
+    Ctx ctx;
+
+    // The first event only arms the counter: there is no "events since the last
+    // quote" until there has been a first event.
+    v.event_index = 0;
+    s.on_event(v, ctx);
+    CHECK(ctx.intents().empty());
+
+    v.event_index = 1;
+    s.on_event(v, ctx);
+    CHECK_EQ(ctx.intents().size(), size_t(1));
+    CHECK(ctx.intents()[0].side == Side::Buy);
+    CHECK_EQ(ctx.intents()[0].price, 1000000 - 200);
+    CHECK_EQ(ctx.intents()[0].quantity, 100u);
+}
+
+void test_parity_maker_caps_into_a_crossed_book() {
+    // strategy.cpp:687 -- if (ask - tick < base) base = ask - tick. On a
+    // coherent book a no-op; on a crossed one the difference between resting
+    // and crossing, and an order that crosses is one the tape can never show
+    // us as a maker fill.
+    itchbook::book::Book b;
+    b.add(1, 'B', 1000000, 500);
+    b.add(2, 'S', 999500, 500);          // ask BELOW bid: crossed
+    MarketView v;
+    v.book = &b;
+    ParityMaker s;
+    s.stride = 1;
+    s.offset_ticks = 2;
+    s.tick = 100;
+    Ctx ctx;
+    v.event_index = 0;
+    s.on_event(v, ctx);
+    v.event_index = 1;
+    s.on_event(v, ctx);
+    CHECK_EQ(ctx.intents().size(), size_t(1));
+    // base = ask - tick = 999400, then the offset: 999400 - 200.
+    CHECK_EQ(ctx.intents()[0].price, 999400 - 200);
+    // Without the cap this would have been 1000000 - 200 = 999800, which is
+    // ABOVE the ask and would have crossed.
+    CHECK(ctx.intents()[0].price < 999500);
+}
+
+void test_parity_maker_stops_at_max_orders() {
+    itchbook::book::Book b;
+    b.add(1, 'B', 1000000, 500);
+    b.add(2, 'S', 1000300, 500);
+    MarketView v;
+    v.book = &b;
+    ParityMaker s;
+    s.stride = 1;
+    s.max_orders = 3;
+    Ctx ctx;
+    for (uint64_t i = 0; i < 50; ++i) {
+        v.event_index = i;
+        s.on_event(v, ctx);
+    }
+    CHECK_EQ(ctx.intents().size(), size_t(3));
+}
+
+void test_parity_maker_does_not_burn_its_turn_on_an_empty_book() {
+    // strategy.cpp: last_quote_at advances only when a quote is actually sent.
+    // With no bid there is no price, so the counter must NOT advance -- the
+    // strategy retries on the next event rather than waiting another stride.
+    itchbook::book::Book empty;
+    itchbook::book::Book quoted;
+    quoted.add(1, 'B', 1000000, 500);
+    quoted.add(2, 'S', 1000300, 500);
+    MarketView v;
+    ParityMaker s;
+    s.stride = 2;
+    Ctx ctx;
+
+    v.book = &empty;
+    v.event_index = 0;
+    s.on_event(v, ctx);          // arms
+    v.event_index = 10;
+    s.on_event(v, ctx);          // stride satisfied, but no bid -> no quote
+    CHECK(ctx.intents().empty());
+
+    // One event later the book is quotable. If the counter had advanced on the
+    // blocked attempt this would be too soon and nothing would be sent.
+    v.book = &quoted;
+    v.event_index = 11;
+    s.on_event(v, ctx);
+    CHECK_EQ(ctx.intents().size(), size_t(1));
+}
+
 void test_a_quote_nobody_can_reach_never_fills() {
     // Far from the touch, with nothing trading through it. Any fill here would
     // mean the simulator reached a price the market never traded at.
@@ -460,6 +563,10 @@ int main() {
     test_naive_never_fills_less_than_a_queue_model();
     test_recorded_fills_match_the_count_the_report_publishes();
     test_fills_are_not_recorded_unless_asked();
+    test_parity_maker_prices_exactly_like_the_live_strategy();
+    test_parity_maker_caps_into_a_crossed_book();
+    test_parity_maker_stops_at_max_orders();
+    test_parity_maker_does_not_burn_its_turn_on_an_empty_book();
     test_a_quote_nobody_can_reach_never_fills();
     test_nothing_trades_before_the_market_opens();
     test_a_position_limit_is_never_breached();

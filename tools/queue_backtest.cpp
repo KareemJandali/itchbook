@@ -6,9 +6,16 @@
 // band is honest.
 //
 // Usage:
-//   queue_backtest <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter]
+//   queue_backtest <feed.gz> [--strategy touch-maker|patient-maker|crosser|null|far-quoter
+//                              |parity-maker]
 //                  [--size N] [--json out.json] [--fees base|top|inverted]
 //                  [--fills-out out.jsonl]
+//                  [--quote-every N] [--offset-ticks N] [--tick N] [--max-orders N]
+//
+// parity-maker mirrors tools/strategy.cpp for the phase 12.9 A/B, and the four
+// knobs above are its --quote-every / --quote-offset-ticks / --tick /
+// --max-orders. See include/itchbook/sim/parity_maker.hpp for what is mirrored
+// faithfully and what cannot be.
 //
 // --fills-out writes one JSON object per fill per model. Phase 12.9 diffs the
 // backtester's fills against the live loop's, and a count cannot be diffed:
@@ -27,6 +34,7 @@
 #include "itchbook/itch/parser.hpp"
 #include "itchbook/itch/reader.hpp"
 #include "itchbook/sim/backtest.hpp"
+#include "itchbook/sim/parity_maker.hpp"
 #include "itchbook/sim/strategies.hpp"
 
 using namespace itchbook;
@@ -219,15 +227,36 @@ bool write_fills(const char* path, const Backtest<S>& bt, const char* strategy) 
     return true;
 }
 
+// Stops feeding the backtest after `limit` messages without touching
+// itchbook::parse, which every other tool shares. The 12.9 A/B needs both lanes
+// to see the SAME prefix of the tape: lane B stops at --limit because replaying
+// at 1x costs real time, and a lane A that ran on to the closing bell would be
+// compared against a lane B that went home at lunch.
+template <typename H>
+struct LimitedHandler {
+    H* inner = nullptr;
+    uint64_t limit = 0;
+    uint64_t seen = 0;
+    void on_message(char t, const uint8_t* p, uint16_t n) {
+        if (limit != 0 && seen >= limit) return;
+        ++seen;
+        inner->on_message(t, p, n);
+    }
+};
+
 template <typename S>
 int run(const char* feed, S strategy, FeeSchedule fees, LatencyModel latency,
         RiskLimits limits, risk::KillSwitchConfig kill, const char* json_path,
-        const char* fills_path) {
+        const char* fills_path, uint64_t limit) {
     Backtest<S> bt(strategy, fees, latency, limits, kill);
     if (fills_path != nullptr) bt.record_fills(true);
     try {
         Reader reader(feed);
-        parse(reader, bt);
+        LimitedHandler<Backtest<S>> lim{&bt, limit, 0};
+        parse(reader, lim);
+        if (limit != 0) {
+            std::printf("feed limit: %" PRIu64 " messages (lane B window)\n", limit);
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;
@@ -253,6 +282,12 @@ int main(int argc, char** argv) {
     std::string fee_tier = "base";
     const char* json_path = nullptr;
     const char* fills_path = nullptr;
+    // parity-maker's knobs; defaults are tools/strategy.cpp's own defaults.
+    uint64_t quote_every = 200;
+    int32_t offset_ticks = 2;
+    int32_t tick = 100;
+    uint64_t max_orders = 2000;
+    uint64_t limit = 0;
     uint32_t size = 100;
     LatencyModel latency;   // deliberately non-zero by default
     RiskLimits risk;        // no position limit unless asked for
@@ -264,6 +299,16 @@ int main(int argc, char** argv) {
         else if (a == "--fees" && i + 1 < argc) fee_tier = argv[++i];
         else if (a == "--json" && i + 1 < argc) json_path = argv[++i];
         else if (a == "--fills-out" && i + 1 < argc) fills_path = argv[++i];
+        else if (a == "--quote-every" && i + 1 < argc)
+            quote_every = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--offset-ticks" && i + 1 < argc)
+            offset_ticks = static_cast<int32_t>(std::atol(argv[++i]));
+        else if (a == "--tick" && i + 1 < argc)
+            tick = static_cast<int32_t>(std::atol(argv[++i]));
+        else if (a == "--max-orders" && i + 1 < argc)
+            max_orders = std::strtoull(argv[++i], nullptr, 10);
+        else if (a == "--limit" && i + 1 < argc)
+            limit = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--size" && i + 1 < argc) size = static_cast<uint32_t>(std::atol(argv[++i]));
         else if (a == "--latency-ns" && i + 1 < argc)
             latency = LatencyModel::uniform(std::strtoull(argv[++i], nullptr, 10));
@@ -306,24 +351,33 @@ int main(int argc, char** argv) {
     if (strategy == "touch-maker") {
         TouchMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path, limit);
     }
     if (strategy == "patient-maker") {
         PatientMaker s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path, limit);
     }
     if (strategy == "crosser") {
         Crosser s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path, limit);
     }
     if (strategy == "far-quoter") {
         FarQuoter s;
         s.size = size;
-        return run(feed, s, fees, latency, risk, kill, json_path, fills_path);
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path, limit);
     }
-    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, kill, json_path, fills_path);
+    if (strategy == "parity-maker") {
+        ParityMaker s;
+        s.size = size;
+        s.stride = quote_every;
+        s.offset_ticks = offset_ticks;
+        s.tick = tick;
+        s.max_orders = max_orders;
+        return run(feed, s, fees, latency, risk, kill, json_path, fills_path, limit);
+    }
+    if (strategy == "null") return run(feed, NullStrategy{}, fees, latency, risk, kill, json_path, fills_path, limit);
     std::fprintf(stderr, "error: unknown strategy '%s'\n", strategy.c_str());
     return 2;
 }

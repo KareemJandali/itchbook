@@ -1,0 +1,128 @@
+{
+  "what": "phase 12.9 replay-vs-live A/B",
+  "window_messages": 150853,
+  "reference_latency_ns": 13000,
+  "lane_b": {
+    "orders": 634,
+    "fills": 847,
+    "shares": 42939,
+    "own_adds_seen_on_feed": 633,
+    "parked_fills": 0,
+    "trace_fills": 847
+  },
+  "lane_a": {
+    "naive": {
+      "fills": 1888,
+      "shares": 70600
+    },
+    "optimistic": {
+      "fills": 1610,
+      "shares": 70300
+    },
+    "mbo": {
+      "fills": 1281,
+      "shares": 70000
+    },
+    "pessimistic": {
+      "fills": 1207,
+      "shares": 70000
+    }
+  },
+  "categories": {
+    "latency_model_shape": {
+      "swept_ns": [
+        0,
+        13000,
+        20000,
+        250000,
+        1000000
+      ],
+      "fills_by_latency": {
+        "0": {
+          "naive": 1888,
+          "optimistic": 1610,
+          "mbo": 1281,
+          "pessimistic": 1207
+        },
+        "13000": {
+          "naive": 1888,
+          "optimistic": 1610,
+          "mbo": 1281,
+          "pessimistic": 1207
+        },
+        "20000": {
+          "naive": 1888,
+          "optimistic": 1610,
+          "mbo": 1281,
+          "pessimistic": 1207
+        },
+        "250000": {
+          "naive": 1888,
+          "optimistic": 1610,
+          "mbo": 1281,
+          "pessimistic": 1207
+        },
+        "1000000": {
+          "naive": 1888,
+          "optimistic": 1610,
+          "mbo": 1281,
+          "pessimistic": 1207
+        }
+      },
+      "invariant": true
+    },
+    "structural_no_price_priority": {
+      "naive": {
+        "lock": 317,
+        "through": 0,
+        "structural": 317,
+        "share": 0.16790254237288135,
+        "fills_without": 1571
+      },
+      "optimistic": {
+        "lock": 356,
+        "through": 109,
+        "structural": 465,
+        "share": 0.2888198757763975,
+        "fills_without": 1145
+      },
+      "mbo": {
+        "lock": 652,
+        "through": 123,
+        "structural": 775,
+        "share": 0.6049960967993755,
+        "fills_without": 506
+      },
+      "pessimistic": {
+        "lock": 708,
+        "through": 126,
+        "structural": 834,
+        "share": 0.6909693454846727,
+        "fills_without": 373
+      }
+    },
+    "queue_approximation": {
+      "band": [
+        1207,
+        1888
+      ],
+      "lane_b": 847,
+      "inside_band": false,
+      "band_without_structural": [
+        373,
+        1571
+      ],
+      "inside_band_without_structural": true
+    },
+    "inventory_and_marking": {
+      "own_adds_seen_on_feed": 633,
+      "orders": 634,
+      "parked_fills": 0
+    }
+  },
+  "caveats": [
+    "Neither lane models market impact: the strategy's orders consume liquidity the historical participants never saw, and under the 12.0 hybrid those participants never react to it.",
+    "There is no per-fill join key. Lane B's fill count varies run to run -- two runs of the same binaries on the same feed gave 617 orders / 880 fills and 634 / 847 -- so the comparison is distributional.",
+    "The trigger counters differ: lane B counts book-mutating messages, lane A counts every message, so the same stride puts quotes at different instants."
+  ]
+}
