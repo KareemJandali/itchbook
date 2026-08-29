@@ -266,6 +266,7 @@ public:
         typename QueueModel::State queue;
         PositionTracker::State tracker;
         InventoryPath::State inventory;
+        IntensityRecorder::State intensity;
         std::vector<PendingAction> pending;
         std::vector<SimFill> pending_fills;
         uint64_t action_seq = 0;
@@ -287,6 +288,7 @@ public:
         s.queue = queue_.state_snapshot();
         s.tracker = tracker_.state();
         s.inventory = inventory_.state();
+        s.intensity = intensity_.state();
         s.pending = pending_;
         s.pending_fills = pending_fills_;
         s.action_seq = action_seq_;
@@ -308,6 +310,7 @@ public:
         queue_.restore(s.queue);
         tracker_.restore(s.tracker);
         inventory_.restore(s.inventory);
+        intensity_.restore(s.intensity);
         pending_ = s.pending;
         pending_fills_ = s.pending_fills;
         action_seq_ = s.action_seq;

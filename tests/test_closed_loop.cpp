@@ -377,13 +377,15 @@ void test_position_tracker_state_round_trips() {
 // because losing it makes the resumed run look TIDIER than the truth.
 void test_a_restarted_closed_loop_matches_one_that_never_died() {
     const Feed feed = build_feed();
-    // A LATENCY THAT SPANS MESSAGES, deliberately. build_feed() steps 1 ms per
-    // message and LatencyModel's default is 250 us, so every intent decided at
-    // one message has already arrived by the next and `pending_` is empty at
-    // EVERY boundary -- there is no cut at which the in-flight state could be
-    // tested at all. At 2.5 ms an intent is live across two messages, which is
-    // the condition the search below requires and the one that makes dropping
-    // `pending_` from restore() detectable.
+    // A LATENCY THAT SPANS A WHOLE MESSAGE, deliberately. build_feed() steps
+    // 1 ms per message; at the 250 us default an intent decided at one message
+    // is still pending at that message's boundary -- test_the_cut_lands_with_
+    // orders_in_flight proves exactly that at the default -- but it has arrived
+    // before the NEXT message is applied. What the search below needs is
+    // stronger: a cut where something in flight is still in flight after the
+    // driver has been destroyed and rebuilt. At 2.5 ms a deferred action
+    // survives a whole intervening message, and that is what makes dropping
+    // `pending_` from restore() detectable at all.
     const LatencyModel slow = LatencyModel::uniform(2500000);
 
     for (Model m : {Model::Naive, Model::Optimistic, Model::Mbo, Model::Pessimistic}) {
@@ -486,6 +488,33 @@ void test_a_restarted_closed_loop_matches_one_that_never_died() {
         CHECK_EQ(a.through_fills, w.through_fills);
         CHECK_EQ(a.suppressed_quotes, w.suppressed_quotes);
         CHECK_EQ(a.peak_position, w.peak_position);
+
+        // THE INTENSITY INTEGRAL, which LaneResult does not carry and which
+        // therefore nothing above would have noticed. tools/calibrate_intensity
+        // reads exactly these numbers to fit lambda(delta) for 11.2, and
+        // exposure is the denominator: a restarted recorder that came back with
+        // started_ = false would charge the first post-restart interval to
+        // nobody and quietly move every fitted k.
+        const auto& wb = whole.intensity().buckets();
+        const auto& ab = after.intensity().buckets();
+        CHECK_EQ(ab.size(), wb.size());
+        double w_exposure = 0.0;
+        double a_exposure = 0.0;
+        uint64_t w_bucket_fills = 0;
+        for (size_t i = 0; i < wb.size() && i < ab.size(); ++i) {
+            CHECK_EQ(ab[i].fills, wb[i].fills);
+            CHECK_EQ(ab[i].shares, wb[i].shares);
+            w_exposure += wb[i].exposure_seconds;
+            a_exposure += ab[i].exposure_seconds;
+            w_bucket_fills += wb[i].fills;
+        }
+        CHECK(a_exposure == w_exposure);
+        CHECK_EQ(after.intensity().untradable_ns(), whole.intensity().untradable_ns());
+        // ...over an integral that is actually non-zero, and buckets that
+        // actually caught fills. Otherwise the three equalities above are
+        // 0.0 == 0.0 three times.
+        CHECK(w_exposure > 0.0);
+        CHECK(w_bucket_fills > 0);
 
         // ...and the run that never died has to have DONE something, or every
         // equality above is zero == zero.

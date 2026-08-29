@@ -199,6 +199,42 @@ private:
         return away / cfg_.tick;
     }
 
+public:
+    // The integral, so a restarted run measures one continuous exposure rather
+    // than two half-exposures whose lambda is neither. last_ts_ and started_
+    // matter as much as the buckets: without them the first observation after a
+    // restart takes the early return and that interval is charged to nobody.
+    //
+    // cfg_ does NOT travel. It is configuration, and it fixes buckets_.size()
+    // at construction -- so restoring a differently-shaped snapshot into a
+    // configured recorder would silently change the bucketing the fit is over.
+    // A shape mismatch is refused rather than resized.
+    struct State {
+        std::vector<DepthBucket> buckets;
+        uint64_t last_ts = 0;
+        uint64_t untradable_ns = 0;
+        uint64_t order_samples = 0;
+        uint64_t fills_without_mid = 0;
+        uint64_t crossed = 0;
+        bool started = false;
+    };
+    State state() const {
+        return State{buckets_, last_ts_, untradable_ns_, order_samples_,
+                     fills_without_mid_, crossed_, started_};
+    }
+    bool restore(const State& s) {
+        if (s.buckets.size() != buckets_.size()) return false;
+        buckets_ = s.buckets;
+        last_ts_ = s.last_ts;
+        untradable_ns_ = s.untradable_ns;
+        order_samples_ = s.order_samples;
+        fills_without_mid_ = s.fills_without_mid;
+        crossed_ = s.crossed;
+        started_ = s.started;
+        return true;
+    }
+
+private:
     IntensityConfig cfg_;
     std::vector<DepthBucket> buckets_;
     uint64_t last_ts_ = 0;
