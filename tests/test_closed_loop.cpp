@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "itchbook/sim/backtest.hpp"
+#include "itchbook/recover/snapshot.hpp"
 #include "itchbook/sim/closed_loop.hpp"
 #include "itchbook/sim/inventory_strategy.hpp"
 #include "itchbook/sim/strategies.hpp"
@@ -136,6 +137,30 @@ struct BlindInventoryMaker {
     BlindMaker inner;
     void on_event(const InventoryView& v, Ctx& ctx) { inner.on_event(v, ctx); }
     // No on_fill: this is the whole point. The strategy is told nothing.
+
+    // ...but it is not stateless, and that distinction cost an hour. It
+    // remembers the touch it last quoted at and the ids it used. A restarted
+    // run that does not restore this comes back believing it has quoted
+    // nothing: the first event after the cut looks like the touch moved, it
+    // requotes, and it mints ids from 1 again -- colliding with orders already
+    // resting. The restart test caught it as two extra fills, both `lock`.
+    struct State {
+        uint64_t next_id = 1;
+        int32_t bid = 0;
+        int32_t ask = 0;
+        uint64_t bid_id = 0;
+        uint64_t ask_id = 0;
+    };
+    State state() const {
+        return State{inner.next_id, inner.bid, inner.ask, inner.bid_id, inner.ask_id};
+    }
+    void restore(const State& s) {
+        inner.next_id = s.next_id;
+        inner.bid = s.bid;
+        inner.ask = s.ask;
+        inner.bid_id = s.bid_id;
+        inner.ask_id = s.ask_id;
+    }
 };
 
 // Whether a type exposes queue position, as a value the compiler can reason
@@ -337,8 +362,159 @@ void test_position_tracker_state_round_trips() {
 
 }  // namespace
 
+// ---- the restart, phase 11's last item -------------------------------------
+//
+// Run the feed straight through. Run it again, but at message N take a
+// snapshot, throw the whole driver away, build a fresh one, restore, and
+// continue. The two must end the same.
+//
+// A LANE could already do this (test_restart.cpp). This driver could not,
+// because what it adds over a lane is a strategy that READS ITS OWN FILLS: the
+// strategy's state and the tracker feeding it have to travel or the resumed run
+// quotes off an inventory it does not hold. And LatencyModel defers every
+// intent to a future timestamp, so at the cut there are orders decided and not
+// yet arrived -- the piece most easily forgotten and the most damaging to lose,
+// because losing it makes the resumed run look TIDIER than the truth.
+void test_a_restarted_closed_loop_matches_one_that_never_died() {
+    const Feed feed = build_feed();
+    // A LATENCY THAT SPANS MESSAGES, deliberately. build_feed() steps 1 ms per
+    // message and LatencyModel's default is 250 us, so every intent decided at
+    // one message has already arrived by the next and `pending_` is empty at
+    // EVERY boundary -- there is no cut at which the in-flight state could be
+    // tested at all. At 2.5 ms an intent is live across two messages, which is
+    // the condition the search below requires and the one that makes dropping
+    // `pending_` from restore() detectable.
+    const LatencyModel slow = LatencyModel::uniform(2500000);
+
+    for (Model m : {Model::Naive, Model::Optimistic, Model::Mbo, Model::Pessimistic}) {
+        // THE CUT IS SEARCHED FOR, NOT PICKED. A restart test is only worth
+        // anything if the state it restores is non-trivial at the moment of the
+        // cut, and three separate ways of getting that wrong showed up here:
+        //
+        //   size()/2 landed on a round boundary, where build_feed() has just
+        //   deleted all four of its orders and the book is EMPTY -- so the market
+        //   half was snapshotted and restored as nothing.
+        //
+        //   A hand-picked mid-round offset fixed the book but happened to land
+        //   with NOTHING IN FLIGHT, and deleting `pending_ = s.pending` from
+        //   restore() then left every assertion in this test still passing.
+        //
+        // So the cut is chosen by requiring all four preconditions at once, which
+        // also survives someone editing build_feed() later.
+        size_t cut = 0;
+        {
+            ClosedLoopBacktest<BlindInventoryMaker> probe(BlindInventoryMaker{}, m,
+                                                          FeeSchedule{}, slow);
+            for (size_t i = 0; i < feed.msgs.size(); ++i) {
+                const auto& msg = feed.msgs[i];
+                probe.on_message(static_cast<char>(msg[0]), msg.data(),
+                                 static_cast<uint16_t>(msg.size()));
+                const auto st = probe.state();
+                if (!st.ledger.fills.empty() && st.tracker.position != 0 &&
+                    !st.pending.empty() && probe.book().best_bid(nullptr)) {
+                    cut = i + 1;
+                    break;
+                }
+            }
+        }
+        CHECK(cut > 0);
+        if (cut == 0) continue;
+
+        // (a) the run that never died
+        ClosedLoopBacktest<BlindInventoryMaker> whole(BlindInventoryMaker{}, m,
+                                                      FeeSchedule{}, slow);
+        for (const auto& msg : feed.msgs) {
+            whole.on_message(static_cast<char>(msg[0]), msg.data(),
+                             static_cast<uint16_t>(msg.size()));
+        }
+
+        // (b) the run that died at `cut` and came back
+        ClosedLoopBacktest<BlindInventoryMaker> before(BlindInventoryMaker{}, m,
+                                                       FeeSchedule{}, slow);
+        for (size_t i = 0; i < cut; ++i) {
+            const auto& msg = feed.msgs[i];
+            before.on_message(static_cast<char>(msg[0]), msg.data(),
+                              static_cast<uint16_t>(msg.size()));
+        }
+
+        const auto driver_state = before.state();
+        const auto strat_state = before.strategy_state();
+        const auto book_snap =
+            itchbook::recover::capture(before.book(), 0, 0);
+
+        // THE SNAPSHOT MUST BE WORTH TAKING. A cut before anything happened
+        // would make the comparison below two fresh objects agreeing, which is
+        // the vacuous-comparison trap this file already names once.
+        CHECK(driver_state.ledger.fills.size() > 0);
+        CHECK(driver_state.tracker.position != 0);
+        CHECK(book_snap.orders.size() > 0);
+        // AND THE CUT MUST LAND WITH ORDERS IN FLIGHT. Without this the
+        // hardest piece of state is never exercised: deleting `pending_ =
+        // s.pending` from restore() left every assertion below still passing,
+        // because at this cut there happened to be nothing deferred. A guard
+        // that the run was EVER in flight is not the same as one that it is in
+        // flight HERE, and only the second makes the restore testable.
+        CHECK(!driver_state.pending.empty());
+
+        // A genuinely fresh driver: nothing survives except what restore() puts
+        // back. If `before` were reused the test would prove nothing at all.
+        ClosedLoopBacktest<BlindInventoryMaker> after(BlindInventoryMaker{}, m,
+                                                      FeeSchedule{}, slow);
+        itchbook::recover::restore(&after.book(), book_snap);
+        after.restore(driver_state);
+        after.restore_strategy(strat_state);
+
+        for (size_t i = cut; i < feed.msgs.size(); ++i) {
+            const auto& msg = feed.msgs[i];
+            after.on_message(static_cast<char>(msg[0]), msg.data(),
+                             static_cast<uint16_t>(msg.size()));
+        }
+
+        const LaneResult w = whole.result();
+        const LaneResult a = after.result();
+
+        // The fill path, the position and the money. Markout resolution and
+        // kill-switch counters deliberately do NOT travel -- see the banner on
+        // ClosedLoopBacktest::State -- so they are not compared here rather
+        // than being quietly included and passing by luck.
+        CHECK_EQ(a.fills, w.fills);
+        CHECK_EQ(a.shares, w.shares);
+        CHECK_EQ(a.equity, w.equity);
+        CHECK_EQ(a.fees, w.fees);
+        CHECK_EQ(a.residual_position, w.residual_position);
+        CHECK_EQ(a.lock_fills, w.lock_fills);
+        CHECK_EQ(a.through_fills, w.through_fills);
+        CHECK_EQ(a.suppressed_quotes, w.suppressed_quotes);
+        CHECK_EQ(a.peak_position, w.peak_position);
+
+        // ...and the run that never died has to have DONE something, or every
+        // equality above is zero == zero.
+        CHECK(w.fills > 0);
+        CHECK(w.shares > 0);
+    }
+}
+
+// The in-flight half, on its own, because the assertion above would still pass
+// if `pending` were always empty at the cut -- the latency model would simply
+// never have anything deferred and the hardest piece of state would go
+// untested while looking tested.
+void test_the_cut_lands_with_orders_in_flight() {
+    const Feed feed = build_feed();
+    bool ever_in_flight = false;
+    ClosedLoopBacktest<BlindInventoryMaker> b(BlindInventoryMaker{}, Model::Optimistic,
+                                              FeeSchedule{});
+    for (const auto& msg : feed.msgs) {
+        b.on_message(static_cast<char>(msg[0]), msg.data(),
+                     static_cast<uint16_t>(msg.size()));
+        if (!b.state().pending.empty()) ever_in_flight = true;
+    }
+    CHECK(ever_in_flight);
+}
+
 int main() {
     test_no_feedback_matches_the_open_loop_driver_exactly();
+    test_a_restarted_closed_loop_matches_one_that_never_died();
+    test_the_cut_lands_with_orders_in_flight();
     test_the_feed_actually_trades();
     test_the_strategy_is_told_its_fills_and_agrees_on_position();
     test_fill_event_withholds_queue_position();

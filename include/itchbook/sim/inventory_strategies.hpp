@@ -126,6 +126,37 @@ public:
     int64_t max_short() const { return max_short_; }
     double seconds() const { return total_seconds_; }
 
+    // The whole accumulator, so a restarted run integrates over one continuous
+    // inventory path rather than two half-paths whose variance is neither.
+    // last_ts_ and last_pos_ matter as much as the sums: without them the first
+    // observation after a restart contributes a dt measured from zero.
+    struct State {
+        bool started = false;
+        uint64_t last_ts = 0;
+        int64_t last_pos = 0;
+        double total_seconds = 0.0;
+        double sum = 0.0;
+        double sum_sq = 0.0;
+        int64_t max_abs = 0;
+        int64_t max_long = 0;
+        int64_t max_short = 0;
+    };
+    State state() const {
+        return State{started_, last_ts_, last_pos_, total_seconds_, sum_, sum_sq_,
+                     max_abs_, max_long_, max_short_};
+    }
+    void restore(const State& s) {
+        started_ = s.started;
+        last_ts_ = s.last_ts;
+        last_pos_ = s.last_pos;
+        total_seconds_ = s.total_seconds;
+        sum_ = s.sum;
+        sum_sq_ = s.sum_sq;
+        max_abs_ = s.max_abs;
+        max_long_ = s.max_long;
+        max_short_ = s.max_short;
+    }
+
 private:
     bool started_ = false;
     uint64_t last_ts_ = 0;

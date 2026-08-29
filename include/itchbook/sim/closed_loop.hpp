@@ -47,6 +47,7 @@
 //
 #include <algorithm>
 #include <cstdint>
+#include <variant>
 #include <vector>
 
 #include "itchbook/book/book.hpp"
@@ -225,6 +226,121 @@ public:
     const IntensityRecorder& intensity() const { return intensity_; }
     const InventoryPath& inventory() const { return inventory_; }
     const Strategy& strategy() const { return strategy_; }
+
+    // ---- restart ------------------------------------------------------------
+    //
+    // WHAT TRAVELS, and why each piece has to. recover/snapshot.hpp restores the
+    // MARKET and recover/strategy_snapshot.hpp restores one lane's position and
+    // open orders; neither knows about this driver, which is why closed_loop.hpp
+    // had never been restart-tested. What it adds over a lane is a strategy that
+    // READS ITS OWN FILLS, so its state and the tracker feeding it must travel
+    // or the resumed run quotes from a different inventory than the one it
+    // actually holds.
+    //
+    // `pending` is the piece most easily forgotten and the most damaging to
+    // lose: LatencyModel defers every intent to a future timestamp, so at any
+    // instant there are orders decided and not yet arrived. Dropping them loses
+    // exactly the orders in flight when the process died, and the resumed run
+    // would look tidier than the truth.
+    //
+    // WHAT DELIBERATELY DOES NOT TRAVEL, on the same reasoning
+    // strategy_snapshot.hpp sets out for a lane:
+    //
+    //   * MARKOUT samples in flight. A markout is an observation of where the
+    //     mid went after a fill; one whose horizon spans the restart was never
+    //     observed by anyone. Inventing it would be worse than losing it, and
+    //     the report counts unresolved fills already.
+    //   * KILL-SWITCH counters and trip state. A restart is a decision point for
+    //     risk, not something to paper over: a switch that latched before the
+    //     crash is re-armed deliberately or not at all.
+    //   * CONFIGURATION -- fees, the queue model, the limits, the latency model.
+    //     Those come from the caller on both sides, and a snapshot that could
+    //     override them could silently change the experiment.
+    //
+    // So a restored run agrees with an uninterrupted one on the fill path, the
+    // position and the inventory path; it does not agree on markout resolution
+    // or kill-switch counters, and the test asserts the first set rather than
+    // pretending the second is covered.
+    struct State {
+        typename Ledger::State ledger;
+        typename QueueModel::State queue;
+        PositionTracker::State tracker;
+        InventoryPath::State inventory;
+        std::vector<PendingAction> pending;
+        std::vector<SimFill> pending_fills;
+        uint64_t action_seq = 0;
+        uint64_t event_index = 0;
+        uint64_t lock_fills = 0;
+        uint64_t through_fills = 0;
+        uint64_t suppressed_quotes = 0;
+        int64_t peak_position = 0;
+        uint64_t tripped_at_event = 0;
+        bool trip_seen = false;
+        Mid last_good_mid;
+        char trading_state = '\0';
+        bool in_continuous = false;
+    };
+
+    State state() const {
+        State s;
+        s.ledger = ledger_.state();
+        s.queue = queue_.state_snapshot();
+        s.tracker = tracker_.state();
+        s.inventory = inventory_.state();
+        s.pending = pending_;
+        s.pending_fills = pending_fills_;
+        s.action_seq = action_seq_;
+        s.event_index = event_index_;
+        s.lock_fills = lock_fills_;
+        s.through_fills = through_fills_;
+        s.suppressed_quotes = suppressed_quotes_;
+        s.peak_position = peak_position_;
+        s.tripped_at_event = tripped_at_event_;
+        s.trip_seen = trip_seen_;
+        s.last_good_mid = last_good_mid_;
+        s.trading_state = trading_state_;
+        s.in_continuous = in_continuous_;
+        return s;
+    }
+
+    void restore(const State& s) {
+        ledger_.restore(s.ledger);
+        queue_.restore(s.queue);
+        tracker_.restore(s.tracker);
+        inventory_.restore(s.inventory);
+        pending_ = s.pending;
+        pending_fills_ = s.pending_fills;
+        action_seq_ = s.action_seq;
+        event_index_ = s.event_index;
+        lock_fills_ = s.lock_fills;
+        through_fills_ = s.through_fills;
+        suppressed_quotes_ = s.suppressed_quotes;
+        peak_position_ = s.peak_position;
+        tripped_at_event_ = s.tripped_at_event;
+        trip_seen_ = s.trip_seen;
+        last_good_mid_ = s.last_good_mid;
+        trading_state_ = s.trading_state;
+        in_continuous_ = s.in_continuous;
+    }
+
+    // The strategy's own state, where it has one. InventoryStrategy does; a
+    // stateless strategy does not, and `if constexpr` lets both compile rather
+    // than forcing every strategy to carry an empty struct.
+    auto strategy_state() const {
+        if constexpr (requires(const Strategy& s) { s.state(); }) {
+            return strategy_.state();
+        } else {
+            return std::monostate{};
+        }
+    }
+    template <typename S>
+    void restore_strategy(const S& s) {
+        if constexpr (requires(Strategy& st, const S& x) { st.restore(x); }) {
+            strategy_.restore(s);
+        }
+    }
+
+    book::Book& book() { return book_; }
 
 private:
     static QueueConfig make_config(Model m) {

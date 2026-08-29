@@ -2401,12 +2401,26 @@ Two bugs in the replacement, both caught by running it rather than reading it:
       2019-08-30 — `validation/as-experiment.json`, 288 runs. Tables and the
       seven graded predictions are generated from it.)*
 - [x] `InventoryStrategy` has `State`/`restore` and a restart test.
-- [ ] A full closed-loop run driven through a snapshot and compared against one
+- [x] A full closed-loop run driven through a snapshot and compared against one
       that never died — `restart_check` pointed at `closed_loop.hpp`.
-      *(Declared open in 11.1 above and tracked by no checkbox until 2026-08-28,
-      so every count of what remained missed it. The existing restart test covers
-      `InventoryStrategy`'s own state round trip, which 11.1 says explicitly is
-      NOT this item.)*
+      *(`ClosedLoopBacktest::State` and `InventoryPath::State` added; the test
+      cuts the feed, throws the driver away, restores into a fresh one and
+      requires the fill path, position, money and inventory to agree, across all
+      four fill models.*
+      *THE CUT IS SEARCHED FOR, NOT PICKED, after three ways of getting it wrong.
+      `size()/2` landed on a round boundary where the synthetic feed has just
+      deleted every order, so the book snapshot was empty. A hand-picked
+      mid-round offset fixed that but landed with nothing in flight — and
+      deleting `pending_ = s.pending` from `restore()` then left every assertion
+      passing. And the default 250 µs latency is shorter than the feed's 1 ms
+      step, so nothing is EVER deferred across a message: the test runs at 2.5 ms
+      so the in-flight state exists to be lost.*
+      *What deliberately does not travel is written down rather than discovered:
+      markout samples whose horizon spans the restart were never observed by
+      anyone, and kill-switch state is a decision for whoever restarts. Two
+      mutations, both caught — dropping the in-flight orders costs fills (the
+      resumed run looks tidier than the truth), dropping the strategy's own
+      state gains them.)*
 - [ ] The band-over-worlds methodology paragraph written and reviewed by someone
       who did not write it.
       *(Written — paper §4. Not reviewed. This is the item most likely to be
