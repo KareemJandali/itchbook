@@ -3625,8 +3625,29 @@ disagreement categorised as unexplained is a finding and may stand; an
       it moves 3.3× across a 4× range, in the direction where a slower feed
       gives a slower reaction, making the headline a function of offered load.
       See `docs/phase12-8-results.md`, which is generated from the artifact.)*
-- [ ] **12.9** — replay-vs-live A/B published with every disagreement
-      categorised.
+- [x] **12.9** — replay-vs-live A/B published with every disagreement
+      categorised. [`docs/phase12-results.md`](phase12-results.md).
+      *(Same 150,853-message window of MSFT 2019-12-30 through both lanes. Live:
+      634 orders, 847 fills. Backtester: 1,207–1,888 fills across four models —
+      the live loop fills less than every one of them.*
+      *THE GAP IS STRUCTURAL, not the queue approximation.* `split.hpp:84`
+      *routes everything except* `'E'` *to the state path, so the live loop has
+      no price-priority and no through-print fill AT ALL — 60.5% of* `mbo`*'s
+      fills and 69.1% of* `pessimistic`*'s come from a path it cannot take. The
+      band* `[1,207, 1,888]` *excludes the live 847; with those paths removed,*
+      `[373, 1,571]` *contains it.*
+      *THE PLAN'S CENTRAL INSTRUCTION DID NOT SURVIVE THE CODE.* exchange.cpp:560
+      *multiplies wall latency into feed time, so "set (a)'s latency model to the
+      measured hops from (b)" has no single honest value — at 1000× a 13 µs
+      round trip is 13 ms of tape. Lane A was swept 0–1,000,000 ns instead and
+      the fills are IDENTICAL at every point, which eliminates latency as an
+      explanation rather than assuming it away.*
+      *NOT ESTABLISHED: there is no per-fill join key, because the live lane is
+      not reproducible at the fill level — two runs of the same binaries on the
+      same feed gave 617/880 and 634/847. The comparison is distributional. The
+      strategies are mirrored (`sim::ParityMaker`), not shared:*
+      `tools/strategy.cpp` *was left untouched because its behaviour is what
+      12.7 proved and 12.8 measured.)*
 
 **CV line unlocked:** "Protocol-complete exchange system: OUCH 4.2 over
 SoupBinTCP into my own matching engine, which publishes ITCH 5.0 consumed by my
