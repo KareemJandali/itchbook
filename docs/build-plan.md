@@ -554,10 +554,23 @@ The project does not teach these, and they are what the screen tests:
 
 ## 9. First session checklist
 
-- [ ] `git init itchbook`, push empty repo with MIT license
-- [ ] CMake skeleton building an empty binary with `-Werror` and sanitizers
-- [ ] Download one ITCH day into `data/raw/`
-- [ ] Download the ITCH 5.0 spec PDF, print the message table
-- [ ] Write `Reader` — stream the gz, count total bytes
-- [ ] Write the framing loop, print the first 100 message type bytes
-- [ ] Confirm the type distribution looks like a market and not like noise
+Closed 2026-08-28, long after the fact. These were the day-one items and every
+one of them was done within the first sessions; the boxes were simply never
+ticked, so the plan went on asserting that the project had not started. A
+checklist that disagrees with the repository is worse than no checklist.
+
+- [x] `git init itchbook`, push empty repo with MIT license — `LICENSE`
+- [x] CMake skeleton building an empty binary with `-Werror` and sanitizers —
+      `CMakeLists.txt`, and `scripts/verify-local.sh` builds an ASan/UBSan
+      configuration on every run
+- [x] Download one ITCH day into `data/raw/` — licensed, gitignored, and the
+      whole of phases 9-12 runs off it
+- [x] Download the ITCH 5.0 spec PDF, print the message table — the offsets were
+      later triangulated three independent ways for phase 12.3, which found a
+      font-decoding bug in one extraction pass
+- [x] Write `Reader` — stream the gz, count total bytes —
+      `include/itchbook/itch/reader.hpp`
+- [x] Write the framing loop, print the first 100 message type bytes —
+      `include/itchbook/itch/parser.hpp`
+- [x] Confirm the type distribution looks like a market and not like noise —
+      `tools/itch_census.cpp`
