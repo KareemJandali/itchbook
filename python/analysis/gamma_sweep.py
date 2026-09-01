@@ -41,7 +41,7 @@ def main():
     ap.add_argument("--day")
     a = ap.parse_args()
 
-    d = json.load(open(a.experiment))
+    d = json.load(open(a.experiment, encoding="utf-8"))
     symbol = a.symbol or d["symbols"][0]
     day = a.day or (d["evaluation_days"][0] if d["evaluation_days"]
                     else d["calibration_day"])
@@ -71,7 +71,7 @@ def main():
         s = series("inv_stdev")
         if not s:
             sys.exit("no inventory data for that symbol-day")
-        with open(a.svg_inventory, "w") as f:
+        with open(a.svg_inventory, "w", encoding="utf-8", newline="\n") as f:
             f.write(svg_loglog(gammas, s,
                                "Inventory against risk aversion",
                                note, "γ (per dollar)",
@@ -82,7 +82,7 @@ def main():
         s = [(m, [v / 10000.0 for v in vals]) for m, vals in series("equity_per_share_micros")]
         if not s:
             sys.exit("no P&L data for that symbol-day")
-        with open(a.svg_pnl, "w") as f:
+        with open(a.svg_pnl, "w", encoding="utf-8", newline="\n") as f:
             # include_zero: P&L is read by its sign, so the axis must show it.
             f.write(svg_lines([f"{g:g}" for g in gammas], s,
                               "P&L per share against risk aversion", note,

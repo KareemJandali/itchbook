@@ -107,8 +107,8 @@ if [[ -f "$CALIB" ]]; then
     if python3 python/analysis/intensity_fit.py "$CALIB" \
             --svg "$tmp/out/intensity-$LANE.svg" --lane "$LANE" >/dev/null; then
         settle "intensity-$LANE.svg"
-        csym=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('symbol','?'))" "$CALIB")
-        cday=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('day','?'))" "$CALIB")
+        csym=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('symbol','?'))" "$CALIB" | tr -d '\r')
+        cday=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('day','?'))" "$CALIB" | tr -d '\r')
         entries+=("intensity-$LANE.svg	$CALIB	$cmd	$csym · $cday · $LANE lane")
     else
         bad "intensity_fit.py failed on $CALIB"
@@ -126,7 +126,12 @@ if [[ -f "$EXPT" ]]; then
     # The symbol-day is chosen HERE and recorded, rather than left to the
     # plotter's default, so the caption in the paper and the data in the chart
     # cannot come from two different rules.
-    read -r sym day < <(python3 - "$EXPT" <<'PY'
+    #
+    # `| tr -d` because python's print writes CRLF on Windows: `read` then hands
+    # the plotter "2019-10-30\r", which matches no run, and the failure surfaces
+    # as "no inventory data for that symbol-day" -- a content error reported for
+    # a line ending. Same family as the encoding fix in the two plotters.
+    read -r sym day < <(python3 - "$EXPT" <<'PY' | tr -d '\r'
 import json, sys
 d = json.load(open(sys.argv[1]))
 day = d["evaluation_days"][0] if d["evaluation_days"] else d["calibration_day"]
@@ -155,7 +160,7 @@ printf '%s\n' "${entries[@]+"${entries[@]}"}" > "$tmp/entries.tsv"
 python3 - "$tmp/manifest.json" "$tmp/entries.tsv" <<'PY'
 import hashlib, json, os, sys
 figs = []
-for line in open(sys.argv[2]).read().splitlines():
+for line in open(sys.argv[2], encoding="utf-8").read().splitlines():
     if not line.strip():
         continue
     fig, artifact, cmd, subject = line.split("\t")
@@ -163,8 +168,8 @@ for line in open(sys.argv[2]).read().splitlines():
     figs.append({"figure": fig, "artifact": artifact, "artifact_sha256": h,
                  "subject": subject, "command": cmd})
 json.dump({"figures": sorted(figs, key=lambda f: f["figure"])},
-          open(sys.argv[1], "w"), indent=1)
-open(sys.argv[1], "a").write("\n")
+          open(sys.argv[1], "w", encoding="utf-8", newline="\n"), indent=1)
+open(sys.argv[1], "a", encoding="utf-8", newline="\n").write("\n")
 PY
 if [[ $check -eq 1 ]]; then
     if [[ ! -e "$FIG/manifest.json" ]]; then

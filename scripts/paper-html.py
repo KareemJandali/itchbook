@@ -107,7 +107,7 @@ def figure(src, alt, caption):
         sys.exit(f"{SRC.name} links {src}, which does not exist. "
                  f"Run scripts/paper-figures.sh — and if it says the artifact is "
                  f"missing, the link should not be in the paper at all.")
-    svg = p.read_text()
+    svg = p.read_text(encoding="utf-8")
     svg = svg[svg.index("<svg"):]                       # drop any XML prolog
     cap = f"<figcaption>{caption}</figcaption>" if caption else ""
     return f'<figure role="img" aria-label="{html.escape(alt, quote=True)}">{svg}{cap}</figure>'
@@ -225,7 +225,7 @@ def render(lines, depth=0):
 
 
 def build():
-    lines = SRC.read_text().split("\n")
+    lines = SRC.read_text(encoding="utf-8").split("\n")
     # The first heading is the title; the italic line under it is the byline.
     title = next(l[2:].strip() for l in lines if l.startswith("# "))
     ti = lines.index(f"# {title}")
@@ -256,13 +256,17 @@ def main():
     a = ap.parse_args()
     page = build()
     if a.check:
-        if not OUT.exists() or OUT.read_text() != page:
+        if not OUT.exists() or OUT.read_text(encoding="utf-8") != page:
             print(f"{OUT.relative_to(ROOT)} is stale. "
                   f"Run: python3 scripts/paper-html.py", file=sys.stderr)
             return 1
         print("paper HTML matches the Markdown")
         return 0
-    OUT.write_text(page)
+    # newline="\n" or this writes CRLF on Windows into a tracked file, which is
+    # the failure .gitattributes exists to prevent -- and unlike the two gates
+    # above, which merely reported staleness, this one silently rewrote 523 line
+    # endings in docs/paper/as-on-itch.html the first time it was run there.
+    OUT.write_text(page, encoding="utf-8", newline="\n")
     print(f"wrote {OUT.relative_to(ROOT)} ({len(page):,} bytes)")
     return 0
 

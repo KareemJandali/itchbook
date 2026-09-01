@@ -1,0 +1,172 @@
+{
+  "paper": "docs/paper/as-on-itch.md",
+  "report": "docs/paper/review/2026-08-31-referee-report.md",
+  "response": "docs/paper/review/2026-08-31-response.md",
+  "received": "2026-08-31",
+  "reviewed_at_commit": "5ee2b7b",
+  "reviewer": "external; not named in the report as received",
+  "verdict": "major revision",
+  "independence": {
+    "wrote_paper": false,
+    "wrote_code": false,
+    "blind": false,
+    "disclosed_conflict": "helped sketch the experimental design that became build-plan 11.3, disclosed by the reviewer in the report's first paragraph"
+  },
+  "section_4": {
+    "reviewed": true,
+    "items": [
+      "Q2",
+      "M5"
+    ],
+    "contested_band_over_worlds": false,
+    "note": "The reader required by the Phase 11 done-list did read section 4 and raised two items against it: the closed-loop fill/book ordering (Q2), and the independence of lanes within a symbol-day (M5). Neither contests the band-over-worlds construction itself, so this closes the plan's requirement without being evidence that the construction is right."
+  },
+  "gates_rerun_by_reviewer": [
+    "scripts/paper-report.py --check",
+    "scripts/paper-figures.sh --check",
+    "headline recomputed from validation/as-experiment.json at every swept gamma",
+    "preregistration ordering checked in the git record"
+  ],
+  "findings": [
+    {
+      "id": "M1",
+      "severity": "major",
+      "title": "lambda(delta) is calibrated through exposure the A-S maker generated under a placeholder k, and the paper never said so",
+      "disposition": "accepted",
+      "state": "disclosed-rerun-open",
+      "kind": "finding",
+      "remaining": "recalibrate once under the measured parameters and report how far k moves; then split exposure into placed-at-depth and drifted-to-depth"
+    },
+    {
+      "id": "M2",
+      "severity": "major",
+      "title": "the pre-registration names an ETF; none was calibrated, and the status block claimed scope on counts",
+      "disposition": "accepted",
+      "state": "disclosed-work-open",
+      "kind": "finding",
+      "remaining": "calibrate QQQ on the held-out day and either evaluate it or put it on the §8.4 refusal list with its reason"
+    },
+    {
+      "id": "M3",
+      "severity": "major",
+      "title": "max drawdown, the inventory path plot and two of three markout horizons were pre-registered and are absent",
+      "disposition": "accepted",
+      "state": "disclosed-work-open",
+      "kind": "finding",
+      "remaining": "emit max drawdown, a sampled inventory path and the 100 ms / 10 s markouts into the run record, then report them"
+    },
+    {
+      "id": "M4",
+      "severity": "major",
+      "title": "P4 is graded kept on two latency points and a bare 19-of-36 majority",
+      "disposition": "accepted-in-part",
+      "state": "disclosed-work-open",
+      "kind": "finding",
+      "remaining": "run the latency ladder as N as_experiment artifacts and annotate P4's verdict as the bare, correlated majority it is"
+    },
+    {
+      "id": "M5",
+      "severity": "major",
+      "title": "36 of 36 reads as a sample of 36; lanes within a symbol-day are not independent",
+      "disposition": "accepted",
+      "state": "fixed",
+      "kind": "finding"
+    },
+    {
+      "id": "m1",
+      "severity": "minor",
+      "title": "the calibration block prints a cross-lane spread for AMD, where only one lane fitted",
+      "disposition": "accepted",
+      "state": "fixed",
+      "kind": "finding"
+    },
+    {
+      "id": "m2",
+      "severity": "minor",
+      "title": "STOR's weak fits and STOR's P4 failure deserve a connecting sentence",
+      "disposition": "accepted",
+      "state": "open",
+      "kind": "finding",
+      "remaining": "one sentence in §8.4 connecting STOR's weak fits to its P4 failure, and the 24-of-24 recount without STOR"
+    },
+    {
+      "id": "m3",
+      "severity": "minor",
+      "title": "GOOG's queue-aware lanes coincide and it looks like a copy bug",
+      "disposition": "accepted-with-correction",
+      "state": "fixed-in-part",
+      "kind": "finding"
+    },
+    {
+      "id": "m4",
+      "severity": "minor",
+      "title": "the paper never states whether the fee model includes the maker rebate",
+      "disposition": "accepted",
+      "state": "open",
+      "kind": "finding",
+      "remaining": "state the fee schedule in the paper, and record FeeSchedule::name in as-experiment.json"
+    },
+    {
+      "id": "m5",
+      "severity": "minor",
+      "title": "the tables fix gamma at 0.02 with no stated reason",
+      "disposition": "accepted",
+      "state": "fixed",
+      "kind": "finding"
+    },
+    {
+      "id": "m6",
+      "severity": "minor",
+      "title": "no table of the actual parameter values used",
+      "disposition": "accepted",
+      "state": "open",
+      "kind": "finding",
+      "remaining": "emit the run parameters into the artifact and generate the table; the inventory cap is absent because max_position is 0"
+    },
+    {
+      "id": "m7",
+      "severity": "minor",
+      "title": "k's stability over the four months between calibration and evaluation is untested",
+      "disposition": "accepted",
+      "state": "open",
+      "kind": "finding",
+      "remaining": "refit k on one evaluation day, labelled post hoc, in the same pass as M1"
+    },
+    {
+      "id": "m8",
+      "severity": "minor",
+      "title": "P5 should not be cited outside 7.5 until phase 6 is rerun",
+      "disposition": "already-the-paper's-position",
+      "state": "no-change",
+      "kind": "finding"
+    },
+    {
+      "id": "Q1",
+      "severity": "question",
+      "title": "is the GOOG lane coincidence queue degeneracy or a copy error",
+      "disposition": "answered",
+      "state": "answered",
+      "kind": "question"
+    },
+    {
+      "id": "Q2",
+      "severity": "question",
+      "title": "does the strategy see its fill before or after the book update that caused it",
+      "disposition": "answered",
+      "state": "fixed",
+      "kind": "question"
+    },
+    {
+      "id": "Q3",
+      "severity": "question",
+      "title": "what gamma and k did the calibration bootstrap run with, and are they recorded",
+      "disposition": "answered-reviewer-mistaken",
+      "state": "fixed",
+      "kind": "question"
+    }
+  ],
+  "author_found_while_responding": [
+    "Both paper gates failed on the author's own Windows clone for encoding and line-ending reasons alone, and had never been run there. paper-html.py was worse than a failing gate: it silently rewrote 523 line endings in the committed docs/paper/as-on-itch.html. Fixed across the five files of the paper chain (scripts/paper-report.py, scripts/paper-html.py, scripts/paper-figures.sh, python/analysis/intensity_fit.py, python/analysis/gamma_sweep.py); paper-build.sh --check now passes on Windows and every figure regenerates byte-identically, which confirms the reviewer's own check on a second platform.",
+    "The report's 17-hour pre-registration gap is 20h57m. The two commits are stamped in different zones (+0000 and -0400) and the report differenced the local wall-clock times. The ordering claim is unaffected and the true gap is larger."
+  ]
+}

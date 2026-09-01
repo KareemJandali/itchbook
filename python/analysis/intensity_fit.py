@@ -36,7 +36,7 @@ def main():
                          "queue-position-resolved one)")
     a = ap.parse_args()
 
-    d = json.load(open(a.calibration))
+    d = json.load(open(a.calibration, encoding="utf-8"))
     lanes = d["lanes"]
     if a.lane not in lanes:
         sys.exit(f"no lane '{a.lane}' in {a.calibration}; have {sorted(lanes)}")
@@ -66,7 +66,7 @@ def main():
     if lane["buckets_no_fills"]:
         sub += f" · {lane['buckets_no_fills']} deeper buckets had exposure but no fills"
 
-    with open(a.svg, "w") as f:
+    with open(a.svg, "w", encoding="utf-8", newline="\n") as f:
         f.write(svg_lines(xs, series,
                           "Fill intensity against depth, measured not assumed",
                           sub, "depth from mid (ticks)", "ln λ (fills per order-second)"))

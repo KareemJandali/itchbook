@@ -9,8 +9,13 @@ backtester built from raw **NASDAQ TotalView-ITCH 5.0** binary data — in C++20
 > auction prices exact, 7 absences agreed, 0 failures. Phase 10, the wire-to-book pipeline, is
 > **seven of seven**: taken on bare metal, wire-to-book p50 holds at 5.3–6.2 µs
 > from real-time rates to 25× real time, sustaining 2.1 M msg/s before the first
-> drop. Phase 11, the paper, is **six of seven**: its results are **run and
-> graded**, and the one open item is a review by someone who did not write it.
+> drop. Phase 11, the paper, is **seven of seven**: its results are **run and
+> graded**, and the last item — a review by someone who did not write it —
+> closed on 2026-08-31. The referee's verdict was **major revision, findings
+> expected to survive**; the report, a point-by-point response and a
+> machine-readable index are committed under `docs/paper/review/`, and **eight
+> of the sixteen items are accepted and still open**, listed in the paper's own
+> §8.5. The phase is done; the paper is not.
 > **Phase 12, order entry and the closed loop, is ten of ten.** OUCH 4.2 over
 > SoupBinTCP into a matching engine that publishes ITCH consumed by the same
 > feed handler — two processes, real sockets — with tick-to-trade decomposed per

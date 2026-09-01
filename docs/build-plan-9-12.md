@@ -2421,10 +2421,29 @@ Two bugs in the replacement, both caught by running it rather than reading it:
       mutations, both caught — dropping the in-flight orders costs fills (the
       resumed run looks tidier than the truth), dropping the strategy's own
       state gains them.)*
-- [ ] The band-over-worlds methodology paragraph written and reviewed by someone
+- [x] The band-over-worlds methodology paragraph written and reviewed by someone
       who did not write it.
-      *(Written — paper §4. Not reviewed. This is the item most likely to be
-      wrong in a way its author cannot see, and it cannot be self-cleared.)*
+      *(**Reviewed 2026-08-31 at `5ee2b7b`** — report, point-by-point response
+      and machine index committed under `docs/paper/review/`. Verdict: major
+      revision, 13 findings and 3 questions, findings expected to survive.
+      §8.5's item is GENERATED from `review.json` rather than ticked in prose,
+      so it cannot outlive the review the way "not reviewed" would have outlived
+      its own truth.*
+      *WHAT THIS DOES NOT BUY, because a tick would hide it. The reader is not
+      blind — they helped sketch 11.3's experimental design and disclosed it
+      unprompted — and they wrote none of the paper and none of the code. They
+      raised two items bearing on §4: the closed-loop fill/book ordering, now
+      stated in §4 (`closed_loop.hpp:95` applies the book, then delivers the
+      fill, then decides), and the non-independence of lanes within a symbol-day,
+      now carried beside every count out of 36. Neither contests the
+      band-over-worlds construction itself. A reader who engaged with the
+      construction and found it sound would be evidence it is sound; this is
+      evidence that a competent reader with the code in front of them did not
+      object, which is weaker, and §8.5 says which of the two it is.*
+      *Three silent drifts were found and none of them was in §4: a dropped
+      ETF, a dropped max drawdown, and a two-point comparison called a sweep.
+      Eight items are open and are listed in the paper's own §8.5 rather than
+      only in the response.)*
 - [x] Latency-degradation prediction written before the sweep, kept or falsified
       in print.
       *(**Two real latencies are committed** — `validation/as-experiment.json`
@@ -2433,7 +2452,14 @@ Two bugs in the replacement, both caught by running it rather than reading it:
       is where the 36 cells come from at four lanes each. (Each artifact also
       carries the 2019-08-30 calibration day, so twelve `(symbol, day)` pairs
       are present and nine are graded.) **P4 is graded `kept`**, 19 of 36 cells, in
-      paper §7.5; §8.5 records it as done. The grading branch had already run in
+      paper §7.5. §8.5 recorded this as *done* until the 2026-08-31 review
+      pointed out that two points is not the ladder 11.3.4 asked for, and that
+      the tool the plan named — `latency_sweep` — is built on the open-loop
+      `backtest.hpp` path with no A-S arm and could never have graded P4 at all.
+      The plan named a tool that could not do the job; the response to that was
+      to run two `as_experiment` invocations and keep the word "sweep", which is
+      the deviation. §8.5 now states the shape and the verdict stands at its
+      pre-registered bar. The grading branch had already run in
       CI on two synthetic latencies before the second real artifact landed,
       which is why the code that read it was not being executed for the first
       time on the data it had to grade.
@@ -2447,8 +2473,20 @@ Two bugs in the replacement, both caught by running it rather than reading it:
 - [x] Paper PDF builds from committed sources; one script regenerates every
       figure; CI runs it.
 
-**Five of six.** The one open item is the only thing in this document that
-cannot be closed by writing code: §4 needs a reader who did not write it.
+**Seven of seven — closed 2026-08-31.** The count said "five of six" for as long
+as this list existed and was wrong twice over: there are seven checkboxes, not
+six, and the restart-test item spent most of the phase declared in prose above
+with no box to tick, so every count missed it. Both are fixed here rather than
+left as an off-by-one in the one document that is supposed to be the record.
+
+The last item to close was the only one that could not be closed by writing
+code — §4 needed a reader who did not write it — and it closed by being reviewed
+rather than by being finished. **The phase is done and the paper is not.** Eight
+of the referee's sixteen items are accepted and open, and they are carried in
+paper §8.5 and `docs/paper/review/2026-08-31-response.md`; the one that could
+move a number is the calibration fixed point, which needs a recalibration pass
+against the licensed feed. A done-list that let "reviewed" read as "nothing
+further to do" would be the exact failure this phase's own §11.5 is about.
 
 **CV line unlocked:** "Calibrated and evaluated an Avellaneda–Stoikov market
 maker on real NASDAQ order flow with fill-model uncertainty bands — fill
