@@ -1208,7 +1208,26 @@ jobs:
           assert '500,000 ns' in row and '0 to' in row, row
           verdict = re.search(r'\*\*(kept|falsified|mixed)\*\* \|$', row)
           assert verdict, row
-          assert 'Latency sensitivity — done.' in md, 'the conclusion still asks for it'
+          # The conclusion's latency item must stop ASKING for a second latency
+          # once one exists -- but "graded" and "done" are different claims, and
+          # this assertion used to conflate them by matching the literal string
+          # "Latency sensitivity — done." Two points grade P4 and are not the
+          # ladder 11.3.4 pre-registered, which a referee had to point out
+          # (docs/paper/review/, M4). So the test is now on the intent: the item
+          # must report P4 as graded, must not still be waiting, and at two
+          # points must refuse to call itself a sweep. The last one is a guard
+          # for the specific mistake, not a style check -- it is the sentence
+          # that drifted. This step commits exactly TWO latencies, so the
+          # two-point wording is the one that must appear; whoever adds a third
+          # and a fourth here will trip this assertion, which is the right place
+          # to be reminded that the item's claim changes with them.
+          item = re.search(r'^1\. \*\*Latency sensitivity.*$', md, re.M)
+          assert item, 'no latency item in the conclusion'
+          item = item.group(0)
+          assert 'needs at least two to grade' not in item, item
+          assert 'is graded' in item, item
+          assert 'not a sweep' in item, \
+              'two latency points are being called a sweep again'
           # The edge-side companion must appear WITH the verdict, never instead
           # of it: P4's bar is equity because that is how it was pre-registered,
           # and the companion exists so the noisier instrument is not the only
