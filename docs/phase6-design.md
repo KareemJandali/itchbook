@@ -1,11 +1,11 @@
 # Phase 6 — Queue-Position-Aware Backtester: Design
 
 **Status:** BUILT. This document is the design as written *before* the phase was
-implemented, kept unedited as the record of what was intended — the results and
-what actually happened are in
-[`docs/phase6-results.md`](phase6-results.md). Written after five independent
-designs and five adversarial critiques; section 11 records the errors the
-critiques caught so they are not reintroduced.
+implemented, kept unedited as the record of what was intended. The results, and
+what actually happened, are in
+[`docs/phase6-results.md`](phase6-results.md). It was written after five
+independent designs and five adversarial critiques; section 11 records the errors
+the critiques caught so they are not reintroduced.
 
 Two things in it were **not** built, and section 9 says which and why. Reading
 this as a description of the shipped code will mislead you in those two places;
@@ -33,9 +33,9 @@ Everything in this phase follows from one asymmetry:
 * A **cancel** names an order at an unknown position. It is the only ambiguous
   event, and it is where the three fill models differ.
 
-So the three required models differ in exactly one boolean — *was this cancel
-ahead of us?* — and share every other line of code. That is what makes the P&L
-gap attributable to the queue assumption and to nothing else.
+The three required models therefore differ in exactly one boolean, *was this
+cancel ahead of us?*, and share every other line of code. That is what makes the
+P&L gap attributable to the queue assumption and to nothing else.
 
 ### 1.1 The honest qualification, stated up front
 
@@ -43,15 +43,16 @@ TotalView-ITCH 5.0 is **order-by-order (MBO)**, not aggregated depth (MBP). Ever
 `E`/`C`/`X`/`D`/`U` names an order reference. For any reference we watched arrive,
 whether it was resting at our price *before* we joined is a **fact**, not a guess.
 
-So the optimistic/pessimistic bracket is not forced by *this* data. It is forced
-by *aggregated* data — MBP-10, most non-NASDAQ venues, most vendor feeds — and it
-bounds a residual model error (hidden interest, display-price sliding, non-displayed
-ranked prices) that reference identity provably cannot see.
+The optimistic/pessimistic bracket is therefore not forced by *this* data. What
+forces it is *aggregated* data: MBP-10 and most non-NASDAQ venues, and most vendor
+feeds besides. The bracket bounds a residual model error (hidden interest,
+display-price sliding, non-displayed ranked prices) that reference identity
+provably cannot see.
 
 Shipping the bracket while sitting on MBO data, without saying so, is the one
 intellectually dishonest move available in this project, and the first practitioner
-who reads the write-up will catch it. So we ship a **fourth model, `mbo`**, that
-resolves ahead-vs-behind by reference identity, and we lead with:
+who reads the write-up will catch it. We therefore ship a **fourth model, `mbo`**,
+which resolves ahead-vs-behind by reference identity, and we lead with:
 
 > Here is the band a depth-feed backtest forces on you. Here is the reference-resolved
 > answer inside it. Here is how far the band would have misled you, and here is the
@@ -71,18 +72,18 @@ live in a side table keyed by `(side, price)`. This is load-bearing in four ways
 
 1. Phase 3's done-condition is that the C++ book is bit-identical to the Python
    oracle over a full day. A phantom order changes `shares_at()`, `top()`,
-   `resting_shares()` and `best_bid()/best_ask()` and silently breaks it — and the
+   `resting_shares()` and `best_bid()/best_ask()` and silently breaks it, and the
    differential driver would not catch it, because it never places orders.
 2. Feed `E`/`C`/`X`/`D`/`U` address orders by ITCH reference, so **no feed message
    can ever remove one of our orders**. An order injected into the feed book is
-   immortal for the rest of the day: it inflates `Level::shares`, can become the
-   touch via `Side::level_filled` and stay there, and by mid-session the touch is a
-   wall of our own zombie quotes.
+   immortal for the rest of the day: it inflates `Level::shares`, and it can become
+   the touch via `Side::level_filled` and stay there. By mid-session the touch
+   consists largely of our own orders, none of which the feed can remove.
 3. `Matcher::rest()` calls `book_.add(m.req.id, ...)`, so our ids would share the
    `RefMap` namespace with real ITCH references, and `RefMap::insert` resolves a
-   duplicate by last-writer-wins — overwriting the slot pointer and orphaning the
-   previous `Order` inside its `Level`, silently corrupting `Level::shares` and
-   `count`.
+   duplicate by last-writer-wins. The slot pointer is overwritten, the previous
+   `Order` is orphaned inside its `Level`, and `Level::shares` and `count` are
+   corrupted silently.
 4. Any taking path that calls `Book::take(ref, qty)` on a real ITCH order deletes it
    from the replay; the feed's later `E`/`X`/`D` for that reference then bumps
    `Book::unknown_ref()`. The validated MSFT day had **zero** unknown references,
@@ -99,13 +100,13 @@ schedule against a **scratch overlay** and never mutates the feed book.
 
 ### 1.3 What Phase 6 produces
 
-* The headline chart: same strategy, same order tape, **four** fill models, P&L per
-  filled share, with the naive→pessimistic gap as the result.
-* A latency sensitivity curve: P&L vs one-way latency N on a log grid.
-* Adverse-selection markouts at 100 ms / 1 s / 10 s, per model, share-weighted, with
-  block-bootstrap confidence intervals.
-* A fee-aware P&L with exchange, rebate and **regulatory** costs separated, and a
-  break-even maker rate per model.
+* The headline chart: one strategy, one order tape, **four** fill models, and P&L per
+  filled share, where the naive→pessimistic gap is the result.
+* A latency sensitivity curve: P&L against one-way latency N on a log grid.
+* Adverse-selection markouts at 100 ms / 1 s / 10 s, reported per model and
+  share-weighted, with block-bootstrap confidence intervals.
+* A fee-aware P&L in which exchange, rebate and **regulatory** costs are separated,
+  together with a break-even maker rate per model.
 * A knowingly unprofitable strategy that is proven to lose money.
 
 ---
@@ -123,10 +124,11 @@ One `Entry` per live order of ours, per model:
 | `hidden` | iceberg reserve, not in any queue |
 | `ahead` | believed **displayed shares in front of us** at `(S, P)`. THE state variable. |
 | `ahead0` | `ahead` at arrival, for reporting |
-| `arrived_ns` | arrival timestamp — never the decision timestamp |
+| `arrived_ns` | arrival timestamp, never the decision timestamp |
 | `ahead_set` | `mbo` only: a small open-addressed map `ref -> recorded shares`, built once at arrival |
 
-Helpers, defined once and used by every fill decision so a sign error cannot hide:
+The helpers below are defined once and used by every fill decision, so that a sign
+error cannot hide in one branch:
 
 ```cpp
 // For a resting order on side S at limit P.
@@ -141,9 +143,10 @@ inline bool better_than_ours(Side s, int32_t limit, int32_t px) {
 ### 2.2 Two-phase resolution: pre-mutation, apply, post-mutation
 
 `E`, `C`, `X`, `D` and `U` carry **only an order reference**. The affected order's
-side, resting price and remaining shares exist only in the pre-mutation book — for a
-`D`, or an `E` that zeroes the order, they are unrecoverable afterwards. The clamp,
-conversely, needs the post-mutation level size. Neither phase alone is enough:
+side, resting price and remaining shares exist only in the pre-mutation book, and
+for a `D`, or an `E` that zeroes the order, they are unrecoverable afterwards. The
+clamp, conversely, needs the post-mutation level size. Neither phase alone is
+enough:
 
 ```
 1. Resolved r = sim::resolve(book, type, payload);   // BEFORE the mutation
@@ -151,19 +154,20 @@ conversely, needs the post-mutation level size. Neither phase alone is enough:
 3. qm.commit(r, book);                               // AFTER: fills, advance, clamp
 ```
 
-A convenience `qm.step(book, type, p)` does all three so a driver cannot get the
-order wrong. `resolve()` is fused into `book::apply_ex()` (§8) so the ref map is
-probed **once**, not three times: `book.hpp` exposes `RefMap::find_index` precisely
-so callers do not walk the chain twice, and `E/C/X/D/U` are 52% of a real feed.
+A convenience `qm.step(book, type, p)` does all three, so a driver cannot get the
+order wrong. `resolve()` is fused into `book::apply_ex()` (§8) so that the ref map
+is probed **once** rather than three times: `book.hpp` exposes `RefMap::find_index`
+precisely so callers do not walk the chain twice, and `E/C/X/D/U` are 52% of a real
+feed.
 
-Two prices, not one. A `C` has a *resting* price (the level the shares leave, which
-is what queue accounting keys on) and a *stated print* price (what naive fills at,
-and what enters volume/VWAP). Conflating them is the mechanism behind two of the
-fatal bugs in §11.
+A `C` carries two prices. There is a *resting* price, the level the shares leave,
+which is what queue accounting keys on, and a *stated print* price, which is what
+naive fills at and what enters volume/VWAP. Conflating them is the mechanism behind
+two of the fatal bugs in §11.
 
 ### 2.3 The two arithmetic rules
 
-**Trade-class — consume then spill.** `ahead` is read **before** the decrement:
+**Trade-class: consume then spill.** `ahead` is read **before** the decrement:
 
 ```
 used     = min(removed, ahead)
@@ -173,19 +177,20 @@ fill     = min(overflow, display)          // capped at the DISPLAYED slice
 if (fill > 0) { display -= fill; ahead = 0; }
 ```
 
-**Cancel-class — consume and discard.** Never spills into a fill:
+**Cancel-class: consume and discard.** It never spills into a fill:
 
 ```
 if (from_ahead) ahead -= min(removed, ahead)
 ```
 
-Applying one uniform "consume the queue, then fill from the remainder" path to
-every advancing event is the single most likely double-count bug in the phase: it
-fills you off a large `D` at your level. The two rules are separate on purpose.
+One uniform "consume the queue, then fill from the remainder" path applied to every
+advancing event is the single most likely double-count bug in the phase, because it
+fills you off a large `D` at your level. The two rules are kept separate on purpose.
 
-Every subtraction compares before subtracting. `removed - ahead` evaluated the
-other way round wraps to ~4e9 and reports a fill of the entire order. `Book::reduce`
-already documents this trap; the queue model has five more instances of it.
+Every subtraction compares before subtracting. Evaluated the other way round,
+`removed - ahead` wraps to ~4e9 and reports a fill of the entire order.
+`Book::reduce` already documents this trap; the queue model has five more instances
+of it.
 
 ### 2.4 The clamp
 
@@ -202,48 +207,49 @@ entries at the same `(S, P)` that arrived strictly before `e`. Our orders are no
 silently deletes our own earlier orders from `ahead` and double-fills a two-order
 quoting strategy (§11, trap 3).
 
-Sound because the true shares ahead of us are a subset of `limit`, so `truth <= limit`
-always: the clamp can only remove over-estimates, never make a model more optimistic
-than the truth. It also makes "the level emptied" need no code of its own — `limit = 0`
-forces `ahead = 0` and we are at the front.
+The clamp is sound because the true shares ahead of us are a subset of `limit`, so
+`truth <= limit` always. It can therefore only remove over-estimates, and it can
+never make a model more optimistic than the truth. It also means that "the level
+emptied" needs no code of its own, since `limit = 0` forces `ahead = 0` and we are
+at the front.
 
 **But it changes what "pessimistic" means, and the write-up must say so.**
-Clamped-pessimistic is not "cancels never advance you"; it is "you advance only as
-fast as executions and the level's shallowest moment allow." Since `D` is 44.95% of
-the feed, the clamp fires constantly and is the largest single free parameter in the
-phase. Therefore: **on by default** (an unclamped pessimistic claims thousands of
-shares are ahead of us at a provably empty level — that is not a bound, it is a bug),
-**and** `pessimistic_unclamped` is reported as a fifth diagnostic curve with
-`clamp_events` / `clamp_shares` beside it, so the reader can see exactly how much
-work the clamp is doing.
+Clamped-pessimistic means "you advance only as fast as executions and the level's
+shallowest moment allow," which is a weaker statement than "cancels never advance
+you." Since `D` is 44.95% of the feed, the clamp fires constantly and is the largest
+single free parameter in the phase. It is therefore **on by default**, because an
+unclamped pessimistic claims thousands of shares are ahead of us at a provably empty
+level, and that is a bug rather than a bound. `pessimistic_unclamped` is **also**
+reported, as a fifth diagnostic curve with `clamp_events` / `clamp_shares` beside
+it, so the reader can see exactly how much work the clamp is doing.
 
 ### 2.5 Price priority — the fills the queue models cannot see on their own
 
 A rule that only fills on same-side `E`/`C` at our exact price deletes the single
-most important passive fill in existence: **the one where the other side comes to
-you.** Our order is not in `book::Book`, so the feed can legally rest an ask at or
-below our phantom bid, and `Book::crossed()` is false because we are not there. In
-reality an incoming sell that locks or crosses our resting bid takes us out
-instantly, at our price, in full. There is no queue ambiguity: **price** priority
-decides it, not time priority.
+most important passive fill in existence, which is **the one where the other side
+comes to you.** Our order is not in `book::Book`, so the feed can legally rest an
+ask at or below our phantom bid, and `Book::crossed()` is false because we are not
+there. In reality an incoming sell that locks or crosses our resting bid takes us
+out instantly, at our price, in full. There is no queue ambiguity, since **price**
+priority decides it rather than time priority.
 
 This is worst exactly where it matters most. An order that improves the touch has
-`ahead == 0` and, by construction, *no real order at its level* — so no `E`/`C` can
-ever name it, and it would never fill at all. Every omitted fill is an
+`ahead == 0` and, by construction, *no real order at its level*, so no `E`/`C` can
+ever name it and it would never fill at all. Every omitted fill is an
 adverse-selection fill, so the bias is one-directional and flatters P&L.
 
-Three triggers, applied **identically in all four models** (there is nothing to
-model), evaluated on the post-mutation book:
+Three triggers are applied **identically in all four models** (there is nothing to
+model) and evaluated on the post-mutation book:
 
-* **R1 — lock onset.** The first message after which the opposite touch is
+* **R1, lock onset.** The first message after which the opposite touch is
   at-or-through `P`. `reach` = total opposite-side displayed shares at prices
   at-or-through `P` (walk `Book::top(opposite, n)` while `at_or_through`). Consume
   `reach` under the trade-class rule. Trigger `Lock`.
-* **R2 — lock persistence.** While the lock stands, each opposite-side `A`/`F`/`U`-add
+* **R2, lock persistence.** While the lock stands, each opposite-side `A`/`F`/`U`-add
   at a price at-or-through `P` consumes `add_shares` under the trade-class rule.
   R1 consumes standing depth once; R2 consumes newly arriving depth. They do not
   double-count.
-* **R3 — through print.** A printable trade (`E`, printable `C` at its print price,
+* **R3, through print.** A printable trade (`E`, printable `C` at its print price,
   or `P`) at a price **strictly through** `P` on our own side. Under price priority a
   displayed order at `P` would have traded first. Consume `print_shares` under the
   trade-class rule. Suppressed while R1/R2 are active so the two mechanisms cannot
@@ -255,7 +261,8 @@ our level's real depth when in the counterfactual we were at the front of that l
 and the aggressor would have taken us before ever reaching the next price. The
 direction of that omission is, again, the adverse-selection direction.
 
-Fills from R1/R2/R3 are **maker** fills at our own price: the counterparty came to us.
+Fills from R1/R2/R3 are **maker** fills at our own price, because the counterparty
+came to us.
 
 `lock_shares`, `through_fills`, `through_shares` and `lock_dwell_ns` are all
 reported. A run in which they dominate is a run in which the queue assumption is not
@@ -263,8 +270,9 @@ what is being measured, and the reader must be able to see that.
 
 ### 2.6 The table
 
-`S` = our side, `P` = our limit. "Ambiguous" is the cancel class: optimistic advances,
-pessimistic does not, `mbo` tests reference membership, and **none of them fill**.
+In the table, `S` is our side and `P` is our limit. "Ambiguous" names the cancel
+class: optimistic advances, pessimistic does not, `mbo` tests reference membership,
+and **none of them fill**.
 
 | Msg | Resolved effect | naive | optimistic | pessimistic | mbo |
 |---|---|---|---|---|---|
@@ -301,7 +309,7 @@ pessimistic does not, `mbo` tests reference membership, and **none of them fill*
 closes both of the phase's most dangerous silent failures: a non-printable `C` at the
 cross price would otherwise fill every queue model in the closing auction, and a
 repriced `C` would otherwise manufacture a fill under a matching regime the model
-does not describe. On the validated day 2,500,408 of 6,154,278 shares — **40.6%** —
+does not describe. On the validated day 2,500,408 of 6,154,278 shares, **40.6%**,
 executed at exactly two prices in the two crosses, and cross participants' displayed
 orders are removed by exactly this message shape.
 
@@ -310,11 +318,11 @@ printing at 100.02 against an order resting at 100.00 is an event at our level i
 are at 100.00, and is not one if we are at 100.02.
 
 **`P` never advances any queue model.** Those shares were never in the displayed
-FIFO. And the direction people assume is backwards: on NASDAQ continuous priority is
+FIFO. The direction people assume is also backwards: on NASDAQ continuous priority is
 **price, then display, then time**, so non-displayed size at our own price sits
 **behind** us and does not delay our fill at all. What hidden liquidity actually
-costs us is *flow interception* — a hidden order at a better price, typically a
-midpoint peg inside a one-tick spread, takes marketable flow before it ever reaches
+costs us is *flow interception*, in which a hidden order at a better price, typically
+a midpoint peg inside a one-tick spread, takes marketable flow before it ever reaches
 our level. That is why the three hidden buckets are split by price relative to our
 limit, and why `hidden_inside_shares` is the one worth publishing.
 
@@ -322,7 +330,7 @@ limit, and why `hidden_inside_shares` is the one worth publishing.
 probing it inflates `Book::unknown_ref()`, which is the run's data-quality canary.
 
 **Never key on `P`'s Buy/Sell indicator.** It is the side of the non-displayed order,
-and in TotalView output it is widely observed to be constant `'B'` — both of this
+and in TotalView output it is widely observed to be constant `'B'`. Both of this
 repo's generators hardcode it (`gen.trade(t, ref, b"B", ...)` in `make_bench_feed.py`
 and `fuzz_feed.py:187`). Census the field on a real day and publish the split before
 any rule depends on it.
@@ -331,34 +339,35 @@ any rule depends on it.
 `book.py`. The delete half inherits all of `D`'s ambiguity; the add half joins the
 back with certainty. `U` is 4.49% of the validated day and `D` is 44.95%, so together
 they are ~49.4% of the feed and are the entire source of the optimistic/pessimistic
-spread. `X` — the message people think of as "the ambiguous cancel" — is 0.07%. The
+spread. `X`, the message people think of as "the ambiguous cancel", is 0.07%. The
 spread is a `D`-and-`U` phenomenon and the write-up should say so. `U` with
 `new_ref == original_ref` is legal on the wire and must not be shortcut as a no-op:
 it is still delete-then-add and the order goes to the back.
 
-The `X`/`U` distinction is about which order-entry message the participant chose, not
-about their intent: **`X` ⇒ priority retained; `U` ⇒ priority lost.** Our own order
-API mirrors the matching rule, not an inferred one-to-one message correspondence:
-`amend_down()` keeps `ahead`, `replace()` resets it.
+The `X`/`U` distinction records which order-entry message the participant chose rather
+than what they intended by it: **`X` ⇒ priority retained; `U` ⇒ priority lost.** Our
+own order API follows the matching rule rather than an inferred one-to-one message
+correspondence, so `amend_down()` keeps `ahead` and `replace()` resets it.
 
 **`ahead` survives everything except our own actions.** It is a property of one
 `(S, P)` FIFO, mutated only by messages at that exact side and price. Nothing about
 `best_bid`/`best_ask`, a better level appearing in front of us, that level emptying,
 or our level going empty and refilling ever resets it. Re-deriving `ahead` from the
-book on a touch change would throw away the exact edge the phase exists to measure —
+book on a touch change would throw away the exact edge the phase exists to measure.
 45% of the feed is `D`, so a level that jumped in front of us very often just cancels
 away, and we return to the touch with the position we earned minutes ago. The
 one-directional rule (§9, **I2**) makes this testable rather than a claim.
 
 **A partial fill of our own order leaves us at the front.** `display -= fill`, `ahead`
-stays 0, priority preserved. Never re-derive `ahead` from the book after a fill: the
-book still holds real orders that our counterfactual already consumed, so re-deriving
-would re-insert us behind liquidity we just traded through, making a partial fill
-strictly worse than no fill at all.
+stays 0, and priority is preserved. Never re-derive `ahead` from the book after a
+fill: the book still holds real orders that our counterfactual already consumed, so
+re-deriving would re-insert us behind liquidity we just traded through, and a partial
+fill would then be strictly worse than no fill at all.
 
 **Icebergs.** The fill is capped at `display`, never at `display + hidden`. When
-`display` reaches 0 with `hidden > 0`, the model refreshes its own slice internally —
-`slice = min(hidden, req.display)`, `ahead = shares_at(S,P) + own_live_shares_ahead` —
+`display` reaches 0 with `hidden > 0`, the model refreshes its own slice internally,
+setting `slice = min(hidden, req.display)` and
+`ahead = shares_at(S,P) + own_live_shares_ahead`,
 i.e. straight to the back. `QueueModel` owns its slices; it does not call into
 `Matcher` (whose `refresh_iceberg(Meta&)` is private and driven from the maker-side
 fill path). This is where `matcher.hpp`'s comment that hiding size costs queue
@@ -366,15 +375,15 @@ position becomes a number.
 
 **Session and halt gating is hoisted above the model dispatch,** so all four models
 see byte-identical eligibility. Non-tradable trading states are `'H'` (halted),
-`'P'` (paused) and `'Q'` (quotation only — the state a symbol sits in while a
+`'P'` (paused) and `'Q'` (quotation only, the state a symbol sits in while a
 halt-resumption cross executes mid-session). Only `'T'` is tradable, and
 `trading_state_` initialises to `'\0'` in `book.hpp` and is only ever set by an `'H'`
 message, so `'\0'` is *unknown-and-not-tradable* and is counted separately, never
 treated as trading. `'H'` carries a stock field and must be locate-filtered.
 
-Watch the three-way collision on the letter `Q`: system-event code `'Q'` (start of
+Note the three-way collision on the letter `Q`: system-event code `'Q'` (start of
 market hours), trading-state code `'Q'` (quotation only), and message type `'Q'`
-(cross trade). They are unrelated and all three matter here.
+(cross trade). The three are unrelated, and all three matter here.
 
 **The session gate does not keep you out of the opening cross.** NASDAQ sends
 `S = 'Q'` at 09:30:00 and the opening cross prints immediately after it, strictly
@@ -385,14 +394,14 @@ is not.
 of the validated day's volume from the opportunity set, and the sign of that
 exclusion is arbitrary: a passive bid that would have filled in a closing cross below
 the last mid is spared a loss; above it, denied a gain. The results doc prints the
-continuous-displayed share of volume —
-`6,154,278 − 2,500,408 − 568,546 = 3,085,324`, **50.1%** — as the fraction of the
+continuous-displayed share of volume,
+`6,154,278 − 2,500,408 − 568,546 = 3,085,324`, or **50.1%**, as the fraction of the
 tape the four models actually address. `CrossPolicy::FillAtCrossPrice` exists as a
-flag but is not the default: it needs the imbalance messages (`I`/`N`) we do not
-parse, and without them it would be grading its own homework.
+flag but is not the default, because it needs the imbalance messages (`I`/`N`) we do
+not parse, and without them it would be grading its own homework.
 
 **Unknown references are counted, never guessed.** Do not gate on "would it touch our
-level" — `D`, `X` and `E` carry no price on the wire, so that predicate is
+level": `D`, `X` and `E` carry no price on the wire, so that predicate is
 uncomputable for 99.9% of the references it would need to be evaluated for. Count
 every unknown reference; if the count is non-zero the run is labelled approximate,
 `mbo` is labelled approximate, and `--strict` (the default for publishable runs)
@@ -415,13 +424,13 @@ Thereafter:
   `mbo`'s advance set is pessimistic's plus a subset of optimistic's cancels, so
   `ahead_opt <= ahead_mbo <= ahead_pess` pointwise.
 * When a trade names a reference **not** in the set while `ahead > 0`, that is a
-  **priority anomaly** relative to the displayed FIFO — display-price sliding
+  **priority anomaly** relative to the displayed FIFO: display-price sliding
   (ranked at a price other than the displayed one), non-displayed ranked interest, or
   routed-away-and-returned orders. `mbo` still advances; it increments
   `priority_anomalies` and accumulates the share weight. **The share-weighted anomaly
   rate is the honest measure of how far `mbo` is from truth**, and the aggregated
   models cannot even detect it.
-* Membership is O(1). Never a `std::vector` scan — `level.hpp` already warns that
+* Membership is O(1), and never a `std::vector` scan. `level.hpp` already warns that
   `Level::shares_ahead_of()` is O(n) and must not go on the hot path, and a linear
   membership test reintroduces exactly that.
 * Because trade-class events advance the scalar without a set entry to decrement,
@@ -432,9 +441,9 @@ Thereafter:
 
 ## 3. The three fill models, as precise rules
 
-All four models share: the same session/halt gate, the same arrival timestamps, the
-same `Entry` lifecycle, the same price-priority triggers R1/R2/R3, and the same
-`min(overflow, display)` cap. They differ only where stated.
+All four models share one session/halt gate, one set of arrival timestamps, one
+`Entry` lifecycle, the price-priority triggers R1/R2/R3, and the
+`min(overflow, display)` cap. They differ only where stated below.
 
 ### 3.1 `naive` — touch fill
 
@@ -442,31 +451,31 @@ same `Entry` lifecycle, the same price-priority triggers R1/R2/R3, and the same
 > `min(printed_shares, display)`.
 
 * `ahead` is not tracked at all (equivalently, `ahead ≡ 0`).
-* Fills on `E`, on printable `C` (at its **print** price), and — by default — on `P`.
+* Fills on `E`, on printable `C` (at its **print** price), and, by default, on `P`.
 * **Never** on `Q`. A closing cross is millions of shares at a single price; a naive
   model that fills on every print at-or-through its limit consumes its entire order
   on that one message and the headline chart becomes a measurement of the auction.
   This is the highest-risk silent failure in the phase.
-* **Never** on a non-printable `C` — by definition already reported elsewhere as an
-  aggregate, so filling would double-count against that print.
+* **Never** on a non-printable `C`, which by definition is already reported elsewhere
+  as an aggregate, so filling would double-count against that print.
 * `min(printed_shares, display)`, **not** the full order. "Fill whenever the market
   trades at your price" taken literally lets a 500-share quote fill in full against a
   100-share print, inventing 400 shares that never traded. Then naive is not an upper
   bound on anything and invariant **I5** collapses.
 * With two of our own orders resting at one price, each print is allocated
-  **oldest-first** across them up to the print size — otherwise naive fills 200 shares
+  **oldest-first** across them up to the print size; otherwise naive fills 200 shares
   against a 100-share trade and violates **I7**. The reference strategy keeps one live
   order per `(side, price)` and asserts it.
 * **Naive respects arrival time.** It is "no queue", not "no clock". A model
   insensitive to arrival is filling on trades that happened before the order reached
-  the exchange, which is straightforward look-ahead. Consequence: the predicted shape
-  of the latency curve is that naive **also decays**, just far more slowly than the
-  queue models — not that it is flat.
+  the exchange, which is straightforward look-ahead. The consequence is a prediction
+  about the shape of the latency curve: naive **also decays**, far more slowly than
+  the queue models but not flat.
 * Filling on `P` is the faithful strawman (a naive backtester working off a trade tape
   fills on hidden prints), but it inflates the naive curve, which is the direction
-  that makes the project look good. So it is a flag, `--naive-hidden` (default on),
-  and `naive_fills_from_hidden` / `naive_shares_from_hidden` are **mandatory** report
-  fields. The results doc shows naive both ways.
+  that makes the project look good. It is therefore a flag, `--naive-hidden` (default
+  on), and `naive_fills_from_hidden` / `naive_shares_from_hidden` are **mandatory**
+  report fields. The results doc shows naive both ways.
 
 ### 3.2 `optimistic` — every cancel at our level was ahead of us
 
@@ -504,45 +513,46 @@ switch (cfg_.model) {
 
 ### 3.6 Comparability: two modes, both published
 
-**Mode B — frozen decisions (the headline).** One reference replay records an *intent
+**Mode B, frozen decisions (the headline).** One reference replay records an *intent
 tape* (id, kind, side, price, qty, event index, decision timestamp). All four models
 are then evaluated against that identical tape, so the fill model is the **only**
 variable. This is the correct experimental design for the claim the phase makes, it
 is what makes **I5** checkable event-for-event, and it is the only mode in which
 `[pessimistic, naive]` is a genuine bracket.
 
-**Mode A — free-running.** Each model drives its own strategy instance over the same
+**Mode A, free-running.** Each model drives its own strategy instance over the same
 feed, so fills feed back into decisions. This is the truthful end-to-end number and
-it is what a strategy would actually experience — but the difference between the four
-P&L numbers is then a compound of the queue assumption and every downstream decision
-it changed. Mode A reports the **event index at which the four lanes' working-order
-sets first diverge** and the fraction of the day after that point. Without that
-number beside it, "same strategy, three fill models" is overstated.
+it is what a strategy would actually experience, although the difference between the
+four P&L numbers is then a compound of the queue assumption and every downstream
+decision it changed. Mode A reports the **event index at which the four lanes'
+working-order sets first diverge** and the fraction of the day after that point.
+Without that number beside it, "same strategy, three fill models" is overstated.
 
 Both modes run in **one process, one pass, one shared `book::Book`**, with four lanes
-fanned out from a single `resolve()`. "Same data" is then a structural fact, not a
+fed from a single `resolve()`. "Same data" is then a structural fact rather than a
 claim, and the containment invariants are checked per event (~4.6M times on the MSFT
-day) rather than once on end-of-day totals. This is only sound because our orders
-never enter the book; the moment market impact is modelled, the four worlds fork and
-need four books.
+day) instead of once on end-of-day totals. The arrangement is sound only because our
+orders never enter the book. The moment market impact is modelled, the four worlds
+separate and need four books.
 
 `Recorder<S>` (records a tape) and `TapePlayer` (replays one) both satisfy the
-`Strategy` concept — which is the payoff for making the interface a template
+`Strategy` concept, which is the payoff for making the interface a template
 parameter rather than a base class.
 
 The tape carries intents but **not** risk state, so risk limits must be enforced by
-the **harness**, not inside strategy code (§6.4). Otherwise, replaying the pessimistic
-lane's tape into the naive lane gives the naive lane far more fills with none of the
-cap-driven cancels, and its inventory grows without bound — reintroducing exactly the
-Δinventory artefact the flatten policy exists to remove.
+the **harness** and not inside strategy code (§6.4). Otherwise, replaying the
+pessimistic lane's tape into the naive lane gives the naive lane far more fills with
+none of the cap-driven cancels, its inventory grows without bound, and the
+Δinventory artefact the flatten policy exists to remove is reintroduced.
 
 ---
 
 ## 4. Latency model
 
-`include/itchbook/sim/latency_model.hpp`. All arithmetic is on the **exchange clock**
-— nanoseconds since midnight Eastern, the same clock as `itch::timestamp()`. Latency
-is always **added** to an event time, never subtracted from "now".
+`include/itchbook/sim/latency_model.hpp`. All arithmetic is on the **exchange
+clock**, in nanoseconds since midnight Eastern, the same clock as
+`itch::timestamp()`. Latency is always **added** to an event time, never subtracted
+from "now".
 
 ### 4.1 Five channels
 
@@ -557,10 +567,10 @@ is always **added** to an event time, never subtracted from "now".
 Each channel has its own RNG stream derived from `(master_seed, channel_index)`, so a
 sweep over `order` does not reshuffle `feed` draws. Otherwise the difference between
 two grid points is part latency and part noise, and readers will over-interpret the
-wiggle. The sweep default is `Shape::Constant` — no RNG at all.
+variation. The sweep default is `Shape::Constant`, with no RNG at all.
 
 `LatencyModel::symmetric(n)` collapses to the build plan's single N.
-`reaction_time() = feed + think + order` — the interval from the exchange generating
+`reaction_time() = feed + think + order`, the interval from the exchange generating
 an event to our reply hitting the matching engine. It is **not** "tick to trade",
 which in the trade means the in-NIC-to-out-NIC time of your own box.
 
@@ -573,33 +583,33 @@ delivered to the strategy's view at `T + feed`, `on_event` fires with
 Two facts follow, and both contradict the intuition:
 
 1. Arrival time depends on the **sum only**, so where we land in the FIFO is
-   bit-identical across every split. "`order` alone decides queue position" is false;
-   the sum decides it.
+   bit-identical across every split. The sum decides queue position, and the claim
+   that `order` alone decides it is false.
 2. The state we decided on is the view as of exchange time `T` for **every** split,
    because delivery is triggered by that message. Staleness at decision is always
    exactly `feed`.
 
-So the split sweep is **flat by construction for an event-driven strategy**. It bites
-only for timer-driven wakeups (where the strategy's clock decouples from the exchange
-clock) and via `cancel` differing from `order`. We keep the axis for timer strategies
-and, better, we use "**axis B must be flat for the event-driven reference strategy**"
-as a determinism test.
+The split sweep is therefore **flat by construction for an event-driven strategy**.
+It matters only for timer-driven wakeups, where the strategy's clock decouples from
+the exchange clock, and where `cancel` differs from `order`. We keep the axis for
+timer strategies and, more usefully, we take "**axis B must be flat for the
+event-driven reference strategy**" as a determinism test.
 
 ### 4.3 Two books, one clock
 
-The strategy's view cannot be produced by rewinding — a book is not reversible — so it
-is a **second `book::Book`** fed the same messages `feed` nanoseconds later, with a
-deque of fixed-size reused payload slots between them.
+The strategy's view cannot be produced by rewinding, because a book is not
+reversible. It is therefore a **second `book::Book`**, fed the same messages `feed`
+nanoseconds later, with a deque of fixed-size reused payload slots between them.
 
 Because our orders never enter either book, the zero-latency equivalence test is
 valid for **any** strategy, not just a null one: with every channel at zero, the two
 books must emit byte-identical snapshot CSVs, gradeable with the existing
-`python/analysis/book_diff.py`. That is the strongest test in this file and it is
-free (**I11**).
+`python/analysis/book_diff.py`. That is the strongest test in this file, and it costs
+nothing (**I11**).
 
 The clock advances only when a market message arrives. That is correct rather than a
-shortcut: nothing in the book can change between messages, so processing a 50 µs-old
-arrival lazily just before the next message is observationally identical to
+shortcut, since nothing in the book can change between messages, so processing a
+50 µs-old arrival lazily just before the next message is observationally identical to
 processing it on time.
 
 ### 4.4 The time barrier — atomic exchange events
@@ -607,22 +617,22 @@ processing it on time.
 **Feed messages sharing a timestamp are one atomic exchange event.** One aggressive
 order sweeping three price levels emits three `E` messages at the same nanosecond. A
 barrier that only guarantees "your intent cannot take effect until the next
-*message*" lets a quote **step out of the middle of a sweep it is already inside** —
-no exchange permits this, and it bites hardest at latency 0, which is exactly the
+*message*" lets a quote **step out of the middle of a sweep it is already inside**.
+No exchange permits this, and the error is largest at latency 0, which is exactly the
 configuration the oracles would be asserted at.
 
 So:
 
 * Queue accounting runs **per message** (pre-mutation resolve, apply, post-mutation
-  commit) — it must, because `E`/`X`/`D` need the pre-mutation book.
+  commit), and it must, because `E`/`X`/`D` need the pre-mutation book.
 * Strategy callbacks fire **once per timestamp group**, after every message in the
   group is applied.
 * Our arrivals stamped at `T` are applied **after the entire group at `T`**
   (`TiePolicy::MarketFirst`).
 
-Note also that ITCH match numbers do **not** group a sweep: the match number is the
-day-unique identifier of one **execution** — the key the Broken Trade message uses to
-bust an individual trade — and ITCH carries no field identifying the incoming
+Note also that ITCH match numbers do **not** group a sweep. The match number is the
+day-unique identifier of one **execution**, the key the Broken Trade message uses to
+bust an individual trade, and ITCH carries no field identifying the incoming
 aggressor at all. Timestamp contiguity is the available proxy and the document says
 so plainly.
 
@@ -637,14 +647,15 @@ Nanos Channel::arrival(Nanos sent) {
 }
 ```
 
-Two corrections against the obvious version:
+The obvious version of this needs two corrections:
 
 * **Non-decreasing, not strictly increasing.** A `last_ + 1` clamp on the `feed`
   channel manufactures a burst-dependent delay: `last_` moves forward by at least 1 ns
   per message, so in any burst arriving faster than 1/ns the accumulated clamp grows
   linearly with burst length. At the open a single symbol sees thousands of messages
-  inside a few microseconds — tens of microseconds of synthetic delay, larger than the
-  first four points of the latency grid, i.e. the regime the sweep exists to resolve.
+  inside a few microseconds, which is tens of microseconds of synthetic delay, larger
+  than the first four points of the latency grid, i.e. the regime the sweep exists to
+  resolve.
   It also breaks the zero-latency equivalence test. Two messages in one MoldUDP64
   datagram genuinely do arrive at the same instant, and `EventKey::seq` already
   supplies the tie-break.
@@ -654,10 +665,10 @@ Two corrections against the obvious version:
   artefact, not a property of order entry. `cancel.arrival(sent)` is clamped to be no
   earlier than the arrival of any action already enqueued on that session.
   `CancelUnknown` then fires only for a genuinely unknown id (already-terminal, or
-  rejected at submit) — which is the useful bucket.
+  rejected at submit), which is the useful bucket.
 
-Saturate, never wrap. The truncation cap on `Shape::Lognormal` is mandatory, not
-decorative: a `double`-to-`uint64` conversion needs an explicit cast under
+Saturate, never wrap. The truncation cap on `Shape::Lognormal` is mandatory rather
+than decorative: a `double`-to-`uint64` conversion needs an explicit cast under
 `-Wall -Wextra -Wpedantic -Werror` plus UBSan, and an uncapped draw can schedule an
 event past end of day.
 
@@ -668,9 +679,9 @@ Total order on `EventKey{when, cls, seq}`, `cls` ranking
 from **one shared counter** across all four sources at enqueue time.
 
 **Every queue stores an `EventKey`**, not a bare `Nanos`. A merge that compares bare
-timestamps across four deques cannot break the case it was written to handle — an
-order arrival and a feed delivery landing on the same nanosecond — because `cls` and
-`seq` are not available at the comparison site. `drain_until()` is one loop that
+timestamps across four deques cannot break the case it was written to handle, namely
+an order arrival and a feed delivery landing on the same nanosecond, because `cls`
+and `seq` are not available at the comparison site. `drain_until()` is one loop that
 recomputes the minimum key after each event, because delivering a feed event can
 enqueue an action whose arrival is still earlier than `t`.
 
@@ -680,8 +691,8 @@ enqueue an action whose arrival is still earlier than `t`.
 
 * pessimistic for a tying `A`/`F` at our price (it goes ahead of us) and for a tying
   execution against our arriving cancel (we get filled first);
-* **optimistic** for a tying cancel at our price — applied before our arrival snapshot,
-  it makes `ahead` *smaller* and lands us closer to the front.
+* **optimistic** for a tying cancel at our price, which is applied before our arrival
+  snapshot, so it makes `ahead` *smaller* and lands us closer to the front.
 
 Report it as mixed, print `tie_events` and `tie_shares`, and offer `OursFirst` to
 bound the other way. A partitioned "worst case for every race" policy is not
@@ -701,14 +712,15 @@ actually have known) and is kept only so the report can price the flight. Both s
 of the subtraction add `own_live_shares_ahead`, so the difference is not biased by our
 own quoted size.
 
-Three failure modes, and they do not cancel out: the level **thickened** in flight
-(you are behind more than you measured — under pessimistic that is a step function,
-not a proportional error); the level **thinned** (you land closer to the front than you
-thought); and the level **no longer exists** because the touch moved a tick, at which
-point the decision-time figure is meaningless. Reported: mean and p99 of
-`|queue_delta|`, `touch_moved_frac`, `crossed_on_arrival`.
+Three failure modes exist and they do not cancel out. The level may have
+**thickened** in flight, so that you are behind more than you measured, and under
+pessimistic that is a step function rather than a proportional error. The level may
+have **thinned**, so you land closer to the front than you thought. Or the level
+**no longer exists** because the touch moved a tick, at which point the decision-time
+figure is meaningless. Reported: mean and p99 of `|queue_delta|`,
+`touch_moved_frac`, `crossed_on_arrival`.
 
-Use `shares_at()` (O(1) off `Level::shares`, maintained incrementally) — never
+Use `shares_at()` (O(1) off `Level::shares`, maintained incrementally) and never
 `Level::shares_ahead_of()`, which is O(orders at level) and would make the whole thing
 quadratic on a level holding hundreds of orders.
 
@@ -716,8 +728,8 @@ quadratic on a level holding hundreds of orders.
 
 A cancel has **no effect at the exchange until it lands**; the order stays fully live
 and fillable. There is no soft-cancelled state at an exchange, so any model that stops
-filling you the moment you *decide* to cancel is fantasy — and it removes the entire
-loss mechanism.
+filling you the moment you *decide* to cancel is false to the mechanism, and it
+removes the entire loss mechanism as well.
 
 Outcomes, all counted, none an error:
 
@@ -725,37 +737,37 @@ Outcomes, all counted, none an error:
 |---|---|
 | `Cancelled` | landed with the whole remainder intact |
 | `CancelTooLatePartial` | some filled in flight (`filled_in_flight`) |
-| `CancelTooLateFull` | all of it filled; the cancel finds a terminal state. **Expected, not an error** — never assert on it. |
+| `CancelTooLateFull` | all of it filled; the cancel finds a terminal state. **Expected, not an error**; never assert on it. |
 | `CancelUnknown` | genuinely unknown or already-terminal id |
 
 The strategy is not told until `ack` lands, so it keeps believing the order is live.
 A cancel-and-replace pair fired back-to-back can therefore leave **both** orders live
-at the exchange for one `order` interval — a genuine over-exposure and a genuine
-double-fill source, reproduced for free by queueing both actions at their own arrival
-times.
+at the exchange for one `order` interval. That is a genuine over-exposure and a
+genuine double-fill source, and queueing both actions at their own arrival times
+reproduces it at no extra cost.
 
-Quantify the damage with the markout machinery: record mids at fill+100 ms/1 s/10 s
-for too-late fills **separately** from ordinary passive fills. They should be
-systematically worse; if they are not, either the cancel signal is noise or the sim is
-wrong.
+The damage is quantified with the markout machinery: record mids at
+fill+100 ms/1 s/10 s for too-late fills **separately** from ordinary passive fills.
+They should be systematically worse; if they are not, either the cancel signal is
+noise or the sim is wrong.
 
 ### 4.10 Arrival-marketable orders
 
 The single largest way naive backtests overstate P&L is ignoring that a passive intent
 can arrive **marketable** because the touch came to us in flight. Three policies:
 
-* **`CrossPolicy::Take` (default)** — we cross, pay the spread and the **taker** fee on
-  an order we meant to earn a rebate on, through the scratch overlay (§5.3). This is
-  the faithful model of a plain limit order.
-* `CrossPolicy::RejectBack` — post-only cancel-back. This is an **election**, not
-  exchange default: a NASDAQ Post-Only order that would lock or cross re-prices, or
-  executes when the price improvement exceeds the maker-taker differential. It is also
-  *not* the same mechanism as Reg NMS Rule 610 display-price sliding. And it is
-  dangerous as a default: TouchMaker joins the touch, so its bid becomes marketable in
-  flight only when the offer **fell to or through it** — the single most adverse moment
-  for a bid — and rejecting it for free deletes exactly the fills the latency curve
-  exists to reveal, with an effect that grows with N.
-* `CrossPolicy::SlideOneTick` — re-price one tick inside before submitting.
+* **`CrossPolicy::Take` (default)**. We cross, and pay the spread and the **taker**
+  fee on an order we meant to earn a rebate on, through the scratch overlay (§5.3).
+  This is the faithful model of a plain limit order.
+* `CrossPolicy::RejectBack`, post-only cancel-back. This is an **election** rather
+  than an exchange default: a NASDAQ Post-Only order that would lock or cross
+  re-prices, or executes when the price improvement exceeds the maker-taker
+  differential. It is also a different mechanism from Reg NMS Rule 610 display-price
+  sliding. As a default it is dangerous. TouchMaker joins the touch, so its bid
+  becomes marketable in flight only when the offer **fell to or through it**, the
+  single most adverse moment for a bid, and rejecting it for free deletes exactly the
+  fills the latency curve exists to reveal, with an effect that grows with N.
+* `CrossPolicy::SlideOneTick`, which re-prices one tick inside before submitting.
 
 Whichever is chosen, `crossed_on_arrival` and `post_only_rejects` are reported. There
 is no post-only field on `engine::Request`, so this is a pre-submit check against
@@ -766,7 +778,7 @@ is no post-only field on `engine::Request`, so this is a pre-submit check agains
 Zero latency on every channel is the strongest single form of silent optimism
 available to a backtester: the strategy reacts to the message that moved the market
 and wins queue priority over everyone with real wire time. The default is
-`LatencyModel::colo_sw()` — feed 5 µs, think 3 µs, order 12 µs, cancel 12 µs, ack 5 µs.
+`LatencyModel::colo_sw()`: feed 5 µs, think 3 µs, order 12 µs, cancel 12 µs, ack 5 µs.
 `symmetric(0)` exists as an explicitly labelled unphysical diagnostic, and
 `queue_backtest` refuses to write a publishable JSON at `reaction_time() == 0` without
 `--allow-zero-latency`.
@@ -776,11 +788,12 @@ Named regimes so a result reads "this needs a colo box" and not "this needs 1200
 400 µs), `retail()` (5 ms / — / 8 ms).
 
 `think` should be measured, not guessed. Phase 4's ~63 cycles/msg is the cost of
-`parse` + `book::apply` — feed ingestion — and at 3 GHz that is ~21 ns, 150× smaller
-than `colo_sw()`'s 3 µs `think`. It is a defensible **floor for the ingestion portion**
-of `think`, not `think`. To make the phase-4-to-phase-6 narrative true, measure the
-reference strategy's own `on_event` with the same `bench::cycles_begin`/`cycles_end`
-harness and feed *that* into `Shape::Empirical`. `bench::calibrate_cycles_per_ns()`
+`parse` + `book::apply`, that is, of feed ingestion, and at 3 GHz that is ~21 ns,
+150× smaller than `colo_sw()`'s 3 µs `think`. It is a defensible **floor for the
+ingestion portion** of `think`, not for `think` itself. To make the
+phase-4-to-phase-6 narrative true, measure the reference strategy's own `on_event`
+with the same `bench::cycles_begin`/`cycles_end` harness and feed *that* into
+`Shape::Empirical`. `bench::calibrate_cycles_per_ns()`
 and `bench::tsc_is_invariant()` already exist in `bench/rdtsc.hpp`; `Histogram`
 saturates samples at `UINT32_MAX` and requires `finalize()` before `percentile()`.
 
@@ -790,20 +803,21 @@ saturates samples at `UINT32_MAX` and requires `finalize()` before `percentile()
 grid crossed with the four fill models, one self-describing CSV row per cell;
 `python/analysis/latency_sweep.py` renders it.
 
-Grid: `0, 1, 2, 5, 10, 20, 50, 100, 250, 500 µs, 1, 2, 5, 10 ms` — chosen to read as
+Grid: `0, 1, 2, 5, 10, 20, 50, 100, 250, 500 µs, 1, 2, 5, 10 ms`, chosen to read as
 regimes (0 = the impossible baseline every naive backtest assumes; 1–5 µs FPGA/kernel
 bypass; 10–50 µs good software colo; 100–500 µs well-connected non-colo; 1–10 ms
 retail/cloud). `log(0)` is undefined, so the plotter renders 0 as a separate leftmost
 category with an axis break, never as 1 ns.
 
-Axes: **(A) symmetric N** — the headline; **(C) cancel alone** — prices the too-late
-losses; **(B) the feed/order split** — flat by construction for the reference strategy
-(§4.2), retained for timer strategies and used as a determinism test.
+Axes: **(A) symmetric N**, the headline; **(C) cancel alone**, which prices the
+too-late losses; **(B) the feed/order split**, flat by construction for the reference
+strategy (§4.2), retained for timer strategies and used as a determinism test.
 
-Cost is not a constraint: the book replays at ~44M msg/s and MSFT's day is 1.2M
-messages, so a 14-point × 4-model × 20-seed sweep is seconds. Report a **band across
-seeds** per grid point, not a single number: one day of one symbol is one sample, and
-adjacent grid points can differ by less than day-to-day noise.
+Cost is not a constraint. The book replays at ~44M msg/s and MSFT's day is 1.2M
+messages, so a 14-point × 4-model × 20-seed sweep takes seconds. Report a **band
+across seeds** per grid point rather than a single number, because one day of one
+symbol is one sample and adjacent grid points can differ by less than day-to-day
+noise.
 
 "This strategy is only profitable below 20 µs" is the single most useful sentence a
 backtest can produce, and it is a sentence the naive touch-fill model is structurally
@@ -814,7 +828,7 @@ is the deliverable.
 
 Sanity gate: for the known-unprofitable strategy, confirm the curve is **explicable**
 rather than merely monotone. P&L rising with N is legitimately possible when being
-slow means missing toxic fills — and in that case the markout columns must show the
+slow means missing toxic fills, and in that case the markout columns must show the
 avoided fills were toxic. If they do not, the sim is wrong.
 
 ---
@@ -831,19 +845,19 @@ edge       = sgn * (M(T)     - F)        half-spread captured (or paid)
 drift(h)   = sgn * (M(T + h) - M(T))     the pure adverse-selection term
 ```
 
-**Positive is in our favour, in every column, always.** Negative means we were picked
-off. Adverse selection is reported as `-drift`. A `price_impact()` accessor returning
-`-drift` is provided for comparison against published Rule 605 numbers, which use the
-opposite convention.
+**Positive is in our favour, in every column, always.** Negative means the fill went
+against us. Adverse selection is reported as `-drift`. A `price_impact()` accessor
+returning `-drift` is provided for comparison against published Rule 605 numbers,
+which use the opposite convention.
 
 The three models are compared on **`drift`**, not on `markout`. And `edge` is **not**
-claimed invariant across models — that claim is false and would be falsified by the
+claimed invariant across models; that claim is false and would be falsified by the
 first real run. The models fill at *different times* by construction, so the same
 resting price `F` meets a different `M(T)`. Worse, because our orders are not in the
 book, a resting buy at `F` can fill (via R1/R3) while `F` sits above the prevailing
-ask, giving a **negative** edge on a nominally passive fill. So `edge` is reported per
-model as a measured quantity, and the gap between models is itself a result: it says
-how far the touch had moved before each model filled us.
+ask, giving a **negative** edge on a nominally passive fill. `edge` is therefore
+reported per model as a measured quantity, and the gap between models is itself a
+result: it says how far the touch had moved before each model filled us.
 
 ### 5.2 The mid
 
@@ -851,21 +865,21 @@ how far the touch had moved before each model filled us.
 Drift and edge are stored doubled (`two_edge`, `two_drift`); conversion to
 micro-dollars is `two_x * 50`.
 
-The reason is *not* rounding of a half-cent mid: `Price(4)` has four implied decimals,
+Rounding of a half-cent mid is not the reason. `Price(4)` has four implied decimals,
 so half a cent is 50 `Price(4)` units and is exactly representable, and Reg NMS Rule
 612 puts every displayed quote on a $0.01 grid for an NMS stock ≥ $1.00, so
 `bid + ask` is always even and the mid is exact. `two_mid` is carried because (a) it
 keeps every intermediate an exact integer with no `double` anywhere in the accounting
-path, and (b) it stays exact for sub-penny prices — sub-$1 names, midpoint prints,
-price-slid `C` ranks — which `book.hpp` already routes to the overflow map. The
-`int64` **is** required regardless: the $199,999.99 stub quote is 1,999,999,900 in
+path, and (b) it stays exact for sub-penny prices such as sub-$1 names, midpoint
+prints and price-slid `C` ranks, which `book.hpp` already routes to the overflow map.
+The `int64` **is** required regardless: the $199,999.99 stub quote is 1,999,999,900 in
 `Price(4)` and two of those overflow `int32`.
 
-`MidStatus`: `Ok`, `Locked` (bid == ask, kept — a transient single-venue lock has a
-well-defined midpoint), `OneSided`, `StrictlyCrossed` (bid > ask), `Halted`,
+`MidStatus`: `Ok`, `Locked` (bid == ask, kept, because a transient single-venue lock
+has a well-defined midpoint), `OneSided`, `StrictlyCrossed` (bid > ask), `Halted`,
 `OutsideContinuous`, `Empty`. Only `Ok` and `Locked` are usable.
 
-Note that `Book::crossed()` is `return b >= a;` — it counts a **locked** book as
+Note that `Book::crossed()` is `return b >= a;`, so it counts a **locked** book as
 crossed. That is a documented quirk of the existing API and is correct for the
 matcher's invariant, so the sim uses its own strict predicate rather than changing it.
 
@@ -884,15 +898,15 @@ The mid stamped on a fill is the mid **as of the start of the current nanosecond
 batch**, cached whenever the timestamp changes and stamped on every fill generated
 within that batch.
 
-Not the post-trade mid: the filling message can move the touch by itself, and folding
-that into `edge` understates adverse selection by up to a half tick per fill — larger
-than the entire rebate. And not the previous *message's* mid either: one aggressive
-order sweeping N resting orders emits N `E` messages, and re-observing the mid after
-each leg stamps leg k with a mid already walked down by legs 1..k-1. Every leg then
-records `edge ≈ +half-spread` against its own already-moved mid, and `drift` starts
-from a mid that has already absorbed most of the move — systematically understating
-**both** effective spread and adverse selection for exactly the toxic events the phase
-exists to measure.
+The post-trade mid will not do. The filling message can move the touch by itself, and
+folding that into `edge` understates adverse selection by up to a half tick per fill,
+which is larger than the entire rebate. The previous *message's* mid will not do
+either: one aggressive order sweeping N resting orders emits N `E` messages, and
+re-observing the mid after each leg stamps leg k with a mid already walked down by
+legs 1..k-1. Every leg then records `edge ≈ +half-spread` against its own
+already-moved mid, and `drift` starts from a mid that has already absorbed most of the
+move, so **both** effective spread and adverse selection are systematically
+understated for exactly the toxic events the phase exists to measure.
 
 Batch-start is causal (you never need to know the batch is over), it is consistent
 with the LOCF definition used at horizon endpoints, and it is what makes `edge`
@@ -903,21 +917,21 @@ comparable to Rule 605's order-receipt mid.
 Define `M(u)` := the mid after applying every message with timestamp `<= u`
 (right-continuous, last-observation-carried-forward).
 
-One **FIFO deque per horizon**, drained in stream order — no history storage, no heap.
-At the top of the replay loop, before `book::apply()` for the message at `t`, call
-`advance(t, mid_prev)`; for each horizon deque, pop while `front.due_ns < t` and
+One **FIFO deque per horizon**, drained in stream order, with no history storage and
+no heap. At the top of the replay loop, before `book::apply()` for the message at `t`,
+call `advance(t, mid_prev)`; for each horizon deque, pop while `front.due_ns < t` and
 resolve against `mid_prev`. The **strict `<`** is what makes a batch of messages
 sharing one nanosecond land on the correct side of a horizon expiring inside it; a
 `<=` would resolve against a mid that predates the batch.
 
-Valid because fills arrive in non-decreasing timestamp order and every entry in a
-given deque carries the same fixed offset, so each deque is already sorted. It is
-exact — bit-identical to storing a full mid tape and binary-searching it, because both
-compute the same LOCF step function — and it handles a symbol-filtered replay
-correctly by construction: if there are no messages for our symbol for three seconds,
-the mid did not change during those three seconds either. `on_fill()` asserts the
-horizon list has not changed since the first fill; a per-order horizon would silently
-break the sortedness the whole design rests on.
+This is valid because fills arrive in non-decreasing timestamp order and every entry
+in a given deque carries the same fixed offset, so each deque is already sorted. It is
+exact, in the sense of being bit-identical to storing a full mid tape and
+binary-searching it, because both compute the same LOCF step function. It also handles
+a symbol-filtered replay correctly by construction: if there are no messages for our
+symbol for three seconds, the mid did not change during those three seconds either.
+`on_fill()` asserts the horizon list has not changed since the first fill; a per-order
+horizon would silently break the sortedness the whole design rests on.
 
 Honest accounting of the memory claim: the deques are O(fills in the longest horizon),
 but `samples_` retains one ~40-byte `Sample` per fill × horizon × cohort for the whole
@@ -927,62 +941,64 @@ earns its place by avoiding a heap and a binary search per resolution, not by sa
 memory.
 
 Default horizons `{100 ms, 1 s, 10 s}`, `300 s` opt-in for the Rule 605 comparison.
-`h == 0` is not a horizon — the fill-instant markout is exactly `edge`, stored **once
-per fill** in a table keyed by `fill_seq`, not duplicated into every horizon's sample
-(duplicating it makes the `edge` column vary across horizons because each horizon has
-a different exclusion set, for a reason that has nothing to do with spread capture).
+`h == 0` is not a horizon. The fill-instant markout is exactly `edge`, stored **once
+per fill** in a table keyed by `fill_seq` and not duplicated into every horizon's
+sample (duplicating it makes the `edge` column vary across horizons because each
+horizon has a different exclusion set, for a reason that has nothing to do with spread
+capture).
 
 ### 5.5 Exclusion, split into two different decisions
 
 **At the fill instant.** An unusable mid means the fill's whole markout series is
-unusable and `edge` is undefined. Drop it from the markout table — that is
-contemporaneous information only, so it is a legitimate exclusion. Critically, the
-fill must **also** be kept out of the ledger's attribution accumulators: `observe()`
-returns `two_mid = 0` for `OneSided`/`Empty`, and letting that reach
-`sum_sgn_q_two_mid_` mis-attributes the entire notional of the trade to spread capture
-with an equal and opposite error in drift — while `gross()` and `net()` stay correct,
-so nothing looks wrong. Such fills go to `unattributed_shares_` / `unattributed_cash_`,
-printed beside the attribution. `Mid::two_mid` is only readable through an accessor
-that refuses when the status is unusable, so the poisoning cannot be written.
+unusable and `edge` is undefined. Drop it from the markout table, since that is
+contemporaneous information only and the exclusion is therefore legitimate. The fill
+must **also** be kept out of the ledger's attribution accumulators, which matters more
+than it appears: `observe()` returns `two_mid = 0` for `OneSided`/`Empty`, and letting
+that reach `sum_sgn_q_two_mid_` mis-attributes the entire notional of the trade to
+spread capture with an equal and opposite error in drift, while `gross()` and `net()`
+stay correct, so nothing looks wrong. Such fills go to `unattributed_shares_` /
+`unattributed_cash_`, printed beside the attribution. `Mid::two_mid` is only readable
+through an accessor that refuses when the status is unusable, so the poisoning cannot
+be written.
 
 **At the horizon endpoint.** Dropping here **conditions the sample on the future**.
 Books go one-sided when they are being swept, which is when adverse selection is
 largest; halts follow the fills that immediately preceded them. Missingness is
-correlated with the outcome, so the surviving mean is biased toward zero drift — i.e.
-optimistic. So: never drop silently. Report the endpoint-drop rate per side and per
-cohort, and publish a **bracketing bound** — the mean recomputed with dropped samples
-carried forward at the last usable mid, and again at the surviving touch — so the
-reader sees the interval the exclusion spans. On MSFT intraday these counts will be
-near zero; say so, and let the bias matter only where it is real.
+correlated with the outcome, so the surviving mean is biased toward zero drift, that
+is, toward optimism. Never drop silently, therefore. Report the endpoint-drop rate per
+side and per cohort, and publish a **bracketing bound**: the mean recomputed with
+dropped samples carried forward at the last usable mid, and again at the surviving
+touch, so that the reader sees the interval the exclusion spans. On MSFT intraday
+these counts will be near zero; say so, and let the bias matter only where it is real.
 
 **Truncation is decided at push time, not drain time.** If `ts + h > continuous_session_end_ns`,
 record immediately as `PastSessionEnd`, never queue it, exclude from the horizon mean,
 and print its own count and its own mean. Dropping truncated samples silently deletes
 precisely the last-10-seconds-of-session fills, which are systematically different.
 `FeedEnded` is a **separate** status for "the input file stopped first" (a short slice,
-`--limit`) — conflating "the session ended" with "your input stopped" hides a truncated
-slice.
+`--limit`), because conflating "the session ended" with "your input stopped" hides a
+truncated slice.
 
 `continuous_session_end_ns` is **not** the replay window bound. `validation/MSFT_2019-12-30.json`
-records `session_end_ns = 68400000000000` = 19:00 ET — the phase-2 UTC-day boundary,
-not the 16:00 close (57600000000000). Reusing that name or that value means
-`PastSessionEnd` never fires near the close and every 10 s markout for a 15:59:5x fill
-resolves against the thin after-hours book. Both values are printed in the report
-header.
+records `session_end_ns = 68400000000000` = 19:00 ET, which is the phase-2 UTC-day
+boundary rather than the 16:00 close (57600000000000). Reusing that name or that
+value means `PastSessionEnd` never fires near the close, and every 10 s markout for a
+15:59:5x fill resolves against the thin after-hours book. Both values are printed in
+the report header.
 
 ### 5.6 Aggregation
 
 Headline: **share-weighted mean**, `Σ(q_i · x_i) / Σ q_i`, numerator kept as an exact
-`int64`, reported in **cents per share** — the unit fees are quoted in, so 0.30 c/share
-of adverse selection nets directly against a $0.0030 rebate. Only dispersion touches
-floating point (Welford; a sum of squares over `q · two_drift` overflows `int64` at
-~1e20).
+`int64`, reported in **cents per share**, which is the unit fees are quoted in, so
+0.30 c/share of adverse selection nets directly against a $0.0030 rebate. Only
+dispersion touches floating point (Welford; a sum of squares over `q · two_drift`
+overflows `int64` at ~1e20).
 
 Alongside it, always: the unweighted per-fill mean (the gap says whether large fills
-are systematically more toxic, which is what you expect — you get filled in size
-exactly when someone is sweeping), p10/p50/p90 from the raw sample vector sorted at
-report time (markouts are a spike at zero with mass at ±half a tick; a mean alone is
-misleading), and the sample count.
+are systematically more toxic, which is what you expect, because you get filled in
+size exactly when someone is sweeping), p10/p50/p90 from the raw sample vector sorted
+at report time (markouts are a spike at zero with mass at ±half a tick, so a mean
+alone is misleading), and the sample count.
 
 Basis points use the **mid** as the denominator, not the fill price:
 `bps = per_share_micros * 200 / two_mid`. A fill-price denominator is smaller for buys
@@ -997,10 +1013,11 @@ dependence that dominates: **overlapping horizons**. Two fills one second apart 
 trades over a 23,400 s session (~1.7/s), so a 10 s window contains ~17 overlapping
 samples and the number of effectively independent 10 s blocks is ~2,340, not ~38,000.
 With a 10 s mid standard deviation of ~3.9 c/share, the true standard error is
-~3.91/√2340 ≈ 0.081 c/share, giving a 95% CI of about ±0.16 c/share — **wider than the
-entire $0.0020 base rebate**, and about 4× wider than the naive figure. Publishing a
-too-narrow standard error as the guard against overconfident claims is worse than
-publishing none, because it licenses exactly the claim it was meant to prevent.
+~3.91/√2340 ≈ 0.081 c/share, giving a 95% CI of about ±0.16 c/share, which is **wider
+than the entire $0.0020 base rebate** and about 4× wider than the naive figure.
+Publishing a too-narrow standard error as the guard against overconfident claims is
+worse than publishing none, because it licenses exactly the claim it was meant to
+prevent.
 
 So: report the standard error from non-overlapping blocks of length ≥ the horizon, or a
 moving-block bootstrap with block length 2–3× the horizon. Report **both** the naive
@@ -1014,21 +1031,22 @@ Rule 605 excludes them entirely).
 ### 5.7 The market-wide passive benchmark
 
 Every `E` and printable `C` in the feed is a passive fill for *somebody*, and ITCH
-gives the resting order's side directly. So `book.find(ref)` before `book::apply()` —
-one extra probe on the ~2.9% of messages that are executions, and free if fused into
-`apply_ex()` — yields the **market-wide passive markout** as a fourth cohort at
-essentially zero cost.
+gives the resting order's side directly. A `book.find(ref)` before `book::apply()`,
+one extra probe on the ~2.9% of messages that are executions and free if fused into
+`apply_ex()`, therefore yields the **market-wide passive markout** as a fourth cohort
+at essentially zero cost.
 
 Our strategy's markout is then reported next to the market's. A strategy whose fills
 are much *better* than the population's is evidence the queue model is too optimistic,
-not evidence of alpha. Trade signing is exact here — ITCH tells you the resting side,
-so there is no Lee-Ready classification error to explain away, which is a real
-advantage over the academic literature.
+not evidence of alpha. Trade signing is exact here, because ITCH tells you the resting
+side, so there is no Lee-Ready classification error to explain away, and that is a
+real advantage over the academic literature.
 
 `MarketPassive` is routed to the **markout engine only, never to a `Ledger`**. A P&L
-ledger for the entire market's passive side has a position that is the negative of
-every aggressor's net position for the day, a meaningless cash balance, and a
-break-even maker rate that is nonsense which would nonetheless print into the report.
+ledger for the entire market's passive side holds a position that is the negative of
+every aggressor's net position for the day, together with a meaningless cash balance.
+Its break-even maker rate would be meaningless too, and it would print into the report
+all the same.
 
 **Rule 605, demoted honestly.** SEC Rule 605 publishes average effective and realized
 spread per market centre per symbol per month. With signs corrected:
@@ -1044,9 +1062,9 @@ is strictly weaker than the phase-2 Databento bar, which really was exact. Reaso
 605 uses the mid at **order receipt**, not at execution; the covered-order population
 (market and marketable limit, 100–9,999 shares, regular hours, no odd lots pre-2024,
 no special handling, no auction) is a small non-random subset of every `E` on the tape;
-and it is a monthly aggregate by size bucket being compared against one day. To make it
-bite harder, restrict the `MarketPassive` cohort to 100–9,999-share executions in
-regular hours and report per size bucket.
+and it is a monthly aggregate by size bucket being compared against one day. To make
+the check sharper, restrict the `MarketPassive` cohort to 100–9,999-share executions
+in regular hours and report per size bucket.
 
 ### 5.8 Fees: one signed field, in micro-dollars
 
@@ -1061,7 +1079,7 @@ get paid to take) is a config file rather than a code path. Micro-dollars repres
 every published rate exactly: $0.00300 = 3000, $0.00305 = 3050, $0.000119 = 119.
 
 There is **no "mils" unit anywhere.** A per-share unit of tenths of a cent invites a
-10× error — `maker = -20` reads as a $0.0020 rebate and is a $0.020 rebate, four times
+10× error: `maker = -20` reads as a $0.0020 rebate and is a $0.020 rebate, four times
 the entire gross edge of a one-cent spread, which turns the headline chart into a
 chart of the rebate. Micro-dollars are unambiguous and every rate is an exact integer.
 
@@ -1097,7 +1115,7 @@ scales with price:
 | **averaged over a two-leg round trip** | | **0.169 c/share** |
 
 That is comparable to the entire $0.0020 base maker rebate and to the whole
-adverse-selection effect being measured — and it is ~8× the figure you get by
+adverse-selection effect being measured, and it is ~8× the figure you get by
 reasoning about a ~$20 stock. `FeeSchedule` therefore has a per-notional component;
 a per-share-only struct is structurally incapable of expressing Section 31.
 
@@ -1110,7 +1128,8 @@ Every report prints the schedule name and its effective date so a number generat
 the number can never be reported without someone having chosen a tier.
 
 The TAF cap is **per trade**, so a sweep that fills as N partials is capped N times in
-this model — a small overstatement, flagged rather than silently applied.
+this model. That is a small overstatement, and it is flagged rather than silently
+applied.
 
 ### 5.9 Fee/model interaction
 
@@ -1138,11 +1157,11 @@ break_even_maker_rate = (gross - taker_fees - cross_fees - regulatory_fees) / ma
 schedule's sign convention (positive = you pay). Getting this comment backwards is the
 easiest error in the report, and it prints in the headline table.
 
-`regulatory_fees_` must be subtracted explicitly: it is charged on maker sells too, so
-lumping it into a "non-maker fees" bucket silently solves ~0.17 c/share into the maker
-rate — larger than the gap between the base and top rebate tiers, which is the whole
-point of the table. Round explicitly; integer division truncates toward zero and
-rounds a negative numerator the wrong way.
+`regulatory_fees_` must be subtracted explicitly. It is charged on maker sells too, so
+placing it in a "non-maker fees" bucket silently moves ~0.17 c/share into the maker
+rate, which is larger than the gap between the base and top rebate tiers, and that gap
+is the whole point of the table. Round explicitly; integer division truncates toward
+zero and rounds a negative numerator the wrong way.
 
 ---
 
@@ -1151,7 +1170,7 @@ rounds a negative numerator the wrong way.
 ### 6.1 Dispatch
 
 A duck-typed template parameter checked by a C++20 `concept`, exactly as
-`itchbook::parse()` takes a Handler — the dispatch inlines, there is no indirect call
+`itchbook::parse()` takes a Handler. The dispatch inlines, there is no indirect call
 on a path that runs ~1.2M times per symbol-day, and a missing callback produces one
 readable diagnostic instead of a template instantiation dump.
 
@@ -1181,9 +1200,9 @@ Guarantees, all structural rather than by convention:
 2. `Ctx` methods **queue intents**; nothing executes inline. An intent raised on event
    `k` cannot arrive before the end of the timestamp group of event `k`, and with the
    latency floor it cannot arrive within it at all.
-3. Every `Event` field is derivable from messages `0..k`. The two not on the wire —
-   the resting price for `E`/`X`/`D` and the maker side — are resolved from the
-   pre-mutation book, which is reconstructed state, not the future.
+3. Every `Event` field is derivable from messages `0..k`. The two that are not on the
+   wire, the resting price for `E`/`X`/`D` and the maker side, are resolved from the
+   pre-mutation book, which is reconstructed state rather than the future.
 4. `Ctx::now()` is the strategy's clock (`t_exch + feed`) and there is no other clock.
 5. Fills arrive only through `on_fill`, in timestamp order.
 6. **Markouts are computed offline from the fill tape after the replay finishes.** They
@@ -1192,27 +1211,28 @@ Guarantees, all structural rather than by convention:
 
 `MarketView` splits two things the design must not conflate. Our orders are not in the
 feed book, so `best_bid()`, `shares_at()` and `top()` **exclude our own resting
-quotes** — a quoter that conditions on "am I at the touch" would otherwise churn
-against its own invisible order. So `MarketView` offers both: the feed-book queries,
-and separately `our_shares_at(side, price)`, `our_working()` and
+quotes**, and a quoter that conditions on "am I at the touch" would otherwise churn
+against its own invisible order. `MarketView` therefore offers both: the feed-book
+queries, and separately `our_shares_at(side, price)`, `our_working()` and
 `effective_best_bid()/effective_best_ask()` (feed plus our own). Which one a strategy
 reads is an explicit choice.
 
 `Event` carries `top_before`, `top_after` and **two** change flags. `Quote` carries
 `bid`, `ask`, `bid_size`, `ask_size` (all available for free from `book::LevelView`)
 and a defaulted `operator==`, so `top_size_changed` is a capability the type actually
-has — a `Quote` with prices only can never detect the touch draining from 5,000 shares
+has. A `Quote` with prices only can never detect the touch draining from 5,000 shares
 to 100 at the same price, and a comment claiming otherwise is worse than no comment.
 
 `Event` also splits two concepts that a single `is_trade` flag conflates:
 
-* `is_execution` — `E`, printable `C`, **and non-printable `C`** — the
+* `is_execution`: `E`, printable `C`, **and non-printable `C`**. This is the
   queue-consumption signal.
-* `is_printable_trade` — `E`, printable `C`, `P`, `Q` — the volume/VWAP/markout signal.
+* `is_printable_trade`: `E`, printable `C`, `P`, `Q`. This is the volume/VWAP/markout
+  signal.
 
 Keying queue advancement on `is_trade` as "E, printable C, P, Q" would silently fail
-to advance on non-printable `C` (576 messages on the validated day — small, but a
-systematic sign error in the under-filling direction) *and* would advance on `P` and
+to advance on non-printable `C` (576 messages on the validated day, a small count but
+a systematic sign error in the under-filling direction) *and* would advance on `P` and
 `Q`, which never touch the book at all.
 
 `Event::has_side` is **false for both `P` and `Q`**. `P`'s Buy/Sell indicator is the
@@ -1225,20 +1245,20 @@ side of the non-displayed order and is not usable information (§2.7).
 `Ctx::queue_ahead(OrderId) -> std::pair<uint64_t,uint64_t>` (the lane's own bracket)
 and makes the harness **refuse frozen-decision mode**, printing why.
 
-The justification is *not* that hiding it keeps the controlled experiment possible —
-it does not, because `Ctx::position()`, `Ctx::realised()`, `working()` and `on_fill`
-are all fill-model-derived, and any strategy that reacts to its own fills already makes
-Mode A three trajectories. The real justification is narrower and true: **queue
-position is an estimate whose error bars are the subject of this phase, so consuming it
-silently launders modelling uncertainty into a trading decision.** Returning the
-bracket rather than a point estimate is the same principle.
+The justification is narrow and it is true: **queue position is an estimate whose
+error bars are the subject of this phase, so consuming it silently launders modelling
+uncertainty into a trading decision.** Hiding it does not keep the controlled
+experiment possible, because `Ctx::position()`, `Ctx::realised()`, `working()` and
+`on_fill` are all fill-model-derived, and any strategy that reacts to its own fills
+already makes Mode A three trajectories. Returning the bracket rather than a point
+estimate follows the same principle.
 
 ### 6.4 Risk limits belong to the harness, not to strategy code
 
 A position limit is by definition a function of fills, so a strategy that enforces its
 own cap cannot be fill-independent, and a `strategy_fill_independent` bool that the
-strategy author sets is a comment with a type — unfalsifiable in a single-pass design
-where there is only one order stream by construction.
+strategy author sets is a comment with a type. It is unfalsifiable in a single-pass
+design where there is only one order stream by construction.
 
 So:
 
@@ -1261,7 +1281,7 @@ So:
 `Money = int64_t` micro-dollars. **No `double` anywhere in the accounting path**;
 floating point appears only in report formatting and in the Python chart. NASDAQ fees
 have five decimal places, so cents are too coarse and `Price(4)` is too coarse. A $100M
-notional day is 1e14 against an `int64` range of 9.2e18. The deeper reason: the
+notional day is 1e14 against an `int64` range of 9.2e18. The deeper reason is that the
 headline claim is that four numbers differ by a *small* amount, and floating-point
 summation error over ~1e5 fills is small but not reproducible across compilers,
 optimisation levels or `-march=native`. Exact integers let the tests assert equality
@@ -1281,16 +1301,16 @@ drift(mark)  =  Σ q_i·sgn_i·(two_mark − two_mid_i) · 50
 Defining `holding = equity − edge` dumps the entire fee and rebate stream into the
 bucket labelled adverse selection. On MSFT at a one-cent tick the rebate is 20% of the
 gross spread, so the report would show a market maker whose "adverse selection" is
-systematically flattered by its own rebates — and printing gross and net side by side
+systematically flattered by its own rebates, and printing gross and net side by side
 would be impossible.
 
 **Realised/unrealised** is a *presentation* of that number, not its source: FIFO, LIFO
 and weighted-average cost differ only in how a total is split and never in the total.
-WAC, with the basis computed as
-`(open_cost/open_abs)*closing + (open_cost%open_abs)*closing/open_abs` — no 128-bit
-intermediate, because `__int128` trips `-Wpedantic -Werror` on this project's build.
-C++ truncation toward zero keeps the identity for negative `open_cost` too. A full
-close is exact, so `pos == 0 ⟹ open_cost == 0 ⟹ realised == cash`.
+WAC is used, with the basis computed as
+`(open_cost/open_abs)*closing + (open_cost%open_abs)*closing/open_abs`, and with no
+128-bit intermediate, because `__int128` trips `-Wpedantic -Werror` on this project's
+build. C++ truncation toward zero keeps the identity for negative `open_cost` too. A
+full close is exact, so `pos == 0 ⟹ open_cost == 0 ⟹ realised == cash`.
 
 **`cash + open_cost == realised` is a typo guard, not a conservation law.** Expand the
 deltas: since `notional()` is linear in quantity, `trade_cost == closing_cost + open_notional`
@@ -1298,8 +1318,8 @@ identically, so the identity holds for *any* value of `basis`, *any* value of `f
 and any split of `|q|` into closing + opening. It cannot detect a wrong WAC basis, a
 sign error on the maker rebate, a maker/taker misclassification, a wrong `two_mid`, a
 wrong position update (position does not appear in it at all), or a fill attributed to
-the wrong side. Do not bill it as this phase's `conserves_shares()`. The checks with
-teeth are **I8** and **I9** in §9.
+the wrong side. Do not present it as this phase's `conserves_shares()`. The checks
+that can genuinely fail are **I8** and **I9** in §9.
 
 ### 6.6 The taker path
 
@@ -1319,13 +1339,13 @@ TakeResult take(const book::Book&, Side, uint32_t qty, int32_t limit,
                 uint32_t max_pct_of_level, int32_t slippage_ticks_beyond_first);
 ```
 
-The modelling assumption is stated, not hidden: **our takers consume liquidity that
+The modelling assumption is stated openly: **our takers consume liquidity that
 the feed also consumes; displayed depth is not decremented.** Against a single
 unmutated book, the same 100 resting shares would otherwise be sold to all four lanes
-*and* to whichever real aggressor in the feed actually consumed them — four-way
-double-spending of one order, worst exactly at a forced end-of-day flatten where every
-lane dumps its whole inventory at once, and largest for the lane with the most
-inventory.
+*and* to whichever real aggressor in the feed actually consumed them. That is
+four-way double-spending of one order, worst exactly at a forced end-of-day flatten
+where every lane liquidates its whole inventory at once, and largest for the lane with
+the most inventory.
 
 Bounds and reporting: cap participation at `max_pct_of_level` of displayed size per
 level, charge configurable slippage in ticks beyond the first level, and report
@@ -1337,13 +1357,13 @@ size how much of the P&L rests on it. **I14** asserts `Book::unknown_ref()` and
 
 ### 6.7 Session boundaries and the terminal mark
 
-There is **no session start gate anywhere in a naive design**, and the consequence is
-severe: the ITCH file carries orders from 04:00 ET and `book::modelled()` accepts
+A naive design has **no session start gate anywhere**, and the consequence is severe.
+The ITCH file carries orders from 04:00 ET and `book::modelled()` accepts
 `A`/`F`/`D`/`U` from the first message of the day, so a quoter runs through the entire
-pre-market and, worst, through the 09:28–09:30 opening-book accumulation window where
-the NASDAQ book is **legitimately crossed by construction** (orders accumulate without
-matching until the opening cross). A cancel-on-crossed rule then churns on essentially
-every event in that window.
+pre-market and, worst of all, through the 09:28–09:30 opening-book accumulation window
+where the NASDAQ book is **legitimately crossed by construction** (orders accumulate
+without matching until the opening cross). A cancel-on-crossed rule then churns on
+essentially every event in that window.
 
 So, all harness-owned, none in strategy code:
 
@@ -1355,32 +1375,34 @@ So, all harness-owned, none in strategy code:
 | session close | `S = 'M'` | no intents; drain and resolve everything in flight |
 
 `Comparison::on_message` copies `book_replay.cpp`'s locate filter **including the
-`type != 'S'` exemption** — System Event messages carry no meaningful locate but bracket
-the session, and without the exemption the sim can never find 09:30 or 16:00.
+`type != 'S'` exemption**. System Event messages carry no meaningful locate but they
+bracket the session, and without the exemption the sim can never find 09:30 or 16:00.
 
 **The terminal mark is not the closing cross.** The headline P&L is 100% realised with
-`position == 0` asserted (which the harness quote-stop makes an enforceable invariant
-rather than a hope). Any residual that could not be flattened — halt, thin book — is
-marked at the **last usable continuous-session mid at or before the flatten deadline**,
-reported on its own line with the share count and the mark source named, and the
-headline P&L line annotated as containing an unrealised residual.
+`position == 0` asserted, which the harness quote-stop makes an enforceable invariant
+rather than a hope. Any residual that could not be flattened, whether because of a
+halt or a thin book, is marked at the **last usable continuous-session mid at or
+before the flatten deadline**, reported on its own line with the share count and the
+mark source named, and the headline P&L line is annotated as containing an unrealised
+residual.
 
 The closing cross price is reported **separately as post-flatten context, never as the
 mark**, for three reasons: you cannot transact there from 15:58 (the MOC/LOC entry
 deadline was 15:50 ET in 2019, and after it you may only enter on the offsetting side
 of the published imbalance); the cross prints at 16:00, so marking a 15:5x residual
 with it is forward-looking information inside a reported number; and it contradicts
-the design's own — correct — reason for excluding our orders from crosses, which is
-that we were not in the auction. You cannot both be excluded from the auction and be
+the design's own reason, itself correct, for excluding our orders from crosses, which
+is that we were not in the auction. You cannot both be excluded from the auction and be
 marked at its price. `Book::cross_prices()` returns a **const** map, so it is read with
 `.count('C')` then `.at('C')`, never `operator[]` (which does not compile on a const
 map) and never unguarded `.at()` (which throws on a short slice).
 
 Force-flattening makes the number **transactable**, which is a real improvement over a
 mid mark. It does not make it a measure of fill quality: the headline still contains
-Δinventory × (flatten price − average entry) plus a Δ(taker fee) term. So the report
-also carries **risk-normalised figures** — P&L per filled share, and P&L per unit of
-average `|inventory|` — which is what actually makes the four bars comparable.
+Δinventory × (flatten price − average entry) plus a Δ(taker fee) term. The report
+therefore also carries **risk-normalised figures**, namely P&L per filled share and
+P&L per unit of average `|inventory|`, and those are what make the four bars
+comparable.
 
 ---
 
@@ -1389,8 +1411,8 @@ average `|inventory|` — which is what actually makes the four bars comparable.
 Two different jobs, and conflating them is the mistake:
 
 * **The headline strategy** must make the *fill model* the variable. It is chosen
-  because its sign plausibly flips between models — not because it is guaranteed to
-  lose.
+  because its sign plausibly changes between models, and not because it is guaranteed
+  to lose.
 * **The loss guarantee** the build plan demands ("run a strategy you *know* is
   unprofitable and confirm it loses money") needs a strategy whose expected result is
   known **before the code runs**. The headline strategy cannot do that job, because on
@@ -1404,7 +1426,7 @@ Every parameter fixed a priori, none tuned:
 | parameter | value | why |
 |---|---|---|
 | quote size | 100 shares | one round lot, from `'R'` `round_lot_size`. Small enough that zero market impact survives against a 1,000–5,000-share touch; large enough that the fill model can tell the four worlds apart (a 1-share order fills on any trade). |
-| placement | **join only** — bid at `best_bid`, offer at `best_ask` | An order that *improves* the touch creates a level with `ahead == 0` in all four models, and the four bars collapse into one. |
+| placement | **join only**: bid at `best_bid`, offer at `best_ask` | An order that *improves* the touch creates a level with `ahead == 0` in all four models, and the four bars collapse into one. |
 | sides | one live order per side, asserted | Two of our orders at one price makes naive double-fill against a single print and breaks **I7**. |
 | requote | on `top_price_changed`, cancel and repost if not at the current best | Never reprice in place: a `U` goes to the back of the level and the sim charges that loss of priority. One requote per side per event. |
 | size reaction | **none** | Reacting to depletion at our own price is queue-aware behaviour, gated by `kUsesQueuePosition`. Deliberate omission. |
@@ -1417,11 +1439,11 @@ Every parameter fixed a priori, none tuned:
 and rejoins every millisecond never accrues queue position: naive fills constantly,
 pessimistic and `mbo` barely fill at all, and `mbo` collapses onto pessimistic for a
 reason that has nothing to do with the market. The requote policy is a **first-class
-parameter of the finding** (join-and-hold vs requote-on-touch-move vs fixed interval)
+parameter of the finding** (join-and-hold vs requote-on-touch-move vs fixed interval),
 and the band is published at more than one setting.
 
 The headline run must report `max |position|` and the inventory-carry term separately.
-An inventory-blind quoter's position is a random walk in fill imbalance; because the
+An inventory-blind quoter's position is a random walk in fill imbalance. Because the
 report decomposes into edge + drift + fees and normalises per share, that term is
 visible and attributable rather than hidden in the total.
 
@@ -1431,13 +1453,13 @@ visible and attributable rather than hidden in the total.
    behind all of it with 100.
 2. **The cancel-to-execution ratio.** On the validated day, `D` 548,858 + `X` 840 +
    `U`-delete 54,873 = **604,571** ambiguous removals against `E` 34,739 + `C` 576 =
-   **35,315** executions — **17.1 cancels per execution**. Under pessimistic queueing,
-   only executions advance you, so a level that turns over by cancellation never
-   advances you at all.
+   **35,315** executions, which is **17.1 cancels per execution**. Under pessimistic
+   queueing, only executions advance you, so a level that turns over by cancellation
+   never advances you at all.
    *Caveat the write-up must carry:* that is a **whole-book message count**, and queue
    advancement is in **shares at the touch while your order rests there**. `D` carries
    no share count on the wire, so the share-weighted figure requires resolving each `D`
-   against `book.find(ref)->shares` — which `resolve()` already does. **The sim
+   against `book.find(ref)->shares`, which `resolve()` already does. **The sim
    computes and publishes the share-weighted cancelled-vs-executed ratio at our own
    level while we rest there**, and the 17.1 appears only as context with both
    qualifiers attached. Quoting the whole-book message ratio as the headline queue
@@ -1466,16 +1488,16 @@ MSFT scale: ~$157.60, one-cent spread, half-spread = 0.50 c/share.
 | **net, c/share** | **+0.32** | **+0.15** | **+0.04** | **−0.09** |
 
 Break-even maker rate under pessimistic: `0.62 + 0.169 − 0.50 = 0.289` c/share ≈
-**$0.0029/share** — the *top* tier, not comfortably below the base tier. Strip the
-rebate entirely and every model loses. Put it on an inverted venue charging $0.0018 to
-add and all four go negative.
+**$0.0029/share**, which is the *top* tier rather than a rate comfortably below the
+base tier. Strip the rebate entirely and every model loses. Put it on an inverted
+venue charging $0.0018 to add and all four go negative.
 
 Exiting aggressively costs `0.50` (half-spread) `+ 0.30` (take fee) `+ 0.338`
 (regulatory, if the exit is a sell) = **1.14 c/share**, so a passive-in/aggressive-out
 round trip needs about a tick and a half of edge, not half a tick.
 
 The point of the table is that "the queue assumption changes the P&L" and "the fee
-schedule changes the sign" are the same finding viewed twice — and that omitting the
+schedule changes the sign" are the same finding viewed twice, and that omitting the
 regulatory row moves the pessimistic bar from −0.09 to +0.08, i.e. **flips the
 headline conclusion**.
 
@@ -1483,7 +1505,7 @@ headline conclusion**.
 
 Each is a ctest case using `tests/check.hpp`.
 
-**S1 `Crosser` — the loss guarantee.** Alternate a 100-share IOC buy and sell every N
+**S1 `Crosser`, the loss guarantee.** Alternate a 100-share IOC buy and sell every N
 `top_price_changed` events. Two assertions:
 
 * **Exact accounting**, from the fill audit record: the test re-derives realised P&L
@@ -1491,40 +1513,41 @@ Each is a ctest case using `tests/check.hpp`.
   with the incrementally maintained ledger, to the micro-dollar. This is what S1 can
   honestly assert exactly.
 * **The loss**, a priori: the round trip is `−(ask_at_buy − bid_at_sell)`, i.e. the
-  spread **plus the price drift between the legs** — MSFT ran 159.20 → 156.73 that day,
-  and a strategy systematically long between its two legs accumulates that. And even
+  spread **plus the price drift between the legs**. MSFT ran 159.20 → 156.73 that day,
+  and a strategy systematically long between its two legs accumulates that. Even
   the drift-inclusive figure cannot be asserted exactly against the *decision-time*
   touch, because the IOC does not arrive until later and `Crosser` fires on a touch
-  move. So assert the statement that is genuinely a priori: every completed round trip
-  has non-positive spread-and-fee contribution, and over ~1,200 round trips the sum of
-  (spread + 2 × taker fee + regulatory) ≈ $1,900 dominates the drift term (σ ≈ $70) —
-  assert `realised < −$1,000`. On a synthetic flat-mid feed with zero drift, assert the
-  exact figure.
+  move. Assert instead the statement that is genuinely a priori: every completed round
+  trip has non-positive spread-and-fee contribution, and over ~1,200 round trips the
+  sum of (spread + 2 × taker fee + regulatory) ≈ $1,900 dominates the drift term
+  (σ ≈ $70), so assert `realised < −$1,000`. On a synthetic flat-mid feed with zero
+  drift, assert the exact figure.
 * Byte-identical under all four fill models: a taker fill has no queue.
 
-**S2 `FarQuoter`.** Bid at $0.01 and offer at $199,999.99 — the stub-quote prices real
+**S2 `FarQuoter`.** Bid at $0.01 and offer at $199,999.99, the stub-quote prices real
 feeds carry. Zero fills, zero fees, zero P&L in every model, with orders working all
 day. **Not** `Price(4) = 1` ($0.0001): that is a sub-penny price, illegal under Rule
 612 for a $157 stock, and `Ctx::post` rejects it with `Reject::InvalidPrice`, so the
 test would silently have one working order instead of two. Note honestly what S2 does
 and does not exercise: both prices are alone on empty levels, so `ahead == 0` in all
-four models and this is the *degenerate* path (which is also why it belongs as a
-separate oracle — see S7). Both are outside the dense band, so it also exercises the
+four models and this is the *degenerate* path, which is also why it belongs as a
+separate oracle (see S7). Both are outside the dense band, so it also exercises the
 overflow map.
 
-**S2b — the queue machinery, separately.** Post at the touch behind a known amount of
+**S2b, the queue machinery, separately.** Post at the touch behind a known amount of
 resting size on a hand-built feed and assert `ahead` evolves exactly as computed by
 hand under each model. This is the test that can actually fail.
 
 **S3 `Flicker`.** Post, cancel on the next event, forever. Assert the invariant that is
 true: every fill timestamp lies in `[ack_ns, cancel_ack_ns]`, and the exposure window
 is exactly one exchange event at zero latency. Do **not** assert the fill count is
-zero — the order is live for one full fill-model pass and will fill if that event is an
-execution at its price with `ahead == 0`. Instead assert the count is **non-zero** on a
-feed with trades at the quoted price: a `Flicker` that never fills is evidence the
-exposure window is being skipped, which is the bug this test exists to catch.
+zero, because the order is live for one full fill-model pass and will fill if that
+event is an execution at its price with `ahead == 0`. Assert instead that the count is
+**non-zero** on a feed with trades at the quoted price: a `Flicker` that never fills is
+evidence the exposure window is being skipped, which is the bug this test exists to
+catch.
 
-**S7 — inside-the-spread equality.** A strategy that only ever posts at a price where
+**S7, inside-the-spread equality.** A strategy that only ever posts at a price where
 no level exists must produce **identical P&L in all four models** (`ahead == 0`
 everywhere). Together with S1's cross-model equality, this asserts that the fill model
 is confined to exactly the code path where queue ambiguity lives and has not leaked
@@ -1534,9 +1557,10 @@ into the taker path or the empty-level path.
 
 ## 8. Files to create, with signatures
 
-Everything is header-only. **Every free function is `inline`** — the CMake target is
-`add_library(itchbook INTERFACE)` with no `src/`, so a non-inline definition in a
-header is a multiple-definition link error the moment two translation units include it.
+Everything is header-only. **Every free function is `inline`**, because the CMake
+target is `add_library(itchbook INTERFACE)` with no `src/`, so a non-inline definition
+in a header is a multiple-definition link error the moment two translation units
+include it.
 
 ```
 include/itchbook/sim/
@@ -1607,25 +1631,26 @@ inline bool apply_ex(Book&, char type, const uint8_t* p, PreState* out);
 ```
 
 Without `apply_ex`, `resolve()` adds a **third** independent walk of the ref map on
-the 52% of messages that are `E`/`C`/`X`/`D`/`U`, on the hottest path in the program —
-undoing part of phase 4 in a design that justifies template dispatch on the grounds
-that an indirect call per event is unaffordable. It also removes the possibility of
-`resolve()` and `apply()` disagreeing about which order a reference names, which is a
-real hazard given `RefMap::insert`'s documented last-writer-wins on duplicates.
+the 52% of messages that are `E`/`C`/`X`/`D`/`U`, on the hottest path in the program,
+which undoes part of phase 4 in a design that justifies template dispatch on the
+grounds that an indirect call per event is unaffordable. Fusing the two also removes
+the possibility of `resolve()` and `apply()` disagreeing about which order a reference
+names, and that is a real hazard given `RefMap::insert`'s documented last-writer-wins
+on duplicates.
 
 ### 8.2 Known Phase 5 gaps (recorded, not necessarily fixed here)
 
 * `Matcher::match()` breaks out on an external maker (`matcher.hpp:302-304`), so it
-  cannot trade against feed liquidity. Phase 6 routes around it (§6.6). Fixing it
+  cannot trade against feed liquidity. Phase 6 avoids it (§6.6). Fixing it
   properly requires an external-maker path plus reworking `conserves_shares()`
   (`filled_total_ += 2*qty` assumes both sides are ours), STP (`maker.req.owner == 0`
   would make every external maker look like a self-trade), and
   `Reject::NoLiquidity`/`FokUnfillable` (which currently *measure* external depth via
   `available()` but cannot consume it).
-* `Matcher::last_trade_` is written in exactly one place — inside `match()` — so stops
+* `Matcher::last_trade_` is written in exactly one place, inside `match()`, so stops
   never trigger from market activity. Phase 6 triggers stops from the **feed's prints
   on the exchange clock**, from the exchange book, never from the delayed view.
-* `engine::transition()` uses `assert(legal_transition(...))`, a no-op under `NDEBUG` —
+* `engine::transition()` uses `assert(legal_transition(...))`, a no-op under `NDEBUG`,
   which is the Release build the published numbers come from. Phase 6 gates its own
   checks on `-DITCHBOOK_SIM_CHECKS`, on for publishable runs.
 * `RefMap::insert` resolves a duplicate reference by last-writer-wins, orphaning the
@@ -1914,16 +1939,16 @@ exit: 0 ok | 1 error | 2 usage | 3 invariant violated (--verify)
 
 `--interval-ms` (matching `book_replay`, whose field is `interval_ns`) samples the
 equity curve on the **snapshot grid**: multiples of the interval anchored at midnight,
-first grid point after the first message — `book_replay.cpp`'s exact rule, so the two
-CSVs line up.
+first grid point after the first message, which is `book_replay.cpp`'s exact rule, so
+the two CSVs align.
 
-Every output artifact — JSON **and** CSV — carries a provenance header: feed filename,
+Every output artifact, JSON **and** CSV, carries a provenance header: feed filename,
 SHA-256, byte count, symbol, date, `itch_census` histogram, strategy and its
 parameters, model set, latency channels, tie policy, fee schedule **name and effective
 date**, session bounds (both `continuous_session_end_ns` and the replay window bound),
-mid convention, exclusion counts, and the seed. Two runs' outputs are otherwise
-indistinguishable after the fact, and the numbers become uninterpretable — exactly the
-failure the design warns about elsewhere.
+mid convention, exclusion counts, and the seed. Without it, two runs' outputs are
+indistinguishable after the fact and the numbers become uninterpretable, which is
+exactly the failure the design warns about elsewhere.
 
 ### 8.5 Charting, dependency-free
 
@@ -1937,20 +1962,20 @@ a function body) and CI installs nothing but cmake/ninja/zlib/clang. Adding matp
 would put `pip install` into the reproduction instructions, and "reproduction
 instructions that actually work on a clean machine" is itself a Phase 8 deliverable.
 SVG is a text file, so the chart diffs in git. `bench/README.md` already establishes
-that the primary record is a markdown table and the visual is a bonus; `--ascii` keeps
-that true and lets CI assert on the chart's contents.
+that the primary record is a markdown table and the visual is secondary; `--ascii`
+keeps that true and lets CI assert on the chart's contents.
 
 The chart caption carries symbol, date, strategy, size, requote policy, latency
-regime, fee schedule and mode. A committed SVG is an assertion nobody can check
-otherwise.
+regime, fee schedule and mode. Otherwise a committed SVG is an assertion nobody can
+check.
 
 ### 8.6 Data hygiene
 
 Commit only derived artifacts: `validation/queue_MSFT_2019-12-30.json`,
 `docs/fill_comparison.csv`, `docs/*.svg`, and the provenance stanza. Never the feed,
-never a slice — `.gitignore` already blanket-ignores `*.gz`. The SHA-256 is what lets a
-reader with their own copy of `12302019.NASDAQ_ITCH50.gz` confirm they are looking at
-the same bytes before comparing numbers.
+and never a slice; `.gitignore` already blanket-ignores `*.gz`. The SHA-256 is what
+lets a reader with their own copy of `12302019.NASDAQ_ITCH50.gz` confirm they are
+looking at the same bytes before comparing numbers.
 
 One correction to make as part of this: `python/slice_symbol.py`'s docstring says a
 per-symbol slice is "small enough to commit and hand to someone else." The feed is
@@ -1961,7 +1986,7 @@ mistake this phase must not repeat.
 
 ## 9. How this gets tested
 
-Five layers, mirroring the strategy that already worked for phases 2–5. Layer 2 is the
+Five layers, following the strategy that already worked for phases 2–5. Layer 2 is the
 load-bearing one: a counterfactual cannot be validated against reality, but a
 counterfactual *computation* absolutely can be validated against an independent
 implementation of the same specification, and that is what breaks.
@@ -1981,7 +2006,7 @@ MSFT day" never ran. What covers that ground instead:
 * Layer 3's containment/monotonicity/conservation properties are checked by
   `tests/fuzz/fuzz_queue.cpp` over random sequences, and by the clamp and
   priority-anomaly counters, which are reported on every run rather than
-  asserted — see `docs/phase6-results.md` §2. That is weaker per event and
+  asserted; see `docs/phase6-results.md` §2. That is weaker per event and
   broader per input than what was designed.
 * Layer 4's regression role is served by `tests/queue_differential.py`, which
   requires byte-identical fill logs between the C++ and Python simulators. A
@@ -1989,30 +2014,31 @@ MSFT day" never ran. What covers that ground instead:
   implementations against each other, which is the stronger of the two, but it
   does not catch a regression that moves both.
 
-Recording the gap here rather than quietly dropping the rows, because a design
-document that lists five test layers and ships three is exactly the kind of
-claim this project is supposed to notice.
+The gap is recorded here rather than the rows being quietly dropped, because a
+design document that lists five test layers and ships three is exactly the kind
+of claim this project is supposed to notice.
 
 ### 9.1 The invariants
 
-**As designed** (not built — see the note above the table): `--verify` would
+**As designed** (not built; see the note above the table): `--verify` would
 check these per order, per event, roughly 4.6M times on the MSFT day across four
-lanes, and free relative to the gzip decode and book reconstruction. The list
-below is still the right list; it is the enforcement mechanism that is missing.
+lanes, at a cost that is negligible relative to the gzip decode and book
+reconstruction. The list below is still the right list; it is the enforcement
+mechanism that is missing.
 
 | | invariant |
 |---|---|
 | **I1** | `0 <= ahead <= shares_at(S,P) + own_live_shares_ahead` after every message (clamp on) |
 | **I2** | `ahead` never increases except at `place` / `replace` / iceberg refresh |
 | **I3** | `shares_at(S,P) + own_live_shares_ahead == 0  ⟹  ahead == 0` |
-| **I3b** | `mbo`: `ahead == Σ recorded shares over the ahead-set` — **conditional** on no priority anomaly since arrival and no clamp having fired. Two mechanisms, no shared code. |
+| **I3b** | `mbo`: `ahead == Σ recorded shares over the ahead-set`, **conditional** on no priority anomaly since arrival and no clamp having fired. Two mechanisms, no shared code. |
 | **I4** | `ahead_optimistic <= ahead_mbo <= ahead_pessimistic`, pointwise |
 | **I5** | cumulative filled shares: `naive >= optimistic >= mbo >= pessimistic`, per order, per event |
 
 **I4 and I5 carry two conditions, both found by the fuzzer rather than by
 reading.** Each is a real limit on the containment argument, not a bug:
 
-1. **No lane may have refreshed an iceberg slice.** The argument is inductive —
+1. **No lane may have refreshed an iceberg slice.** The argument is inductive:
    every lane starts at the same `ahead0`, and optimistic's decrements are a
    superset of `mbo`'s, which are a superset of pessimistic's. A refresh *resets*
    `ahead` from the book instead of decrementing it, and because the faster lane
@@ -2026,10 +2052,10 @@ reading.** Each is a real limit on the containment argument, not a bug:
 2. **At most one live order of ours per `(side, price)`.** The clamp's limit
    includes our own earlier orders' *remaining displayed* shares, and that
    remainder is model-dependent because each lane fills it at a different rate.
-   The limit then differs per lane and containment breaks — observed as
+   The limit then differs per lane and containment breaks, observed as
    `mbo(ahead=65)` against `pess(ahead=13)`, an inversion of the bound itself.
    This is why the reference strategy asserts one live order per price (section
-   3.6); it is a correctness constraint, not tidiness.
+   3.6); it is a correctness constraint rather than tidiness.
 
 `Entry::refreshes` exists so a property test can tell a legal increase from a
 bug, rather than inferring it from share counts.
@@ -2051,8 +2077,8 @@ overtaken. `naive >= optimistic` requires that non-printable `C` and repriced `C
 fill *any* model (so no queue model can fill where naive does not) and that naive's
 session gate is identical.
 
-Written naively — with non-printable `C` filling the queue models but not naive, or
-with `mbo` declining to advance on a trade against a post-arrival reference —
+Written naively, with non-printable `C` filling the queue models but not naive, or
+with `mbo` declining to advance on a trade against a post-arrival reference,
 **I5 and I4 both fire on correct code**, and the natural response under deadline
 pressure is to "fix" the model until the invariant holds. That is how a backtester
 lies. The invariants are stated here in the form that is actually true.
@@ -2061,18 +2087,18 @@ lies. The invariants are stated here in the form that is actually true.
 
 * **P&L ordering across models.** More fills is not more money, and Phase 6 exists
   precisely because it is not. A passive quote filled more often in a falling market
-  loses more — that is the definition of adverse selection, the thing this phase
+  loses more, and that is the definition of adverse selection, the thing this phase
   measures. For the knowingly unprofitable strategy the P&L ordering inverts. An
   assertion here would eventually fire on correct code, and worse, if it *never* fired
   it would be evidence the adverse-selection measurement is broken. P&L ordering is a
   **result**, reported, never asserted.
 * **Latency dominance.** False in both directions. More latency delays cancels too, so
-  you cannot pull in time and get *more* fills — generally bad ones. And arriving later
-  can mean joining a level that has since cleared, i.e. a *better* queue position. **I10**
-  is the ironclad, cheap property that catches the bug which actually happens: reading
-  the book at decision time instead of arrival time.
-* **Grouping fills by match number.** ITCH match numbers are per-execution — the key
-  the Broken Trade message uses to bust an individual trade — so "our fills within a
+  you cannot cancel in time and you get *more* fills, generally bad ones. Arriving
+  later can also mean joining a level that has since cleared, i.e. a *better* queue
+  position. **I10** is the cheap, decisive property that catches the bug which actually
+  happens: reading the book at decision time instead of arrival time.
+* **Grouping fills by match number.** ITCH match numbers are per-execution, the key
+  the Broken Trade message uses to bust an individual trade, so "our fills within a
   match group never exceed the group's executed shares" is true by construction and
   tests nothing. **I7** is the falsifiable replacement.
 
@@ -2080,8 +2106,8 @@ lies. The invariants are stated here in the form that is actually true.
 
 The existing generators are correct for their stated purposes and wrong for this one.
 `make_bench_feed.py` reproduces a real day's message **mix** for throughput
-measurement; `fuzz_feed.py` is deliberately adversarial and structurally illegal. What
-neither provides:
+measurement, and `fuzz_feed.py` is deliberately adversarial and structurally illegal.
+Neither provides any of the following:
 
 * Executions never hit the **front of the price-time queue**: both draw the target
   reference with `pick_live()` from a global pool across all prices and ages, so an
@@ -2089,8 +2115,8 @@ neither provides:
   no queue structure to preserve, so a correct queue model is indistinguishable from
   one that advances on arbitrary references.
 * Cancels are drawn from the same uniform pool, so "where in the queue do cancels come
-  from" — precisely what `mbo` measures — is baked in as uniform, and `mbo` lands near
-  the middle of the band **by construction**.
+  from", which is precisely what `mbo` measures, is fixed as uniform, and `mbo` lands
+  near the middle of the band **by construction**.
 * Side and price are drawn independently around a fixed `MID`, so the generated book is
   crossed essentially everywhere. There is no touch, so "the market traded at your
   price" and "the mid" are not well defined, `mbo` is downgraded to approximate on
@@ -2098,23 +2124,23 @@ neither provides:
 * `MID` is a constant with no drift, volatility or autocorrelation, so mark-to-market
   P&L is a driftless random walk and **measured adverse selection is identically zero
   in expectation**.
-* Timestamps advance by `rng.randint(1, 200)` — **strictly increasing, never a tie** —
+* Timestamps advance by `rng.randint(1, 200)`, **strictly increasing, never a tie**,
   so `EventClass`, `TiePolicy` and `EventKey::seq`, which §4.4/§4.6 call load-bearing,
   have zero coverage from any feed this project can generate.
 * `fuzz_feed.py` only ever emits `trading_action(t, b"T")`, so there is no halt
   sequence, no `'Q'` quotation-only state, and therefore **no test of the session gate
   at all**.
 * Both price `C` with `pick_price()`, so essentially **100% of generated `C` messages
-  are the repriced shape**. The untested case is the opposite one — a `C` at the
+  are the repriced shape**. The untested case is the opposite one, a `C` at the
   resting order's price, which is the only `C` shape that triggers a fill. (Contrary to
   a natural assumption, non-printable `C` *is* well covered: `make_bench_feed.py` emits
   `printable='N'` 10% of the time and `fuzz_feed.py` 33%.)
 * `Q` crosses are emitted at random prices, never at a price where a tracked order
   rests.
-* No opposite-side add that locks and then crosses a tracked price — so R1/R2 are
+* No opposite-side add that locks and then crosses a tracked price, so R1/R2 are
   untested.
 
-**`python/make_queue_feed.py`** — new, and its only claim is book-legality. Never
+**`python/make_queue_feed.py`** is new, and its only claim is book-legality. Never
 crossed (a new bid never exceeds the best ask); `E`/`C` always applied to the **head**
 of the price-time queue at the traded price; `X`/`D` drawn per level with a
 configurable `--cancel-front-bias`; burst-structured timestamps with a `--tie-burst`
@@ -2126,12 +2152,12 @@ then crosses a tracked price; `P` with side `'S'` as well as `'B'`. Its docstrin
 state in the first paragraph that it establishes **mechanism** and proves nothing about
 markets. `--cancel-front-bias` is what lets the tests force the models apart on demand
 and force them to coincide (bias 0 with zero cancels collapses optimistic onto
-pessimistic) — which is how you test the models rather than the generator.
+pessimistic), which is how you test the models rather than the generator.
 
-**`python/make_toxic_feed.py`** — new, and it needs a **known answer** or it proves
+**`python/make_toxic_feed.py`** is new, and it needs a **known answer** or it proves
 nothing. A latent fair-value random walk; cancel intensity at a level rising as fair
 value approaches from the other side; aggressor arrivals whose direction is a function
-of `(fair_value − touch)`; and — the part that actually tests the models — a
+of `(fair_value − touch)`; and, the part that actually tests the models, a
 **ground-truth queue position written to a side-channel file**, so the optimistic and
 pessimistic brackets can be validated against the true `ahead` rather than merely
 against each other. An informed sweep that consumes k levels and then moves the mid by
@@ -2151,7 +2177,7 @@ Phase 6 analogue of the Phase 3 differential test, and without it this phase gra
 own homework by the project's own standard.
 
 1. Pick a real resting order `R` in any feed (synthetic or real) with reference `r`,
-   arrival time `t_a`, price `P`, side `S`, size `Q`, and a known fate — fully executed,
+   arrival time `t_a`, price `P`, side `S`, size `Q`, and a known fate: fully executed,
    partly executed, or cancelled. Follow the `U` chain if `r` is replaced.
 2. Produce a **counterfactual feed** with every message naming `r` (and its replacement
    chain) removed: its `A`/`F`, and all of its `E`/`C`/`X`/`D`/`U`.
@@ -2161,12 +2187,12 @@ own homework by the project's own standard.
    unmodified feed.
 
 This grades the fill rule, the `ahead` arithmetic, the trade-vs-cancel split, the sweep
-composition, and the R1/R2/R3 price-priority rules — all against ground truth. It also
+composition, and the R1/R2/R3 price-priority rules, all against ground truth. It also
 directly measures how much the removal perturbs the rest of the day, which is the
 counterfactual-divergence number the design otherwise only warns about qualitatively.
 
 Report, over a large sample of removed orders: the fraction where the true fill time
-falls inside `[pessimistic, naive]` (**the band's coverage rate — the single most
+falls inside `[pessimistic, naive]` (**the band's coverage rate, the single most
 publishable number in the phase**), the fraction where `mbo` predicts the fill time
 exactly, and the distribution of the error.
 
@@ -2175,8 +2201,8 @@ exactly, and the distribution of the error.
 
 ### 9.4 Unit tests that must exist
 
-Each is a `tests/check.hpp` file of a few dozen lines, and each maps to a rule above
-that would otherwise be asserted and never exercised:
+Each of these is a `tests/check.hpp` file of a few dozen lines, and each corresponds
+to a rule stated above that would otherwise be asserted and never exercised:
 
 * `Channel::arrival()` clamping (non-decreasing, not `last+1`) and saturation.
 * The tie-break table: one hand-built `--tie-burst` feed per `TiePolicy`, asserting
@@ -2213,16 +2239,16 @@ Extend `.github/workflows/ci.yml`:
 * Run `queue_backtest --verify --strict` on the queue feed (exit 3 on any invariant).
 * Run `queue_differential.py` against `python/reference/queue_sim.py` on `fuzz_feed.py`
   output.
-* Run the backtest **twice on the same feed and diff** — this is what catches
+* Run the backtest **twice on the same feed and diff**, which is what catches
   unordered-container iteration reaching the output.
 * Diff the goldens.
-* Run the test suite in **both Debug and Release**, so the Release behaviour — the one
-  the published numbers come from, with `assert` compiled out — is what is tested.
+* Run the test suite in **both Debug and Release**, so that the Release behaviour, the
+  one the published numbers come from with `assert` compiled out, is what is tested.
 
 **Determinism is a standing requirement, not a one-time fix.** Any `std::unordered_map`
 iteration whose order reaches the output, any wall-clock read, or any unseeded RNG on
 the decision path silently invalidates the frozen-decision comparison. `Matcher` already
-uses `unordered_map` — harmlessly, for a summation whose order does not matter — so the
+uses `unordered_map`, harmlessly, for a summation whose order does not matter, so the
 pattern is in the codebase and could be copied into the sim where it would not be
 harmless. Rule: every aggregate that reaches JSON or CSV is accumulated in a `std::map`
 or a sorted vector keyed by order id, and the four lanes live in a `std::tuple` visited
@@ -2234,19 +2260,20 @@ with `std::apply`, not in a container whose iteration order is incidental.
 
 No feed is checked in. It is licensed and was deliberately purged. This section is the
 honest accounting of what that costs, and it belongs in `docs/phase6-results.md` as two
-separate tables — one headed **"mechanism (synthetic — proves the code works, proves
-nothing about markets)"** and one headed **"measurement (real feed, SHA-256 recorded)"**
-— never mixed.
+separate tables, one headed **"mechanism (synthetic — proves the code works, proves
+nothing about markets)"** and one headed **"measurement (real feed, SHA-256 recorded)"**,
+never mixed.
 
 ### 10.1 Verifiable with synthetic data alone
 
-Every invariant **I1–I14**. Every hand-computed micro-scenario. The C++/Python
-differential. **The delete-one-order oracle** (§9.3), including the band's coverage
-rate on synthetic flow. The full CLI, the JSON/CSV formats and their provenance
-headers. The SVG generator. The demonstration that the four models *can* differ, and
-that they collapse when they should (S7). The fee goldens. The losing control. The
-latency mechanics: clamping, saturation, the tie table, the cancel-race buckets,
-`queue_delta`, and the zero-latency book equivalence.
+Every invariant **I1–I14** is verifiable this way, as is every hand-computed
+micro-scenario and the C++/Python differential. So is **the delete-one-order oracle**
+(§9.3), including the band's coverage rate on synthetic flow. The full CLI, the
+JSON/CSV formats and their provenance headers belong here too, along with the SVG
+generator. So does the demonstration that the four models *can* differ, and that they
+collapse when they should (S7). The fee goldens and the losing control are synthetic.
+Finally, the latency mechanics: clamping, saturation, the tie table, the cancel-race
+buckets, `queue_delta`, and the zero-latency book equivalence.
 
 ### 10.2 Requires the real feed, and cannot be faked
 
@@ -2254,17 +2281,17 @@ latency mechanics: clamping, saturation, the tie table, the cancel-race buckets,
   cancel-to-execution ratio *at the touch, share-weighted, while our order rests there*.
   Synthetic generators set that ratio by fiat.
 * **Where `mbo` sits inside the band.** This is a behavioural fact about real
-  participants — front-of-queue orders are valuable and rarely pulled, stale
-  back-of-queue orders are pulled first, so real cancels are strongly position-biased.
-  `pick_live()` bakes in the uniform answer, so on synthetic data `mbo` lands near the
-  middle **by construction** and the number is meaningless.
+  participants: front-of-queue orders are valuable and rarely cancelled, stale
+  back-of-queue orders are cancelled first, so real cancels are strongly
+  position-biased. `pick_live()` builds in the uniform answer, so on synthetic data
+  `mbo` lands near the middle **by construction** and the number is meaningless.
 * **Every adverse-selection number.** Synthetic feeds have no information content: the
   price process is independent of order flow, so measured drift is ~0 in expectation.
   `make_toxic_feed.py` can demonstrate that the machinery *detects* adverse selection
-  when it is present, with a known answer — it cannot tell you the real magnitude.
+  when it is present, with a known answer, but it cannot tell you the real magnitude.
 * **Whether any strategy makes money.** Including the sign of the headline table.
 * **Absolute fill rates**, and the requote-policy sensitivity.
-* **The priority-anomaly rate** — how far `mbo` is from truth.
+* **The priority-anomaly rate**, that is, how far `mbo` is from truth.
 * **The hidden-flow interception rate** (`hidden_inside_shares`), the flagship
   adverse-selection signal.
 * **The `P` Buy/Sell census.** Both generators hardcode `'B'`; whether the real field
@@ -2285,11 +2312,12 @@ of the results doc, not a footnote.
    execution the feed shows was matched against someone else. Had we been resting there,
    we would have absorbed shares that in reality went to orders behind us, and those
    participants' subsequent cancel and replace decisions would have differed. The sim
-   counts the events where this becomes visible — an execution that eats past us, a
-   taker fill that double-spends displayed depth — but it cannot correct for them.
-2. **Zero market impact.** In a replay we are a ghost: our size never displaces anyone,
-   and nobody ever reacts to our quote. This biases the backtest **optimistic in a
-   direction the queue bounds do not capture**. The quote size is 100 shares against a
+   counts the events where this becomes visible, such as an execution that eats past us
+   or a taker fill that double-spends displayed depth, but it cannot correct for them.
+2. **Zero market impact.** In a replay our orders are invisible to everyone else: our
+   size never displaces anyone, and nobody ever reacts to our quote. This biases the
+   backtest **optimistic in a direction the queue bounds do not capture**. The quote
+   size is 100 shares against a
    1,000–5,000-share touch precisely to make the assumption as defensible as possible,
    and the sim warns (and optionally refuses) when quantity exceeds
    `max_pct_of_level` of the level's displayed size at arrival. The backtest is only
@@ -2304,7 +2332,7 @@ of the results doc, not a footnote.
 5. **Broken Trade (`'B'`) messages are not decoded.** `tools/itch_census.cpp` already
    names the type; the parser does not decode it. A busted trade means a fill the model
    recorded did not happen, and the match number is exactly the key ITCH provides for
-   correlating it. Stated as a known hole, not silently ignored.
+   correlating it. It is stated as a known gap rather than silently ignored.
 6. **The Rule 605 comparison is an order-of-magnitude and sign check**, not an oracle
    (§5.7). Presenting it as equivalently strong to the Phase 2 Databento bar would
    overclaim.
@@ -2331,24 +2359,24 @@ as mechanism demonstrations, in their own table, on their own page.
 
 Every one of these was in a design that read as reasonable. Most of them bias P&L
 **upward**, none of them crash, and several would produce a confidently wrong number
-that looks plausible. Grouped by where they live.
+that looks plausible. They are grouped below by where they live.
 
 ### Queue mechanics
 
 1. **Same-side-only fills.** A model that fills only on `E`/`C` at our exact `(side, price)`
-   can never fill when the *other side comes to you* — and for an order that improved
+   can never fill when the *other side comes to you*, and for an order that improved
    the touch there is by construction no real order at our level, so it can never fill
    at all. Every omitted fill is an adverse-selection fill: the bias is one-directional
    and flatters P&L. **Fix:** R1/R2/R3 in §2.5, applied identically in all four models
    because price priority, not time priority, decides them.
 
 2. **Non-printable `C` filling in the cross.** "The repriced-`C` rule keeps us out of
-   the auctions" is **false** whenever the cross price equals the resting price — which
+   the auctions" is **false** whenever the cross price equals the resting price, which
    is exactly the case for a participant resting at the cross price. On the validated
    day 2,500,408 of 6,154,278 shares (40.6%) crossed at two prices. The session gate
    does not save you either: `S = 'Q'` fires at 09:30 and the opening cross prints
-   immediately after it, strictly inside the gate. **Fix:** one rule — a `C` fills only
-   when `printable == 'Y'` **and** `print_price == resting_price`.
+   immediately after it, strictly inside the gate. **Fix:** one rule, in which a `C`
+   fills only when `printable == 'Y'` **and** `print_price == resting_price`.
 
 3. **Trading state `'Q'` omitted from the non-tradable set,** so halt-resumption crosses
    fill mid-session. And `trading_state_` initialises to `'\0'` and is only set by an
@@ -2360,7 +2388,7 @@ that looks plausible. Grouped by where they live.
 4. **The clamp deleting our own earlier orders.** `ahead = min(ahead, shares_at(S,P))`
    is wrong because our orders are not in `book::Book`. With two live orders at one
    price, the second one's `ahead` includes phantom shares the level total cannot
-   account for, and the very next message at that level collapses it — producing exactly
+   account for, and the very next message at that level collapses it, producing exactly
    the two-order double-fill the design claimed to prevent. **Fix:**
    `min(ahead, shares_at + own_live_shares_ahead)`, with a two-order unit test.
 
@@ -2388,32 +2416,32 @@ that looks plausible. Grouped by where they live.
 
 9. **`mbo` erasing an ahead-set entry on a partial removal**, which drops the rest of
    that order out of `ahead` on the next event and makes `mbo` fill early. And linear
-   membership on a `std::vector` — the same O(n) trap `level.hpp` warns about for
-   `shares_ahead_of()`, reintroduced one paragraph later. **Fix:** decrement on partial,
-   erase on total, O(1) open-addressed membership.
+   membership on a `std::vector`, which is the same O(n) trap `level.hpp` warns about
+   for `shares_ahead_of()`, reintroduced one paragraph later. **Fix:** decrement on
+   partial, erase on total, O(1) open-addressed membership.
 
-10. **`match_number` used to group a sweep.** It is per-**execution** — the Broken Trade
-    key — and ITCH carries no field identifying the aggressor at all. Any invariant built
+10. **`match_number` used to group a sweep.** It is per-**execution**, the Broken Trade
+    key, and ITCH carries no field identifying the aggressor at all. Any invariant built
     on it degenerates to "our fill on one `E` does not exceed that `E`'s shares", true by
     construction, testing nothing. **Fix:** timestamp contiguity, stated as a proxy;
     **I7** replaces the vacuous invariant.
 
 11. **Sweep-through under-fill.** When a sweep exhausts our level and walks to worse
     prices, capping our fill at our level's real depth systematically under-fills a
-    front-of-queue order at a thin level — again in the adverse-selection direction.
+    front-of-queue order at a thin level, again in the adverse-selection direction.
     **Fix:** R3.
 
 12. **`ahead` re-derived from the book after a partial fill,** which re-inserts us behind
     liquidity our counterfactual just traded through and makes a partial fill strictly
     worse than no fill. And re-derived on a touch change, which throws away the queue
-    position the phase exists to measure. **Fix:** **I2** — `ahead` only ever decreases
-    after arrival.
+    position the phase exists to measure. **Fix:** **I2**, under which `ahead` only ever
+    decreases after arrival.
 
 13. **Icebergs with no display/hidden split,** so `fill = min(overflow, remaining)` fills
-    the entire reserve off one execution — the exact inverse of the property being
-    demonstrated. **Fix:** cap at `display`; refresh internally; `QueueModel` owns its
-    slices (`Matcher::refresh_iceberg(Meta&)` is private and driven from the maker-side
-    fill path).
+    the entire reserve off one execution, which is the exact inverse of the property
+    being demonstrated. **Fix:** cap at `display`; refresh internally; `QueueModel` owns
+    its slices (`Matcher::refresh_iceberg(Meta&)` is private and driven from the
+    maker-side fill path).
 
 14. **Hidden liquidity described as sitting *ahead* of you at your own price.** Backwards:
     NASDAQ continuous priority is **price, then display, then time**, so non-displayed
@@ -2424,7 +2452,7 @@ that looks plausible. Grouped by where they live.
 15. **Sign confusion on "better" vs "through".** For a bid at `P`, hidden interest *in
     front* prints **above** `P`; a print *through* our limit is **at or below** `P`. They
     are on opposite sides. Getting them backwards makes naive fill on prints strictly
-    worse than its own limit — a fabricated fill that inflates the naive curve. And a
+    worse than its own limit, a fabricated fill that inflates the naive curve. And a
     midpoint peg at `P + 0.005` is neither "at our price" nor "through", so a two-bucket
     scheme silently drops the flagship signal. **Fix:** one signed `at_or_through()`
     helper used by every fill decision; three hidden buckets.
@@ -2442,10 +2470,10 @@ that looks plausible. Grouped by where they live.
 ### Latency and event ordering
 
 18. **A message barrier mistaken for a time barrier.** "Your intent cannot take effect
-    until the next message" lets a quote **step out of the middle of an ITCH sweep** —
-    three `E` messages at one nanosecond, cancel released between legs. No exchange
-    permits it, and it bites hardest at latency 0. **Fix:** atomic timestamp groups
-    (§4.4), `MarketFirst` ties, and a non-zero latency floor.
+    until the next message" lets a quote **step out of the middle of an ITCH sweep**,
+    with three `E` messages at one nanosecond and the cancel released between legs. No
+    exchange permits it, and the error is largest at latency 0. **Fix:** atomic
+    timestamp groups (§4.4), `MarketFirst` ties, and a non-zero latency floor.
 
 19. **Zero latency as the default,** on all channels. The strongest single form of silent
     optimism available: react to the message that moved the market and win queue priority
@@ -2455,8 +2483,9 @@ that looks plausible. Grouped by where they live.
 
 20. **A `last_arrival + 1 ns` FIFO clamp on the feed channel.** `last_` moves forward by
     at least 1 ns per message, so in a burst the accumulated synthetic delay grows
-    linearly with burst length — tens of microseconds at the open, larger than the first
-    four points of the latency grid. It also breaks the zero-latency equivalence test.
+    linearly with burst length, reaching tens of microseconds at the open, larger than
+    the first four points of the latency grid. It also breaks the zero-latency
+    equivalence test.
     **Fix:** non-decreasing (`max(sent + draw, last_)`).
 
 21. **Cancels on an independent channel FIFO,** which reorders them against submits on the
@@ -2474,9 +2503,9 @@ that looks plausible. Grouped by where they live.
 23. **`MarketFirst` described as uniformly pessimistic.** It is optimistic for the cancel
     race it was justified by: a tying `X`/`D` applied before our arrival snapshot makes
     `ahead` *smaller*. And "a market cancel keeps its place ahead of us in the FIFO" is
-    not coherent — a cancelled order leaves the queue. **Fix:** state it as mixed, report
-    tie counts, offer `OursFirst`, and do not claim a bound that is not implementable
-    without reordering the feed inside a nanosecond.
+    not coherent, because a cancelled order leaves the queue. **Fix:** state it as
+    mixed, report tie counts, offer `OursFirst`, and do not claim a bound that is not
+    implementable without reordering the feed inside a nanosecond.
 
 24. **An `EventKey` total order that no queue actually stores.** Merging four deques on
     bare timestamps cannot break the one case the ordering exists for. **Fix:** every
@@ -2485,14 +2514,14 @@ that looks plausible. Grouped by where they live.
 
 25. **The feed/order split sweep, sold as a chart nobody else can give you.** It is flat
     by construction for an event-driven strategy: arrival depends on the **sum**, and
-    staleness at decision is always exactly `feed`. **Fix:** §4.2 — keep it for timer
-    strategies, and use its flatness as a determinism test.
+    staleness at decision is always exactly `feed`. **Fix:** §4.2, which keeps it for
+    timer strategies and uses its flatness as a determinism test.
 
 26. **Post-only cancel-back as the default,** which deletes exactly the adverse fills the
     latency curve exists to reveal (a joined bid becomes marketable in flight only when
     the offer fell *to or through* it), with an effect that grows with N. Also conflating
-    post-only with Reg NMS Rule 610 display-price sliding — unrelated mechanisms.
-    **Fix:** `CrossPolicy::Take` default; the other two labelled as elections.
+    post-only with Reg NMS Rule 610 display-price sliding, which are unrelated
+    mechanisms. **Fix:** `CrossPolicy::Take` default; the other two labelled as elections.
 
 27. **`assert` for anything that matters.** No-op under `NDEBUG`, which is the Release
     build the published numbers come from. `engine::transition()` already has this
@@ -2512,11 +2541,12 @@ that looks plausible. Grouped by where they live.
     in-NIC-to-out-NIC time of your own box, and this quantity includes both propagation
     legs. It reads as a domain error to exactly the audience the project targets.
 
-30. **Attributing Phase 4's 63 cycles/msg to `think`.** That is `parse` + `book::apply` —
-    feed ingestion, ~21 ns at 3 GHz — while the presets set `think` to 0.3–3 µs. Claiming
+30. **Attributing Phase 4's 63 cycles/msg to `think`.** That is `parse` + `book::apply`,
+    feed ingestion, ~21 ns at 3 GHz, while the presets set `think` to 0.3–3 µs. Claiming
     "the 1.73× is worth $X/day" on that basis attributes a book-reconstruction speedup to
     a decision-loop latency it does not govern. **Fix:** measure the reference strategy's
-    own `on_event`. (`bench::calibrate_cycles_per_ns()` exists — no open question there.)
+    own `on_event`. (`bench::calibrate_cycles_per_ns()` exists, so there is no open
+    question there.)
 
 ### Accounting
 
@@ -2526,11 +2556,12 @@ that looks plausible. Grouped by where they live.
     appears. It cannot detect a wrong basis, a sign error on the rebate, a
     maker/taker misclassification, a wrong mid, or a wrong position update. Shipping it as
     the phase's substitute for an external oracle is disqualifying by the build plan's own
-    standard. **Fix:** **I8** and **I9** — cross-module, over a reconciled exclusion set.
+    standard. **Fix:** **I8** and **I9**, cross-module and over a reconciled exclusion
+    set.
 
 32. **SEC Section 31 wrong by ~8× and by a year.** It is *notional*-based, so on MSFT at
     $157.57 the FY2019 rate of $20.70/M is **0.326 c/share** on sells, not the ~0.04
-    c/share you get by reasoning about a $20 stock — plus TAF 0.012. Averaged over a round
+    c/share you get by reasoning about a $20 stock, plus TAF 0.012. Averaged over a round
     trip that is ~0.169 c/share against a 0.20 c/share base rebate. Folding it in flips
     the pessimistic bar from +0.08 to −0.09 and moves the break-even rebate from 0.12 to
     ~0.29 c/share, i.e. from "comfortably below the base tier" to "the top tier". A
@@ -2538,13 +2569,13 @@ that looks plausible. Grouped by where they live.
     component, a fee golden at MSFT's real price, and a dated config with a cited source.
 
 33. **A "mils" fee unit.** Tenths of a cent invites `maker = -20` reading as $0.0020 and
-    meaning $0.020 — four times the entire gross edge of a one-cent spread, turning the
-    headline chart into a chart of the rebate. **Fix:** micro-dollars only; every
-    published rate is an exact integer; a unit test asserting a 100-share passive fill
-    produces `-2000` micros.
+    meaning $0.020, which is four times the entire gross edge of a one-cent spread and
+    turns the headline chart into a chart of the rebate. **Fix:** micro-dollars only;
+    every published rate is an exact integer; a unit test asserting a 100-share passive
+    fill produces `-2000` micros.
 
 34. **Regulatory fees leaking into the break-even maker rate,** because they are charged on
-    maker sells but bucketed as "non-maker". ~0.17 c/share of error — larger than the gap
+    maker sells but bucketed as "non-maker". ~0.17 c/share of error, larger than the gap
     between the base and top rebate tiers, which is the entire point of the table. And the
     return value's sign documented backwards against the schedule's own convention.
 
@@ -2556,26 +2587,27 @@ that looks plausible. Grouped by where they live.
 36. **`edge` claimed invariant across fill models.** The models fill at different times, so
     the same limit meets a different mid. And because our orders are not in the book, a
     passive fill can occur at a price on the wrong side of the mid, giving a **negative**
-    edge — which the "positive by construction" comment asserts cannot happen.
+    edge, which the "positive by construction" comment asserts cannot happen.
 
 37. **A `two_mid = 0` sentinel reaching the ledger.** `observe()` returns early for
     `OneSided`/`Empty` with `two_mid = 0`; one such fill mis-attributes its entire notional
     to spread capture with an equal and opposite error in drift, while `gross()` and
-    `net()` stay correct so nothing looks wrong — and the tautological identity above
+    `net()` stay correct so nothing looks wrong, and the tautological identity above
     cannot detect it. **Fix:** an accessor that refuses on an unusable status; an
     `unattributed_` bucket.
 
 38. **The `two_mid` justification.** "A half-cent mid rounds and biases buys and sells by
     0.25 c/share" is wrong by ~50×: `Price(4)` has four decimals, so half a cent is 50
     units and is exact, and Rule 612 puts every displayed quote on the penny grid so
-    `bid + ask` is always even. Keep `two_mid` — the reasons in §5.2 are real — but the
-    published justification must be one a microstructure-literate reader will not catch.
+    `bid + ask` is always even. Keep `two_mid`, since the reasons in §5.2 are real, but
+    the published justification must be one a microstructure-literate reader will not
+    catch.
 
 39. **The prevailing mid taken mid-sweep.** Re-observing after every message stamps leg k
     of an N-leg sweep with a mid already walked down by legs 1..k−1, understating **both**
-    effective spread and adverse selection for exactly the toxic events being measured —
-    and using two incompatible definitions of the mid in one engine. **Fix:** batch-start
-    mid.
+    effective spread and adverse selection for exactly the toxic events being measured,
+    and it uses two incompatible definitions of the mid in one engine. **Fix:**
+    batch-start mid.
 
 40. **Horizon-endpoint exclusion called "unbiased by inspection".** It conditions the
     sample on the future, in the direction the design itself identifies as most adverse
@@ -2583,13 +2615,13 @@ that looks plausible. Grouped by where they live.
     the horizon endpoint.
 
 41. **`n_eff = (Σw)²/Σw²` as the confidence guard.** It corrects only for unequal share
-    weights, not for overlapping horizons — which understates the 10 s standard error by
-    ~4×, giving a CI narrower than the entire base rebate. A too-narrow standard error
+    weights and not for overlapping horizons, which understates the 10 s standard error
+    by ~4×, giving a CI narrower than the entire base rebate. A too-narrow standard error
     published as the guard against overconfident claims is worse than none.
 
 42. **Rule 605 sign errors** (effective spread is `+2·edge` from the resting side, realized
-    spread is `2·markout(300s)` not `2·drift`) **and overclaiming its strength** — it uses
-    the consolidated BBO at order receipt over a small non-random covered-order
+    spread is `2·markout(300s)` not `2·drift`) **and overclaiming its strength**, since it
+    uses the consolidated BBO at order receipt over a small non-random covered-order
     population, monthly, by size bucket.
 
 43. **Marking the residual at the closing cross.** It is forward-looking (the cross prints
@@ -2599,39 +2631,39 @@ that looks plausible. Grouped by where they live.
     unguarded `.at()` throws on a short slice.
 
 44. **`session_end_ns` name collision.** `validation/MSFT_2019-12-30.json` records
-    `68400000000000` = 19:00 ET — the UTC-day window boundary from Phase 2, not the 16:00
-    close (`57600000000000`). Reusing it means `PastSessionEnd` never fires near the close
-    and 10 s markouts resolve against the after-hours book.
+    `68400000000000` = 19:00 ET, the UTC-day window boundary from Phase 2 rather than the
+    16:00 close (`57600000000000`). Reusing it means `PastSessionEnd` never fires near the
+    close and 10 s markouts resolve against the after-hours book.
 
 45. **`Book::crossed()` counts a locked book as crossed** (`return b >= a;`), so
     "`MidStatus::Locked` is usable" contradicts an existing invariant. And the **pre-open
-    book is legitimately crossed** — that is the opening imbalance — so a "non-zero crossed
+    book is legitimately crossed**, which is the opening imbalance, so a "non-zero crossed
     count means the reconstruction is broken" canary fires a false alarm on correct data
     unless the phase gate runs first. Nobody has ever checked whether the MSFT book crosses
     *intraday*; `book_replay` prints it once at end of run.
 
-46. **`fill_rate = fills / orders`** counts fill *events*, so it exceeds 1.0 — most often
+46. **`fill_rate = fills / orders`** counts fill *events*, so it exceeds 1.0, most often
     in the models with the *best* queue position, i.e. worst exactly where the chart cares.
     **Fix:** `filled_shares / submitted_shares`, plus a separate `orders_filled / orders`.
 
 47. **Percentiles conditioned on filling.** `queue_ahead_at_join` and `time_to_fill`
     computed over fills compare different populations across models with 10× different
     fill rates. **Fix:** report `ahead0` unconditionally over all submitted orders (it is
-    model-invariant in a single-pass design — a free self-check), and print the fill rate
-    beside every conditioned percentile.
+    model-invariant in a single-pass design, which makes it a free self-check), and print
+    the fill rate beside every conditioned percentile.
 
 ### Harness, strategy, and framing
 
 48. **A `strategy_fill_independent` bool.** A position limit is by definition a function of
-    fills, so a strategy enforcing its own cap cannot be fill-independent — and in a
+    fills, so a strategy enforcing its own cap cannot be fill-independent, and in a
     single-pass design with one order stream the flag is unfalsifiable. **Fix:** the
     `HeadlineStrategy` concept with no `Ctx` and no fill callbacks (a fill-dependent
     strategy cannot compile), harness-enforced risk, and tape hashing (**I13**).
 
 49. **A frozen-decision tape that carries intents but not risk state,** so replaying the
     pessimistic lane's tape into the naive lane gives it far more fills with none of the
-    cap-driven cancels — unbounded inventory, reintroducing the Δinventory artefact the
-    flatten policy exists to remove.
+    cap-driven cancels, which leaves inventory unbounded and reintroduces the Δinventory
+    artefact the flatten policy exists to remove.
 
 50. **No session *start* gate.** The file carries orders from 04:00 and `modelled()`
     accepts them, so a quoter runs through the entire pre-market and through the
@@ -2644,30 +2676,32 @@ that looks plausible. Grouped by where they live.
     and end the day with inventory the headline claims cannot exist.
 
 52. **Reusing `Matcher::submit()` against a feed book.** `match()` breaks out on any maker
-    it has no `Meta` for — every order the feed put in the book — so it trades **zero**
-    shares, marketable limits fall through to `rest()` and are added at a price through the
+    it has no `Meta` for, which is every order the feed put in the book, so it trades
+    **zero** shares, marketable limits fall through to `rest()` and are added at a price
+    through the
     offer (making `crossed()` permanently true), `Market` orders pass `has_liquidity()` and
     match nothing, and `FOK` passes `available()` (which sums external depth) and then
     cancels. Nothing asserts. **Fix:** §6.6.
 
 53. **Injecting our orders into the feed book.** Feed messages address orders by ITCH
     reference, so **nothing can ever remove them**: they are immortal for the rest of the
-    day, inflating `Level::shares` (which is what `shares_at()` reads), able to become and
-    hold the touch, and by mid-session the touch is a wall of our own zombie quotes.
-    Meanwhile any taking path that calls `Book::take()` deletes real orders and bumps
-    `unknown_ref()`, destroying the run's only data-quality signal. **Fix:** §1.2.
+    day, inflating `Level::shares` (which is what `shares_at()` reads) and able to become
+    and hold the touch, so that by mid-session the touch consists largely of our own
+    orders. Meanwhile any taking path that calls `Book::take()` deletes real orders and
+    bumps `unknown_ref()`, destroying the run's only data-quality signal. **Fix:** §1.2.
 
 54. **`Ctx::take()` against a shared unmutated book,** so the same 100 resting shares are
-    sold to all four lanes *and* to the real aggressor — four-way double-spending, worst at
-    a forced end-of-day flatten, largest for the lane with the most inventory. **Fix:**
-    §6.6 — state the assumption, cap participation, report the taker share of volume.
+    sold to all four lanes *and* to the real aggressor. That is four-way double-spending,
+    worst at a forced end-of-day flatten and largest for the lane with the most
+    inventory. **Fix:** §6.6, which states the assumption, caps participation and reports
+    the taker share of volume.
 
 55. **`resolve()` walking the ref map a third time.** `find_index` is exposed in `book.hpp`
     *specifically* so callers do not walk the chain twice on the 52% of messages that are
     `E`/`C`/`X`/`D`/`U`. **Fix:** `apply_ex()`.
 
 56. **`Quote` with no sizes, and `top_changed` documented as detecting size changes.** The
-    type cannot provide it, and `Quote` has no `operator!=` either — so the comparison does
+    type cannot provide it, and `Quote` has no `operator!=` either, so the comparison does
     not compile and the strategy never re-evaluates when the touch drains from 5,000 shares
     to 100 at the same price.
 
@@ -2676,16 +2710,16 @@ that looks plausible. Grouped by where they live.
     nothing to do with the market. The requote policy is a first-class parameter of the
     finding, not a default.
 
-58. **A far-out "null quoter" at `Price(4) = 1`.** That is $0.0001 — a sub-penny price,
-    illegal under Rule 612 for a $157 stock, rejected by our own tick check, so the test
-    silently has one working order instead of two. And both such prices sit on empty levels,
-    so the test exercises the degenerate `ahead == 0` path, not the queue machinery it
-    claims to.
+58. **A far-out "null quoter" at `Price(4) = 1`.** That is $0.0001, a sub-penny price,
+    illegal under Rule 612 for a $157 stock and rejected by our own tick check, so the
+    test silently has one working order instead of two. And both such prices sit on empty
+    levels, so the test exercises the degenerate `ahead == 0` path, not the queue
+    machinery it claims to.
 
 59. **Asserting a `Flicker` fills zero times at zero latency.** Contradicted by the release
     rule: the order is live for one full fill-model pass. Assert the exposure window
-    instead, and assert the count is **non-zero** — a `Flicker` that never fills means the
-    window is being skipped.
+    instead, and assert the count is **non-zero**, because a `Flicker` that never fills
+    means the window is being skipped.
 
 60. **`Crosser`'s "exact to the micro-dollar" loss formula.** `−(ask − bid)` at a single
     instant ignores the price drift between the two legs (MSFT ran 159.20 → 156.73 that
@@ -2694,12 +2728,12 @@ that looks plausible. Grouped by where they live.
     loss bound.
 
 61. **FIFO among our own orders claimed for naive.** Naive has no queue, so two of our
-    orders at one price both fill against one print — 200 shares against a 100-share trade,
-    violating **I7**. **Fix:** one live order per `(side, price)` in the reference strategy;
-    oldest-first allocation otherwise.
+    orders at one price both fill against one print, giving 200 shares against a
+    100-share trade and violating **I7**. **Fix:** one live order per `(side, price)`
+    in the reference strategy; oldest-first allocation otherwise.
 
 62. **Calling the auction exclusion "conservative".** It removes 40.6% of the day's volume
-    and its P&L sign is arbitrary. Say "excluded — not modelled", and print the number.
+    and its P&L sign is arbitrary. Say "excluded, not modelled", and print the number.
 
 63. **`Level::shares_ahead_of()` on the hot path.** O(orders at level), and hot levels hold
     hundreds. `level.hpp` warns about it in its own comment. Use `shares_at()`, which is
@@ -2736,16 +2770,16 @@ that looks plausible. Grouped by where they live.
    Nothing below can be tested without it.
 3. **`money.hpp` / `fees.hpp` + `test_fees.cpp`** with the goldens at MSFT's real price.
    Cheapest, and it catches trap 32 and trap 33 before they reach the headline.
-4. **`event.hpp` + `queue_model.hpp`** — `resolve`, the two arithmetic rules, the clamp,
-   the four models, R1/R2/R3 — plus `test_queue.cpp`.
+4. **`event.hpp` + `queue_model.hpp`**: `resolve`, the two arithmetic rules, the clamp,
+   the four models and R1/R2/R3, plus `test_queue.cpp`.
 5. **`python/reference/queue_sim.py` + `queue_differential.py`.** Byte-identical fill logs
    or the model is not trusted.
-6. **`fuzz_queue.cpp`** — I1–I7, per event, on `make_queue_feed.py` output only.
-7. **`latency_model.hpp` + `simulator` plumbing** — atomic timestamp groups, the shared
-   session FIFO, `EventKey`, arrival-time queue snapshots — plus the zero-latency book
+6. **`fuzz_queue.cpp`**: I1–I7, per event, on `make_queue_feed.py` output only.
+7. **`latency_model.hpp` + `simulator` plumbing**: atomic timestamp groups, the shared
+   session FIFO, `EventKey` and arrival-time queue snapshots, plus the zero-latency book
    equivalence test (**I11**) and the four cancel-race buckets.
 8. **`ledger.hpp` + `markout.hpp`** with **I8** and **I9** wired in from the start.
-9. **`strategy.hpp` + `strategies.hpp` + `test_sim.cpp`** — S1, S2, S2b, S3, S7, and the
+9. **`strategy.hpp` + `strategies.hpp` + `test_sim.cpp`**: S1, S2, S2b, S3, S7, and the
    losing control.
 10. **`taker.hpp`**, the flatten path, and **I14**.
 11. **`report.hpp` + `tools/queue_backtest.cpp`**, provenance headers, goldens, CI.
@@ -2757,5 +2791,5 @@ that looks plausible. Grouped by where they live.
 15. **The real-data run**, if a licensed feed is re-obtained: the band, its coverage rate,
     where `mbo` sits, the share-weighted at-touch cancel ratio, the markouts, the `P`
     side census, and the intraday crossed check.
-16. **`docs/phase6-results.md`** — mechanism and measurement in two separate tables, §10.3
+16. **`docs/phase6-results.md`**: mechanism and measurement in two separate tables, §10.3
     in the first paragraph.

@@ -15,20 +15,22 @@
 ## 1. Abstract
 
 Avellaneda–Stoikov (2008) prices a market maker's quotes around a *reservation
-price* displaced by inventory, and needs a fill-intensity curve
-λ(δ) = A·e^(−kδ) to set its spread. Implementations almost universally **assume**
-A and k. This paper measures them, from the author's own simulated fills, through
-a queue-position-resolved order-book model built directly from NASDAQ
+price* displaced by inventory. To set its spread the model needs a fill-intensity
+curve λ(δ) = A·e^(−kδ). Implementations almost universally **assume** A and k.
+This paper measures them, from the author's own simulated fills, through a
+queue-position-resolved order-book model built directly from NASDAQ
 TotalView-ITCH 5.0 message data.
 
-Two methodological claims carry the work. First, fill-model uncertainty is
-reported as a **band over worlds** rather than a band over gradings of one world
-— a distinction that is usually elided and that changes what the band means (§4).
-Second, the intensity curve is measured **per fill model**, because λ̂ is
-estimated *through* a queue model and is therefore conditional on it (§6).
+Two methodological claims carry the work. The first concerns what an uncertainty
+band is a band over: fill-model uncertainty is reported here as a **band over
+worlds**, where the alternative, a band over gradings of one world, answers a
+different question. The distinction is usually elided and it changes what the
+band means (§4). The second claim is that the intensity curve is measured **per
+fill model**, because λ̂ is estimated *through* a queue model and is therefore
+conditional on it (§6).
 
-The headline question is deliberately small: *does inventory-aware quoting lose
-less than naive symmetric quoting, and through which mechanism* — fewer toxic
+The headline question is deliberately small. Does inventory-aware quoting lose
+less than naive symmetric quoting, and through which mechanism: fewer toxic
 fills, or smaller inventory excursions? A three-arm design separates the effect
 of the **spread choice** from the effect of the **inventory skew**, which a
 two-arm comparison bundles together (§7).
@@ -43,26 +45,26 @@ two-arm comparison bundles together (§7).
 
 ## 2. Data and venue
 
-NASDAQ TotalView-ITCH 5.0, the exchange's own binary message feed: every
-displayed order add, execute, cancel, delete and replace, with nanosecond
-timestamps, for every security on the venue. The reconstruction is from raw
-messages — no vendor's book, no bar data, no snapshots.
+The source is NASDAQ TotalView-ITCH 5.0, the exchange's own binary message feed.
+It carries every displayed order add, execute, cancel, delete and replace, with
+nanosecond timestamps, for every security on the venue. Reconstruction runs from
+the raw messages. No vendor's book is used, no bar data and no snapshots.
 
-What this feed **is not** bounds everything downstream, so it is stated here
-rather than in the limitations:
+The bounds of the feed carry through to everything downstream, so they are stated
+here and not left to the limitations:
 
 - **Displayed liquidity only.** Hidden and midpoint orders never appear as
   resting size. They appear only when they trade, as non-attributed executions.
-  A book reconstructed from this feed is the *displayed* book, and a strategy
-  evaluated against it is competing with less than the real queue.
+  What the feed reconstructs is the *displayed* book, so a strategy evaluated
+  against it is competing with less than the real queue.
 - **One venue.** US equities trade across more than a dozen. Order flow this
-  paper never sees was routed elsewhere, and the NBBO is not reconstructible
+  paper never sees was routed elsewhere, and the NBBO cannot be reconstructed
   from NASDAQ alone.
-- **No principal identity.** Orders are anonymous, so nothing here can
-  distinguish informed from uninformed counterparties directly. Adverse
-  selection is inferred from markouts, never observed.
+- **No principal identity.** Orders are anonymous, so nothing here distinguishes
+  informed from uninformed counterparties directly. Adverse selection is inferred
+  from markouts and never observed.
 
-Correctness of the reconstruction is established independently of this paper: a
+Correctness of the reconstruction is established independently of this paper. A
 C++ book and an independent Python reference implementation must produce
 byte-identical snapshots over a full trading day, and CI enforces it.
 
@@ -70,7 +72,7 @@ byte-identical snapshots over a full trading day, and CI enforces it.
 
 A backtest of a passive strategy has no ground truth about its own fills. The
 order rested; whether it *would have* traded depends on where it sat in a queue
-nobody recorded. This project carries four models rather than choosing one:
+nobody recorded. Four models are carried here instead of one:
 
 | model | assumption |
 |---|---|
@@ -79,85 +81,86 @@ nobody recorded. This project carries four models rather than choosing one:
 | **mbo** | queue position tracked from message-by-message data, with the set of references resting ahead of us at arrival |
 | **pessimistic** | we are at the back of the queue |
 
-`mbo` is the one that uses the information the feed actually contains; the other
-three bracket it. The spread between them is not error to be minimised — it is
-the honest width of what a passive backtest can claim.
+`mbo` uses the information the feed actually contains, and the other three
+bracket it. The spread between them is the honest width of what a passive
+backtest can claim, so it is reported and not treated as error to be minimised.
 
 ## 4. The feedback wall, and what the band now means
 
-This is the section the rest of the paper depends on, and it is where published
-results are most often ambiguous.
+The rest of the paper depends on this section, and it is on exactly this point
+that published results are most often ambiguous.
 
 **Phase 6's band is four gradings of one world.** A strategy that cannot see its
-fills emits one intent stream; four fill models score that identical stream four
-ways. The difference between lanes is attributable to the model *almost* alone,
-and the qualifier is load-bearing.
+fills emits one intent stream, and four fill models score that identical stream
+four ways. The difference between lanes is attributable to the model *almost*
+alone. That qualifier is load-bearing.
 
 **One feedback path survives, and it is not small.** `backtest.hpp:274` gates
-every quote on `risk_.blocks(l.ledger.position(), …)` — the position is the
-lane's own, so a lane that fills more reaches the inventory cap sooner and is
-refused quotes the other lanes still send. It fired at materially different
-rates: **5,618 / 3,888 / 3,893 / 3,905** suppressed quotes across naive,
-optimistic, `mbo` and pessimistic (`docs/figures/touch-maker.json`), all four
-hitting the same `peak_position` of 1,000. So the intent streams are identical
-only until the first lane hits its cap, and the phase-6 band is a band over
-gradings *plus* one inventory-mediated divergence.
+every quote on `risk_.blocks(l.ledger.position(), …)`. The position is the lane's
+own, so a lane that fills more reaches the inventory cap sooner and is refused
+quotes the other lanes still send. It fired at materially different rates:
+**5,618 / 3,888 / 3,893 / 3,905** suppressed quotes across naive, optimistic,
+`mbo` and pessimistic (`docs/figures/touch-maker.json`), all four hitting the
+same `peak_position` of 1,000. The intent streams are therefore identical only
+until the first lane hits its cap, and the phase-6 band is a band over gradings
+*plus* one inventory-mediated divergence.
 
 That is a weaker claim than "structurally attributable to the model alone", and
-it is the true one. The construction is still sound for its purpose — the
-divergence enters through a single, countable channel rather than through the
-strategy's pricing — but it is not the clean separation an earlier draft of this
+it is the true one. The construction remains sound for its purpose, because the
+divergence enters through a single countable channel and not through the
+strategy's pricing, but it is not the clean separation an earlier draft of this
 section asserted.
 
 **That construction is impossible for an inventory-aware strategy.** A-S's
 reservation price is a function of inventory `q`, and inventory is a function of
-fills. A strategy in the pessimistic lane gets fewer fills, carries different
-inventory, quotes differently, and fills differently again. The lanes diverge
-from the first fill onward, and there is no longer one intent stream to grade.
+fills. A strategy in the pessimistic lane gets fewer fills, so it carries
+different inventory, quotes differently, and fills differently again. Divergence
+begins at the first fill, and one intent stream to grade no longer exists.
 
-**So the band becomes four closed-loop runs — a band over worlds.** Each is a
-complete, internally consistent answer to *what would this strategy have done if
-fills worked like this*, and it should be wider than the phase-6 band, because
+**So the band becomes four closed-loop runs, a band over worlds.** Each run is a
+complete and internally consistent answer to *what would this strategy have done
+if fills worked like this*, and it should be wider than the phase-6 band, because
 it now includes the strategy's own reaction to being filled differently.
 
-**That expectation was pre-registered and it barely held.** P5 in §8 grades it
-at **5 of 9 symbol-days (56%)** against a majority bar — kept, and only just.
-Stating it here as a structural certainty would contradict the paper's own
-grading two hundred lines later, so it is stated as what it is: a prediction
-that survived on a bare majority, which is evidence that the two constructions
-differ and is not proof that they must.
+**That expectation was pre-registered and it barely held.** P5 in §8 grades it at
+**5 of 9 symbol-days (56%)** against a majority bar: kept, and only just. Stating
+it here as a structural certainty would contradict the paper's own grading two
+hundred lines later, so it is stated as what it is, a prediction that survived on
+a bare majority. That is evidence that the two constructions differ and it is not
+proof that they must.
 
 Both constructions are legitimate and they answer different questions. Phase 6
 asks how much the fill model matters to the *score* of a fixed strategy; this
 paper asks how much it matters to a strategy that *reacts*. Reporting one while
 describing the other would be the single most misleading thing this work could
-do, so the two live in separate code paths — `backtest.hpp` and
-`closed_loop.hpp` — and produce differently-shaped artifacts:
-`docs/figures/touch-maker.json` is keyed by fill model, while
-`validation/as-experiment.json` carries one record per run with its own `arm`,
-`gamma` and `model`. Neither carries an explicit field naming which construction
-produced it, which would be the stronger guard and does not exist today.
+do, so the two live in separate code paths, `backtest.hpp` and `closed_loop.hpp`,
+and they produce differently shaped artifacts. `docs/figures/touch-maker.json` is
+keyed by fill model, while `validation/as-experiment.json` carries one record per
+run with its own `arm`, `gamma` and `model`. Neither artifact carries an explicit
+field naming which construction produced it. Such a field would be the stronger
+guard and it does not exist today.
 
 **The order of events inside one message, stated because getting it wrong is the
 classic closed-loop lookahead.** `ClosedLoopBacktest::on_message`
 (`closed_loop.hpp:95`) applies the ITCH message to the book *first*
-(`book::apply_ex`, line 111), then resolves our fills against the updated book,
-then delivers each fill to the strategy (line 134), and only then invokes the
-strategy's decision with a book pointer that already reflects the message. So the
-strategy sees a fill caused by this message, and the market as of this message,
-at the same decision point — and never any state from a later one. Delivering the
-fill *after* the decision was rejected deliberately: it would hand the strategy a
-view one event stale in exactly the moments that matter most. This is not
-lookahead, which requires seeing a future message; it is a zero-reaction-time
-idealisation at the headline `latency_ns` of 0, and the 500,000 ns artifact
-(§7.5) exists because that idealisation is worth grading against.
+(`book::apply_ex`, line 111). Our fills are then resolved against the updated
+book, each fill is delivered to the strategy (line 134), and only then is the
+strategy's decision invoked, with a book pointer that already reflects the
+message. The strategy therefore sees a fill caused by this message, and the
+market as of this message, at the same decision point, and never any state from a
+later one. Delivering the fill *after* the decision was rejected deliberately,
+because it would hand the strategy a view one event stale in exactly the moments
+that matter most. The construction is a zero-reaction-time idealisation at the
+headline `latency_ns` of 0. It is not lookahead, which requires seeing a future
+message. The 500,000 ns artifact (§7.5) exists because that idealisation is worth
+grading against.
 
-**Half the wall stays up.** The strategy is told its fills and its position. It
-is *not* told its queue position: `SimFill` carries the shares resting ahead of
-it at arrival, and the `FillEvent` handed to a strategy deliberately does not
-copy that field. It is the estimate whose error bars are the entire subject of
-§3, and a strategy conditioning on it would be conditioning on the thing being
-measured. The omission is enforced by a compile-time assertion.
+**Half the wall stays up.** The strategy is told its fills and its position. Its
+queue position is withheld: `SimFill` carries the shares resting ahead of it at
+arrival, and the `FillEvent` handed to a strategy deliberately does not copy that
+field. Queue position is the estimate whose error bars are the entire subject of
+§3, so a strategy conditioning on it would be conditioning on the thing being
+measured. A compile-time assertion enforces the omission.
 
 ## 5. Strategy
 
@@ -167,101 +170,102 @@ Finite-horizon Avellaneda–Stoikov:
 - total spread **δᵃ + δᵇ = γ·σ²·(T − t) + (2/γ)·ln(1 + γ/k)**, split
   symmetrically about r
 
-σ is estimated online from the realised variance of **mid changes**, not
-returns: A-S models arithmetic Brownian motion, so the volatility it wants is in
-dollars per root-second. Sampling is on a fixed time grid rather than per
-message, because per-message sampling makes the estimate a function of how busy
-the symbol is.
+σ is estimated online from the realised variance of **mid changes** and not of
+returns. A-S models arithmetic Brownian motion, so the volatility the model wants
+is in dollars per root-second. Sampling runs on a fixed time grid, because
+per-message sampling would make the estimate a function of how busy the symbol
+is.
 
 ### 5.1 Units, and a trap
 
-The paper's two terms are not dimensionally consistent unless inventory is
-treated as a dimensionless count: the spread term requires γ in 1/price, the
-reservation term in 1/(shares·price). Implementations resolve this silently and
-differently, which is part of why published A-S results are hard to compare.
-Here it is resolved explicitly — dollars and seconds throughout, γ in 1/dollar in
-both terms, and inventory entering as `q / inventory_unit`, a named parameter
-that is reported rather than buried.
+The paper's two terms are dimensionally consistent only if inventory is treated
+as a dimensionless count: the spread term requires γ in 1/price, the reservation
+term in 1/(shares·price). Implementations resolve this silently and differently,
+which is part of why published A-S results are hard to compare. The resolution
+here is explicit. Dollars and seconds are used throughout, γ is in 1/dollar in
+both terms, and inventory enters as `q / inventory_unit`, a named parameter that
+is reported rather than buried.
 
-The consequence of leaving it implicit is not subtle. Avellaneda and Stoikov's
-worked example uses γ = 0.1, k = 1.5 in arbitrary units. The intensity term is
-approximately `2/k` for small γ/k, so k = 1.5 **per dollar** implies a total
-spread of about **170 ticks** on a book that quotes one wide. Ported unchanged to
-a penny-spread equity, the strategy quotes all day and never fills. This
-implementation did exactly that on its first run; a regression test now asserts
-both that the corrected defaults are sane and that the paper's values are the
-trap, so the fix cannot be silently reverted.
+Leaving the question implicit has a consequence that is not subtle. Avellaneda
+and Stoikov's worked example uses γ = 0.1, k = 1.5 in arbitrary units. The
+intensity term is approximately `2/k` for small γ/k, so k = 1.5 **per dollar**
+implies a total spread of about **170 ticks** on a book that quotes one wide.
+Ported unchanged to a penny-spread equity, the strategy quotes all day and never
+fills. This implementation did exactly that on its first run. A regression test
+now asserts that the corrected defaults are sane and that the paper's values are
+the trap, so the fix cannot be silently reverted.
 
 ### 5.2 A known pathology, flagged rather than mitigated
 
 As t → T the inventory term decays to zero, so the model stops skewing for
-inventory precisely when it has least time left to unload it. This follows from
-the finite-horizon formulation, which assumes terminal inventory is liquidated at
-the mid — something no desk can do. A floor on (T − t) is available as a
-mitigation and **defaults to off**, so the pathology is visible in the results
-rather than papered over, and the strategy counts quotes placed in the last tenth
+inventory at precisely the moment it has least time left to unload it. The
+behaviour follows from the finite-horizon formulation, which assumes terminal
+inventory is liquidated at the mid, and no desk can do that. A floor on (T − t)
+is available as a mitigation and **defaults to off**, which leaves the pathology
+visible in the results, and the strategy counts quotes placed in the last tenth
 of the session while holding inventory. Guéant–Lehalle–Fernandez-Tapia's
-inventory-bounded variant is the principled fix and is not implemented here.
+inventory-bounded variant is the principled fix. It is not implemented here.
 
 ## 6. Calibrating λ(δ)
 
 λ̂(δ) = fills(δ) / exposure(δ), where exposure is integrated **per order** over
-time: two orders resting one second at the same depth is two order-seconds,
+time. Two orders resting one second at the same depth is two order-seconds,
 because λ is the intensity for a single order.
 
-Four things are excluded from the denominator, each of which would bias k in a
+Four things are excluded from the denominator, and each of them would bias k in a
 determinate direction: time when the symbol is not tradable, time when the mid is
 unusable, hidden iceberg reserve (in no queue, and so not exposed), and orders
-that are no longer live. Depth is **integrated, not assigned at placement** — the
-mid moves while an order rests, so a single order migrates between depth buckets
-during its life. Taker fills are excluded entirely: λ(δ) describes a resting
-order being hit, and crossing the spread is a decision rather than an arrival.
+that are no longer live. Depth is **integrated, not assigned at placement**,
+because the mid moves while an order rests and a single order therefore migrates
+between depth buckets during its life. Taker fills are excluded entirely: λ(δ)
+describes a resting order being hit, and crossing the spread is a decision rather
+than an arrival.
 
-The fit is log-linear and **Poisson-weighted** — a bucket's fill count is a
-count, so var(ln λ̂) ≈ 1/fills. Buckets with exposure but zero fills cannot be
-logged, are excluded, and are **counted**: dropping them silently flattens the
-curve, because the deep buckets are exactly the ones that fail to fill.
+The fit is log-linear and **Poisson-weighted**, since a bucket's fill count is a
+count and var(ln λ̂) ≈ 1/fills. Buckets with exposure but zero fills cannot be
+logged, so they are excluded, and they are **counted**. Dropping them silently
+flattens the curve, because the deep buckets are exactly the ones that fail to
+fill.
 
 ### 6.1 The conditioning decision
 
 λ̂ is measured *through* a queue model, so A and k are properties of (this feed,
 this strategy, **that model**). Calibrating once under one model and evaluating
 four would leave three lanes using a fill curve fitted in a world they do not
-inhabit — reintroducing precisely the cross-contamination the closed-loop design
-removes.
+inhabit, which reintroduces precisely the cross-contamination the closed-loop
+design removes.
 
 **This work calibrates per lane.** Four passes, four curves, and the artifact
 records `calibrated_per_lane` so a reader never has to infer it. The cost is
-stated: four passes instead of one, and a band that now carries variation from
-two sources — different fills *and* different fitted parameters — which is the
-price of each world being internally consistent.
+stated. Four passes are run instead of one, and the band now carries variation
+from two sources, different fills as well as different fitted parameters. That is
+the price of each world being internally consistent.
 
 **And per symbol**, which was not obvious until the spreads were measured. On a
-single real session the mean touch spread ran from 1.0 ticks on a $31 name —
-pinned at one tick 99.2% of the session, behind a 3,600-share queue — to 60.7
-ticks on a $1,189 name with 50 shares at the touch. Those are 61× apart in
-spread and 62× apart in queue depth, in opposite directions. A fill-intensity
-curve fitted on one of them describes nothing about the other, so k is fitted
-once per symbol on the calibration day and frozen.
+single real session the mean touch spread ran from 1.0 ticks on a $31 name,
+pinned at one tick 99.2% of the session behind a 3,600-share queue, to 60.7 ticks
+on a $1,189 name with 50 shares at the touch. Those two are 61× apart in spread
+and 62× apart in queue depth, in opposite directions. A fill-intensity curve
+fitted on one of them describes nothing about the other, so k is fitted once per
+symbol on the calibration day and frozen.
 
-Both dimensions were being silently collapsed until then. The experiment tool
+Until then both dimensions were being silently collapsed. The experiment tool
 took `k` as a single scalar and applied it to every lane and every symbol, and
-its own banner printed *"assumed k"* — honest about what it was doing, but never
-connected to the calibrator, because until there was real data every synthetic
-symbol looked alike. k now reaches the experiment **from the committed
-calibration artifact and never from a flag typed by hand**: the driver refuses a
-symbol with no calibration, a calibration whose recorded day is a day being
-evaluated, and a lane whose intensity could not be fitted. Running with the
-placeholder is still possible for smoke tests, and stamps every artifact it
-produces `k_source: assumed-scalar`.
+its own banner printed *"assumed k"*, which was honest about what the tool was
+doing. The banner was never connected to the calibrator, because until there was
+real data every synthetic symbol looked alike. k now reaches the experiment
+**from the committed calibration artifact and never from a flag typed by hand**:
+the driver refuses a symbol with no calibration, a calibration whose recorded day
+is a day being evaluated, and a lane whose intensity could not be fitted. Running
+with the placeholder remains possible for smoke tests, and it stamps every
+artifact it produces `k_source: assumed-scalar`.
 
 ### 6.2 The touch misfit
 
-A-S assumes fill intensity depends only on depth. At δ = 0 it depends mostly on
-**queue position**, which the exponential has no way to express, so the touch
-bucket is expected to sit below the fitted curve. This is a known limitation of
-the model and the residual figure is the evidence for it rather than an assertion
-about it.
+A-S assumes fill intensity depends only on depth. At δ = 0 intensity depends
+mostly on **queue position**, which the exponential has no way to express, so the
+touch bucket is expected to sit below the fitted curve. The limitation is a known
+one, and the residual figure is the evidence for it.
 
 ### 6.3 What the fit came out as
 
@@ -343,21 +347,21 @@ Depth is integrated as the mid moves (§6), which is correct for exposure and is
 | `as` | A-S proper, at each swept γ |
 
 The middle arm is the control. A-S differs from a touch-maker in inventory
-awareness *and* in where it quotes *and* in how often it re-quotes; an
-improvement over the touch-maker could come from any of the three. Comparing
-against γ = 0 holds everything fixed except the skew, so **"A-S beats a naive
-maker"** and **"the skew is what beat it"** remain separable claims. They are
+awareness, in where it quotes and in how often it re-quotes, so an improvement
+over the touch-maker could come from any of those three differences. Comparison
+against γ = 0 holds everything fixed except the skew, which keeps **"A-S beats a
+naive maker"** and **"the skew is what beat it"** separable claims. They are
 routinely reported as one.
 
-γ = 0 is handled by taking the limit — `(2/γ)·ln(1 + γ/k) → 2/k` — rather than
-refusing the input, so the control stays inside the same code path as the
-treatment.
+γ = 0 is handled by taking the limit, `(2/γ)·ln(1 + γ/k) → 2/k`, so the input is
+accepted and the control stays inside the same code path as the treatment.
 
 Every headline number is a band across the four fill models. γ is **swept and
 plotted**, never chosen. Results are reported **per symbol-day and never pooled**:
 with a handful of symbol-days there is no significance to claim, and an average
 invites exactly the claim the data cannot support. Calibration and evaluation
-**never share a day** — the driver exits non-zero rather than warning if they do.
+**never share a day**, and the driver exits non-zero rather than warning if they
+do.
 
 <!-- generated:results:begin -->
 
@@ -687,14 +691,14 @@ Stated at length because the conclusion depends on them.
   against the real queue faces more competition than this models.
 - **One venue.** No NBBO, no routing, no cross-venue adverse selection.
 - **No market impact.** Our orders consume liquidity that historical
-  participants never saw, and those participants never react to us. This is a
-  counterfactual, not a replay.
-- **Small N.** A handful of symbol-days. The day-level spread is reported
-  instead of a mean, and no significance is claimed anywhere.
+  participants never saw, and those participants never react to us. What is
+  produced is a counterfactual and not a replay.
+- **Small N.** A handful of symbol-days. The day-level spread is reported in
+  place of a mean, and no significance is claimed anywhere.
 - **λ̂ is conditional on a queue model** (§6.1), and the queue model is itself
   the estimate under study in §3.
-- **Latencies are synthetic.** The latency sweep applies a modelled delay; it is
-  not a measurement of a real path to a real exchange.
+- **Latencies are synthetic.** The latency sweep applies a modelled delay. It is
+  no measurement of a real path to a real exchange.
 - **The strategy is evaluated, not deployed.** Nothing here has traded.
 
 ## 10. Reproducing
@@ -704,11 +708,11 @@ scripts/paper-build.sh            # figures, then tables, then the page
 scripts/paper-pdf.sh              # the PDF, from that page
 ```
 
-`paper-build.sh` runs three generators in an order that is load-bearing:
-figures first, because the tables link whichever figures exist; then the tables;
-then the rendered page, which inlines them. Run in the wrong order the document
-is not visibly wrong, merely different from what the same inputs produce next
-time — which is precisely what `--check` is for, and how the ordering was found.
+`paper-build.sh` runs three generators in an order that is load-bearing: figures
+first, because the tables link whichever figures exist; then the tables; then the
+rendered page, which inlines them. Run in the wrong order, the document is not
+visibly wrong, merely different from what the same inputs produce next time. That
+is precisely what `--check` is for, and it is how the ordering was found.
 
 CI runs the first three with `--check`, so no number and no chart in this
 document can drift from the artifact that produced it. Three properties are
@@ -718,18 +722,17 @@ enforced rather than intended:
   by `paper-report.py` between markers, and the seven verdicts in §7.5 are
   *computed* against bars transcribed once from the plan. An earlier report
   script in this repository printed "kept" from a string literal after the
-  numbers had moved outside the predicted range; that is the failure this rules
+  numbers had moved outside the predicted range. That is the failure this rules
   out by construction.
 - **A figure whose artifact is missing is an error, not a skip.** If a chart is
   committed and the JSON behind it is not, `paper-figures.sh` fails. Provenance
-  — artifact path, its SHA-256, the exact command — lives in
-  `docs/figures/paper/manifest.json` next to the figures.
-- **The generator is exercised with data, in CI, on every push.** The
-  no-artifact path is what runs today, so CI also builds synthetic feeds, runs
-  the full experiment through them, and asserts that the paper comes back with a
-  graded table. A results generator first executed on the day the real data
-  arrives is a results generator nobody has tested.
+  lives in `docs/figures/paper/manifest.json` next to the figures: the artifact
+  path, its SHA-256 and the exact command.
+- **The generator is exercised with data, in CI, on every push.** The no-artifact
+  path is what runs today, so CI also builds synthetic feeds, runs the full
+  experiment through them, and asserts that the paper comes back with a graded
+  table. A results generator first executed on the day the real data arrives is a
+  results generator nobody has tested.
 
-The PDF is a build output and is not committed: its bytes depend on a font
-cache, and a diff cannot referee that. Every *input* to it is committed and
-checked.
+The PDF is a build output and is not committed: its bytes depend on a font cache,
+and a diff cannot referee that. Every *input* to it is committed and checked.

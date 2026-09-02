@@ -1,15 +1,16 @@
 # Phase 6 — Queue-position backtester: results
 
-Same strategy, same bytes, four fill models, one pass. The gap between them is
-what the phase exists to measure, and everything below is reproducible from the
-commands in each section.
+One strategy and one set of bytes are run through four fill models in a single
+pass. The difference between those models is the quantity this phase exists to
+measure, and every figure below can be reproduced from the commands given in
+each section.
 
 Section 1 runs on **real NASDAQ TotalView-ITCH**: MSFT, 30 December 2019,
-1,221,484 messages. Sections 2 onward run on a synthetic feed and exist to show
-that the machinery measures what it claims to, on data whose answers are known
-in advance. Section 8 says which conclusions survive the substitution and which
-do not — and one of them did not survive, which is the most useful thing in
-this document.
+1,221,484 messages. Sections 2 onward run on a synthetic feed. They exist to
+show that the machinery measures what it claims to measure, on data whose
+answers are known in advance. Section 8 records which conclusions survive the
+substitution and which do not. One of them did not survive, and that is the
+most useful thing in this document.
 
 ---
 
@@ -19,9 +20,9 @@ this document.
 ./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 50
 ```
 
-1,221,484 messages, sliced from the full day. Same strategy as everywhere else
-— a symmetric maker at the touch, 100 shares a side, held to a 1,000-share
-position limit, at 250 µs one-way latency.
+1,221,484 messages, sliced out of the full day. The strategy is the same one
+used everywhere else: a symmetric maker at the touch quoting 100 shares a side.
+It is held to a 1,000-share position limit, at 250 µs one-way latency.
 
 | model | fills | shares | P&L | c/share | edge c/sh | fees c/sh |
 |---|---:|---:|---:|---:|---:|---:|
@@ -32,32 +33,32 @@ position limit, at 250 µs one-way latency.
 
 ![Total P&L by fill model, MSFT](figures/MSFT-fills-total.svg)
 
-**It loses money in every model.** That is the phase's stated done-condition —
-"run a strategy you know is unprofitable and confirm it loses money" — met on a
-real day rather than by construction. Naive still flatters: it reports $401.34
-more than pessimistic. But the size of that flattery is nothing like the
-synthetic feed's, and the *shape* of the result is different in a way worth
-being explicit about.
+**It loses money in every model.** The phase's stated done-condition is to "run
+a strategy you know is unprofitable and confirm it loses money", and here that
+condition is met on a real day rather than by construction. Naive still
+flatters: it reports $401.34 more than pessimistic. The size of that flattery is
+nothing like the synthetic feed's, though, and the shape of the result differs
+in a way that deserves to be stated.
 
 ### The claim that did not survive
 
 On synthetic data naive reported **3.53×** the P&L of pessimistic. On MSFT the
-ratio is 0.87 — and the ratio is the wrong statistic, because both numbers are
-negative and a ratio of two negative numbers says nothing about which one is
-flattering. The tooling printed `0.87x` under a caption claiming it was "the
-cost of assuming you are at the front of every queue", which was simply false.
-It now reports the signed difference, which means the same thing in both
+ratio is 0.87. The ratio is the wrong statistic here, because both numbers are
+negative, and a ratio of two negative numbers says nothing about which one is
+flattering. The tooling printed `0.87x` under a caption that called it "the cost
+of assuming you are at the front of every queue", and that caption was false.
+The signed difference is reported instead, and it means the same thing in both
 regimes.
 
-So: the 3.53× in section 2 is a fact about a generator. What survives is the
-*direction* — naive over-fills, and its P&L is the most flattering of the four
-— and the direction is confirmed independently in the next subsection. The
-magnitude is not transferable, and this document previously implied it was.
+The 3.53× in section 2 is therefore a fact about a generator. What survives is
+the direction: naive over-fills, and its P&L is the most flattering of the four.
+That direction is confirmed independently in the next subsection. The magnitude
+does not transfer, and this document previously implied that it did.
 
 ### Adverse selection, measured
 
-The number no synthetic feed here could honestly produce. Drift is cents per
-share, signed so positive is in our favour.
+This is the number that no synthetic feed here could honestly produce. Drift is
+measured in cents per share, signed so that positive is in our favour.
 
 | model | 100 ms | 1 s | 10 s | edge + drift @10s |
 |---|---:|---:|---:|---:|
@@ -68,17 +69,17 @@ share, signed so positive is in our favour.
 
 ![Post-fill drift, MSFT](figures/MSFT-markout.svg)
 
-Negative at every horizon, in every model, worsening as the horizon lengthens.
-That is being picked off, and it is why the strategy loses: the fills arrive
+Drift is negative at every horizon and in every model, and it worsens as the
+horizon lengthens. The strategy loses because it is picked off: the fills arrive
 disproportionately just before the price moves against them. On the synthetic
-feed this column is *positive*, because that generator's price mean-reverts —
-so section 7 is measuring the generator and this table is measuring a market.
+feed this column is positive, because that generator's price mean-reverts.
+Section 7 measures the generator, and this table measures a market.
 
 ### Why edge and drift trade places
 
-`edge` goes from +0.2649 (naive) to −0.2179 (pessimistic) while `drift` moves
-the opposite way. The two models are booking the same economic event in
-different columns, and the mechanism is in the fill counts:
+`edge` goes from +0.2649 (naive) to −0.2179 (pessimistic), while `drift` moves
+the other way. The two models book the same economic event in different columns.
+The mechanism shows up in the fill counts:
 
 | model | fills | lock fills | lock share | clamp events |
 |---|---:|---:|---:|---:|
@@ -87,36 +88,35 @@ different columns, and the mechanism is in the fill counts:
 | mbo | 9,892 | 4,053 | 41% | 0 |
 | pessimistic | 8,548 | 4,697 | 55% | 71,371 |
 
-A *lock* fill is price priority: the other side crossed into our resting quote.
-Naive fills early from ordinary flow and is usually gone before that happens.
-Pessimistic denies itself those ordinary fills, so it is still resting when the
-cross arrives — and **55% of its fills come from being run over**. A cross
-compresses the mid at the instant of the fill, so the adverse move is already
-priced in and lands in `edge` as a negative number instead of in `drift` later.
-Same event, different column. `edge + drift` at 10 s keeps the expected order:
-naive −0.32, pessimistic −0.45.
+A *lock* fill is a fill by price priority: the other side crossed into our
+resting quote. Naive fills early from ordinary flow and has usually left before
+that happens. Pessimistic denies itself those ordinary fills, so it is still
+resting when the cross arrives, and **55% of its fills come from being crossed
+into**. A cross compresses the mid at the instant of the fill, so the adverse
+move is already in the price and lands in `edge` as a negative number instead of
+appearing in `drift` later. The event is the same and only the column differs.
+`edge + drift` at 10 s keeps the expected order: naive −0.32, pessimistic −0.45.
 
-More than half of pessimistic's fills coming from price priority is worth
-saying plainly: **on this strategy and this day, the pessimistic lane is not
-mostly measuring a queue assumption.** It is measuring what happens to a quote
-that never advances. That is a real property of being at the back of a queue,
-not an artefact — but it is not the quantity the four-model comparison was
-designed to isolate.
+More than half of pessimistic's fills arriving by price priority deserves to be
+said plainly: **on this strategy and this day, the pessimistic lane mostly
+measures what happens to a quote that never advances, and not a queue
+assumption.** Being at the back of a queue really does have that property, so
+this is not an artefact, although it is also not the quantity the four-model
+comparison was designed to isolate.
 
-The clamp column is a consistency signal. The clamp fires when a model's idea
-of the shares ahead exceeds what is provably resting at the price. Naive never
-decrements `ahead` and pessimistic assumes every cancel is behind us, so both
+The clamp column is a consistency signal. A clamp fires when a model's idea of
+the shares ahead exceeds what is provably resting at the price. Naive never
+decrements `ahead`, and pessimistic assumes every cancel is behind us, so both
 drift above reality constantly. Optimistic decrements on every cancel and `mbo`
-resolves references exactly — and both clamp **zero times in 1.2 million
-messages**. A model whose bound never has to be corrected is a model whose
-bound was right.
+resolves references exactly, and both clamp **zero times in 1.2 million
+messages**. A bound that never has to be corrected was a correct bound.
 
 ### The external check on real orders
 
-200 MSFT orders that were pulled part-filled — the discriminating cases —
-shadowed one message ahead of their own add and graded against what they
-actually filled. 2,011 such orders exist in the day; these are 200 of them,
-drawn from 576,026 orders across 1,221,484 messages:
+200 MSFT orders that were pulled part-filled are the discriminating cases. Each
+is shadowed one message ahead of its own add and graded against what it actually
+filled. The day contains 2,011 such orders; these are 200 of them, drawn from
+576,026 orders across 1,221,484 messages:
 
 ```
 ./scripts/real-data-run.sh <day>.gz MSFT 200
@@ -129,20 +129,20 @@ drawn from 576,026 orders across 1,221,484 messages:
 | mbo | 0.0 | 0.0 | 0 | 0 | **200** |
 | pessimistic | -27.9 | 27.9 | 0 | 96 | 104 |
 
-The truth totals 12,189 shares over the 200 orders, 61 per order. An earlier
-run at the default 50 samples gave the same shape — naive over 24 and never
-under, pessimistic under 21 and never over, `mbo` exact on all 50 — so the
-result is not an artefact of which orders were sampled.
+The truth totals 12,189 shares over the 200 orders, or 61 per order. An earlier
+run at the default 50 samples gave the same shape: naive over by 24 and never
+under, pessimistic under by 21 and never over, and `mbo` exact on all 50. The
+result is therefore not an artefact of which orders were sampled.
 
 **`mbo` reproduced all 200 exactly, and 200/200 fell inside
 [pessimistic, optimistic].** Naive over-fills and never under-fills;
-pessimistic under-fills and never over-fills. This is the result that matters
-most, because it is the only one in the phase measured against ground truth
-rather than against another implementation of the same idea — and it holds on
-real orders, with real icebergs and real replaces, not just on a generator.
+pessimistic under-fills and never over-fills. Of everything in the phase, this
+result matters most, because it is the only one measured against ground truth
+rather than against another implementation of the same idea. It also holds on
+real orders, with real icebergs and real replaces, and not only on a generator.
 
-It also settles the P&L inversion above: the queue machinery is correct on this
-data, so the inversion is a fact about MSFT and this strategy, not a bug.
+It settles the P&L inversion above as well: the queue machinery is correct on
+this data, so the inversion is a fact about MSFT and this strategy and not a bug.
 
 ### Latency
 
@@ -155,22 +155,22 @@ data, so the inversion is a fact about MSFT and this strategy, not a bug.
 
 Every model gets worse per share as latency rises, and the queue models fill
 *more*. Pessimistic more than doubles its volume between 0 µs and 5 ms. The
-mechanism is the same one section 5 describes on synthetic data, larger here:
-`TouchMaker` requotes whenever the touch moves and a replace goes to the back
-of the queue, so latency slows the churn, each order rests longer, and it
-climbs further. For a strategy that loses money, filling more is losing more —
-the rising share count and the worsening per-share number are the same fact
+mechanism is the one section 5 describes on synthetic data, larger here.
+`TouchMaker` requotes whenever the touch moves, and a replace goes to the back
+of the queue, so latency slows the churn and each order rests longer and climbs
+further. For a strategy that loses money, filling more means losing more. The
+rising share count and the worsening per-share number are the same fact recorded
 twice.
 
 ![P&L vs latency, MSFT](figures/MSFT-latency-pnl.svg)
 ![Fill volume vs latency, MSFT](figures/MSFT-latency-shares.svg)
 
-Both panels, for the reason the table gives: the per-share number worsens while
-the share count climbs, and either panel alone shows half of that.
+Both panels appear for the reason the table gives: the per-share number worsens
+while the share count climbs, and either panel on its own shows half of that.
 
-This is not an argument for slow infrastructure. It is an argument that
-`TouchMaker` requotes too eagerly, and it is only visible because the queue
-models charge for a replace.
+The argument here is that `TouchMaker` requotes too eagerly, and not that slow
+infrastructure is desirable. It is visible at all only because the queue models
+charge for a replace.
 
 ---
 
@@ -183,9 +183,10 @@ python3 python/analysis/fill_comparison.py docs/figures/touch-maker.json \
     --svg docs/figures/fills-total.svg
 ```
 
-Synthetic. 200,056 events, same strategy and settings as section 1. The point
-of this section is not the P&L — it is that the machinery separates the models
-at all on data whose behaviour is known.
+Synthetic data, 200,056 events, with the same strategy and settings as
+section 1. The point of this section is that the machinery separates the models
+at all on data whose behaviour is known in advance, and the P&L itself is
+secondary.
 
 | model | fills | shares | P&L | c/share | edge c/sh | fees c/sh |
 |---|---:|---:|---:|---:|---:|---:|
@@ -195,55 +196,56 @@ at all on data whose behaviour is known.
 | pessimistic | 2,683 | 182,535 | $2,052.86 | 1.1246 | 0.9471 | −0.0911 |
 
 **Naive claims 3.53× the P&L of pessimistic** *on this generator*. Section 1
-shows that multiple does not transfer to a real day; the direction does. Almost
-all of it is volume: naive reports 2.5× the shares.
+shows that the multiple does not transfer to a real day, although the direction
+does. Volume accounts for nearly all of it: naive reports 2.5× the shares.
 
-These numbers moved once, and the reason is worth recording rather than
-quietly restating them. Phase 7 added halts to the feed generator, so the same
-seed now produces a different feed and the figures here were regenerated
-against it. The simulator did not change: given the pre-halt generator's feed,
-the current code reproduces the previously published numbers exactly, fill for
-fill. A synthetic result is only ever a result about the generator, and this is
-what that looks like in practice. The rest is worse — naive also claims a third more
-edge *per share*, because the fills it invents happen at moments the queue never
-actually reached, and those are systematically the good moments.
+These numbers moved once, and the reason is recorded here rather than the
+figures being quietly restated. Phase 7 added halts to the feed generator, so
+the same seed now produces a different feed, and the figures here were
+regenerated against it. The simulator did not change. Given the pre-halt
+generator's feed, the current code reproduces the previously published numbers
+exactly, fill for fill. A synthetic result is only ever a result about the
+generator, and this is what that means in practice. The rest is worse: naive
+also claims a third more edge *per share*, because the fills it invents happen at
+moments the queue never actually reached, and those are systematically the good
+moments.
 
 `mbo`, which resolves order references instead of guessing, sits inside the
-optimistic/pessimistic band. That is the check that says the band is a band and
-not two arbitrary numbers with a gap between them.
+optimistic/pessimistic band. That check is what establishes the band as a band,
+rather than two arbitrary numbers with a gap between them.
 
 ![Total P&L by fill model](figures/fills-total.svg)
 ![Shares filled by fill model](figures/fills-shares.svg)
 
-The two panels are both here on purpose. Per share the four models agree to
-within a tenth of a cent, so a per-share chart alone shows four identical bars
-and hides the entire result.
+Both panels are here deliberately. Per share the four models agree to within a
+tenth of a cent, so a per-share chart alone shows four identical bars and hides
+the entire result.
 
 ---
 
 ## 3. The external check: shadow real orders
 
-Everything in section 2 is internal. Two implementations agreeing and
-invariants holding would both pass if the implementation were wrong in a
-consistent way. This is the one check with an answer that does not come from us.
+Everything in section 2 is internal. Two implementations that agree, and
+invariants that hold, would both pass if the implementation were wrong in a
+consistent way. This check is the one whose answer does not come from us.
 
 ```
 python3 python/analysis/leave_one_out.py data/raw/queue_long.gz \
     --binary build/queue_sim --samples 200 --partial-only
 ```
 
-For a real order O, replay the feed **unchanged** with a simulated order of O's
-price and size placed one message before O's add — so it stands where O stood,
-with the same queue ahead of it — and pulled one message before whatever removed
-O. The feed says how many of O's shares filled. Compare.
+For a real order O, the feed is replayed **unchanged** with a simulated order of
+O's price and size placed one message before O's add, so that it stands where O
+stood with the same queue ahead of it, and pulled one message before whatever
+removed O. The feed says how many of O's shares filled. The two are compared.
 
-Nothing is edited, so no other participant's behaviour changes and the queue
-ahead is the real queue. O now sits directly behind us, so every execution the
+Because nothing is edited, no other participant's behaviour changes and the
+queue ahead is the real queue. O sits directly behind us, so every execution the
 tape addresses to O is flow that reached the front of that queue while we were
 at the front of it.
 
-200 orders that were pulled **part-filled** — the discriminating cases; an order
-that ended fully executed grades every model perfect and measures nothing:
+200 orders that were pulled **part-filled** are the discriminating cases. An
+order that ended fully executed grades every model perfect and measures nothing:
 
 | model | mean error | mean abs error | over | under | exact |
 |---|---:|---:|---:|---:|---:|
@@ -255,27 +257,28 @@ that ended fully executed grades every model perfect and measures nothing:
 **Bracketed by [pessimistic, optimistic]: 200/200.** The band is a bound.
 
 `mbo` is exact on every one of the 200. `naive` over-fills by 40% of the average
-order and never under-fills, which is the shape the theory predicts: a model
-that ignores the queue can only ever be at least as filled as one that waits.
+order and never under-fills. Theory predicts that shape, because a model which
+ignores the queue can only ever be at least as filled as one that waits.
 
-This check earned its keep the moment the feed gained halts. Phase 7 taught the
-generator to halt a symbol, and this table immediately went to **189/200**, with
-`mbo` under-filling 42 times having been exact on every one before. The cause
-was a real defect: `commit()` returned outright while a symbol was halted, so
-the models ignored the cancels and deletes that kept arriving through the halt
-and came out of it still believing a queue that had evaporated was in front of
-them. Trading is gated during a halt; bookkeeping is not, and conflating the two
-is easy to do and invisible on a feed that never halts. Both implementations now
-advance on cancels while halted and fill on nothing, which the differential test
-insisted on — the C++ fix alone made the two disagree within one run.
+The value of this check became clear as soon as the feed gained halts. Phase 7
+taught the generator to halt a symbol, and this table immediately fell to
+**189/200**, with `mbo` under-filling 42 times where it had been exact on every
+one before. A real defect caused it. `commit()` returned outright while a symbol
+was halted, so the models ignored the cancels and deletes that kept arriving
+through the halt, and they emerged from it still believing that a queue which no
+longer existed stood in front of them. Trading is gated during a halt and
+bookkeeping is not. The two are easy to conflate, and the mistake is invisible
+on a feed that never halts. Both implementations now advance on cancels while
+halted and fill on nothing, which the differential test insisted on: the C++ fix
+alone made the two disagree within one run.
 
-This oracle found two defects in the feed generator before it found anything
+The oracle found two defects in the feed generator before it found anything
 about the models, and both were real:
 
-* Executions were happening at randomly chosen price levels. A print below a
-  resting bid is a tape no single venue produces, and the simulator was then
-  *correct* to fire price priority on nearly every fill — a shadow order took
-  100 shares where the order it shadowed took 23.
+* Executions were happening at randomly chosen price levels. No single venue
+  produces a tape in which a print sits below a resting bid, and the simulator
+  was then *correct* to fire price priority on nearly every fill: a shadow order
+  took 100 shares where the order it shadowed took 23.
 * Executions were happening through halts. A halted symbol does not trade, so
   the models correctly ignored those messages, their idea of what was ahead
   stopped matching the book, and they reported zero for the rest of the
@@ -291,7 +294,7 @@ python3 python/make_toxic_feed.py data/raw/toxic.gz --episodes 40
 python3 python/make_toxic_feed.py --check toxic.json --episodes 40
 ```
 
-A feed engineered so that every quantity is fixed before the simulator runs.
+The feed is built so that every quantity is fixed before the simulator runs.
 
 | model | fills | shares | edge c/sh | drift 100ms | drift 1s | drift 10s | unresolved | residual |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -300,13 +303,13 @@ A feed engineered so that every quantity is fixed before the simulator runs.
 | mbo | 40 | 4,000 | 1.0000 | −2.0000 | −2.0000 | −2.0000 | 0 | 0 |
 | pessimistic | 40 | 4,000 | 1.0000 | −2.0000 | −2.0000 | −2.0000 | 0 | 0 |
 
-Gross P&L is **exactly zero** in every lane. Every fill is worth minus one cent
+Gross P&L is **exactly zero** in every lane. Each fill is worth minus one cent
 measured against the mid ten seconds later, and yet the realized round trip
-breaks even: we buy the bid at mid − 1 tick, the mid drops two ticks, and the
-ask we then sell is the new mid + 1 tick — the same price. A two-tick spread
-against a two-tick adverse move nets zero. That is the textbook statement of
-what adverse selection does to market making, and the rebate is all that is
-left. A markout and a P&L answer different questions.
+returns nothing either way: we buy the bid at mid − 1 tick, the mid drops two
+ticks, and the ask we then sell at is the new mid + 1 tick, which is the same
+price. A two-tick spread against a two-tick adverse move nets zero. That is the
+textbook statement of what adverse selection does to market making, and the
+rebate is all that remains. A markout and a P&L answer different questions.
 
 All four models agree here, because the feed contains no queue ambiguity. A
 backtester whose models disagreed on this feed would be finding ambiguity that
@@ -341,33 +344,33 @@ P&L, by one-way latency:
 | mbo | $1,812 | $2,044 | $2,124 | $2,281 | $2,392 | $2,375 | $2,349 |
 | pessimistic | $1,708 | $1,967 | $2,057 | $2,237 | $2,361 | $2,359 | $2,327 |
 
-The two directions are the interesting part.
+Two directions are visible in those tables.
 
 **Naive decays with latency and the queue models improve.** Naive loses 27% of
-its fills between 0 and 5 ms, because its fills come from being present when a
-trade prints at its price, and arriving later means being present less often.
-The queue models gain 24%, because this strategy requotes whenever the touch
-moves and a replace goes to the back of the queue — latency slows the churn, so
-each order rests longer and climbs further. Under a model where queue position
-is real, being slower to requote is worth something.
+its fills between 0 and 5 ms. Its fills come from being present when a trade
+prints at its price, and arriving later means being present less often. The
+queue models gain 24%. This strategy requotes whenever the touch moves, and a
+replace goes to the back of the queue, so latency slows the churn and each order
+rests longer and climbs further. Under a model where queue position is real,
+being slower to requote is worth something.
 
-That is not an argument for slow infrastructure. It is an argument that
-TouchMaker requotes too eagerly, and it is only visible at all because the
-queue models charge for a replace.
+The argument is that TouchMaker requotes too eagerly, not that slow
+infrastructure is desirable, and it is visible at all only because the queue
+models charge for a replace.
 
 ![P&L vs latency](figures/latency-pnl.svg)
 ![Fill volume vs latency](figures/latency-shares.svg)
 
-Neither curve collapses toward zero, so nothing here is a latency edge.
+Neither curve collapses toward zero, so nothing here amounts to a latency edge.
 
-`patient-maker`, which joins the touch and holds until the price walks five
-ticks away, makes that reading sharper. Its fills are *identical* at 0 µs,
-250 µs and 1 ms — 4,300 / 4,200 / 4,200 shares for optimistic / mbo /
-pessimistic at every one of those points — and only move at 100 ms and 1 s. An
-order that rests for seconds does not care about microseconds, and saying so
-with a flat line is more useful than a single number at one latency. The price
-of that flatness is volume: it fills 4,300 shares where touch-maker fills
-207,000, because it is holding one quote a side rather than chasing the touch.
+`patient-maker`, which joins the touch and holds until the price moves five
+ticks away, sharpens that reading. Its fills are *identical* at 0 µs, 250 µs and
+1 ms, at 4,300 / 4,200 / 4,200 shares for optimistic / mbo / pessimistic at
+every one of those points, and they move only at 100 ms and 1 s. An order that
+rests for seconds is unaffected by microseconds, and a flat line says so more
+usefully than a single number at one latency. Volume is the price of that
+flatness: it fills 4,300 shares where touch-maker fills 207,000, because it
+holds one quote a side instead of following the touch.
 
 ---
 
@@ -381,9 +384,9 @@ A backtester that cannot produce a loss is broken.
 |---:|---:|---:|---:|
 | −$714.11 | −2.1108 | −1.5407 | +0.4099 |
 
-Identical in all four models, to the cent. Crossing the spread is not a queue
-question, so a difference between lanes here would mean fill-model state was
-leaking into the taker path.
+The result is identical in all four models, to the cent. Crossing the spread is
+not a queue question, so a difference between lanes here would mean that
+fill-model state had reached the taker path.
 
 **Quoting 200 ticks from the touch** (`--strategy far-quoter`): zero fills, zero
 P&L, in every model. Any fill there would mean the simulator reached a price the
@@ -391,10 +394,10 @@ market never traded at.
 
 **Quoting nothing** (`--strategy null`): zero fills, zero P&L, zero residual.
 
-There is also a unit test for the analytic anchor: a taker lifting a two-cent
-spread must show an edge of exactly −1.0000 cents per share, and if it does not,
-the ledger's sign convention or its mid arithmetic is wrong and nothing else it
-reports can be trusted.
+A unit test covers the analytic anchor as well: a taker lifting a two-cent
+spread must show an edge of exactly −1.0000 cents per share. If it does not,
+either the ledger's sign convention or its mid arithmetic is wrong, and nothing
+else the ledger reports can be trusted.
 
 ---
 
@@ -413,18 +416,18 @@ python3 python/analysis/markout.py docs/figures/touch-maker.json \
 | pessimistic | 1.0021 | +0.0331 | +0.1087 | +0.0678 | 220 |
 
 **The drift is positive, which means this feed does not exhibit adverse
-selection at all.** That is a property of the generator, not a finding about
-market making. Its centre is a driftless random walk and its levels refill after
-a sweep, so the mid tends to come back to where it was; a maker filled during
+selection at all.** That is a property of the generator rather than a finding
+about market making. Its centre is a driftless random walk and its levels refill
+after a sweep, so the mid tends to return to where it was. A maker filled during
 the sweep is marked at the bottom of it and then sees the price recover.
 
-The right conclusion is narrow: the markout machinery is wired correctly — the
-toxic feed in section 3 returns exactly −2.0000 cents at every horizon on demand
-— and this particular synthetic price process is not toxic. What real data does
-is an open question until real data is run.
+The right conclusion is narrow. The markout machinery is wired correctly, since
+the toxic feed in section 3 returns exactly −2.0000 cents at every horizon on
+demand, and this particular synthetic price process is not toxic. What real data
+does remains an open question until real data is run.
 
-Note the `unresolved` column: fills with no ten-second future left in the data.
-They are counted rather than dropped, because silently excluding them biases the
+The `unresolved` column holds fills with no ten-second future left in the data.
+They are counted rather than dropped, because excluding them silently biases the
 long horizon toward whatever the middle of the session looked like.
 
 ---
@@ -434,10 +437,10 @@ long horizon toward whatever the middle of the session looked like.
 Established on **real data** (section 1):
 
 * The band is a bound and `mbo` is exact. 200/200 real MSFT orders fell inside
-  [pessimistic, optimistic]; `mbo` reproduced all 200 exactly; naive over-filled
-  89 times and under-filled never; pessimistic under-filled 96 and over-filled
-  never. The same held at the default 50 samples (50/50, 24 over, 21 under),
-  so it is not a fact about which orders were drawn.
+  [pessimistic, optimistic], and `mbo` reproduced all 200 exactly. Naive
+  over-filled 89 times and under-filled never; pessimistic under-filled 96 and
+  over-filled never. The same held at the default 50 samples (50/50, 24 over,
+  21 under), so it is not a fact about which orders were drawn.
 * A passive maker at the touch is adversely selected. Drift is negative at
   100 ms, 1 s and 10 s in every model and worsens with the horizon.
 * The strategy loses money, which is the phase's done-condition.
@@ -455,29 +458,29 @@ Established on synthetic data, where the answer was known in advance:
 
 Did **not** survive contact with real data:
 
-* **The 3.53x headline** (3.67x before the generator gained halts — it moved
-  because the feed did, which rather makes the point). It is a property of the
+* **The 3.53x headline** (3.67x before the generator gained halts; it moved
+  because the feed did, which is itself the point). It is a property of the
   generator. On MSFT the gap is
   $401 on a $3,000 loss, and the ratio inverts to 0.87 because both numbers are
-  negative. The direction transfers; the magnitude does not. The tooling
+  negative. The direction transfers and the magnitude does not. The tooling
   reported that ratio under a caption calling it "the cost of assuming you are
   at the front of every queue", which was flatly wrong for a losing strategy.
-  It now reports a signed difference, which means the same thing either way.
+  A signed difference is reported now, and it means the same thing either way.
 * **The markout signs.** Positive on the synthetic feed (section 7), negative
   at every horizon on MSFT. The generator mean-reverts; a market does not.
 
 Still open, and one day of one symbol does not settle it:
 
-* Whether the MSFT result generalises. This is one name on one day —
-  30 December 2019, a thin week between the holidays. A liquid mega-cap in a
+* Whether the MSFT result generalises. This is one name on one day,
+  30 December 2019, in a thin week between the holidays. A liquid mega-cap in a
   quiet session is close to the best case for a touch maker, and it still lost.
-  Suggestive, not general.
+  The result is suggestive and not general.
 * Whether more than half of pessimistic's fills arriving by price priority is
   typical, or specific to a strategy that requotes on every touch move. A
   patient maker would answer that and has not been run on real data.
 * Whether a real day's cancels sit nearer the optimistic or the pessimistic
-  bound. The leave-one-out errors — optimistic +9.0 shares, pessimistic −25.4 —
-  say optimistic, on a sample of 50. A larger sample would tighten it.
+  bound. The leave-one-out errors, optimistic +9.0 shares and pessimistic −25.4,
+  say optimistic on a sample of 50. A larger sample would tighten that.
 
 Known modelling limits, recorded here rather than in a footnote:
 
@@ -520,7 +523,7 @@ python3 python/analysis/leave_one_out.py data/raw/queue_long.gz \
 ```
 
 CI runs the closed-form check and the leave-one-out oracle on every push, so
-neither can rot silently.
+neither can decay unnoticed.
 
 ### On a real day
 
@@ -532,16 +535,16 @@ measurements against a real NASDAQ day and writes the tables and figures to
 ./scripts/real-data-run.sh 12302019.NASDAQ_ITCH50.gz MSFT 200
 ```
 
-Two things it does that are easy to forget by hand. It **slices first** —
-`queue_backtest` does not filter by symbol, so pointing it at a full day would
-interleave eight thousand symbols into one book and produce confident nonsense.
-And it builds **Release** — the default Debug build has ASan and UBSan on and
-runs about ten times slower, which on 1.2M messages is the difference between a
-coffee and an afternoon.
+The script does two things that are easy to forget by hand. It **slices
+first**: `queue_backtest` does not filter by symbol, so pointing it at a full
+day would interleave eight thousand symbols into one book and produce confident
+nonsense. It also builds **Release**, because the default Debug build has ASan
+and UBSan on and runs about ten times slower, which on 1.2M messages is a large
+difference in wall clock.
 
 The last argument is the leave-one-out sample count. Each sample replays the
-whole slice once, so 200 is worth doing and is not a thirty-second job; start
-at 50.
+whole slice once, so 200 is worth doing although it is not a thirty-second job.
+Start at 50.
 
 Nothing under `data/` or `out/` is committed. Both are gitignored, because both
 are derived from licensed data.

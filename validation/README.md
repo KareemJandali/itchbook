@@ -1,7 +1,8 @@
 # Validation records
 
-One JSON per reconstruction of a real trading day: what the book produced, kept
-so a later change can be checked against it.
+Each file here is one JSON record per reconstruction of a real trading day. The
+record holds what the book produced, and it is kept so that a later change can
+be checked against it.
 
 | Symbol | Role | Date | Messages | Volume | Open | High | Low | Close | Graded? |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
@@ -17,33 +18,36 @@ so a later change can be checked against it.
 | QQQ | ETF | 2019-12-30 | 2,373,894 | 4,243,782 | 213.8400 | 213.8500 | 211.1600 | 212.1800 | **PASS** |
 
 **Ten symbol-days, two trading days, all five fields exact on every one.**
-The basket is the liquidity spectrum 9.12 asks for — a mega-cap, an ETF, a
-mid-cap, something barely traded, and something that actually halted — repeated
-on a second day. MKD had not listed in August, so August's halted name is ELTK.
+The basket is the liquidity spectrum that 9.12 asks for: a mega-cap, an ETF, a
+mid-cap, something barely traded, and something that actually halted. The same
+set was then repeated on a second day. MKD had not listed in August, so
+August's halted name is ELTK.
 
-Each row's oracle response is committed beside it as
-`databento-<SYM>-<DATE>.json`, so the verdict can be re-checked offline and the
-fetch is paid for once. `scripts/databento-grade.sh` prices the whole basket
-without spending (it calls `metadata.get_cost`), and replays any response
-already committed rather than buying it again. The ten queries cost
-**$0.0000156 in total** — this item was carried for the life of the project as
-"the one with a cash cost", and the cash was a rounding error; what actually
-blocked it was the reconstructions not existing yet.
+The oracle response for each row is committed beside it as
+`databento-<SYM>-<DATE>.json`. A verdict can therefore be re-checked offline,
+and the fetch is paid for once. `scripts/databento-grade.sh` prices the whole
+basket without spending anything, because it calls `metadata.get_cost`, and it
+replays a response that is already committed instead of buying it a second
+time. The ten queries cost **$0.0000156 in total**. For the life of the project
+this item was carried as "the one with a cash cost"; the cash was a rounding
+error, and what actually blocked the work was that the reconstructions did not
+yet exist.
 
 **Preparing this basket is what found the empty-cross bug.** An auction that did
 not happen still arrives as a Cross Trade with `shares == 0` and `price == 0`,
-and folding it into the daily statistics dragged `low` to zero on 6,468 of 8,906
-symbols. ALLE's low above — 95.6800, matching Databento exactly — read `0.0000`
-before the fix. MSFT's row did not move, which is why one graded symbol could
-never have caught it: MSFT has real auctions at both ends.
+and when that message was folded into the daily statistics it dragged `low` to
+zero on 6,468 of 8,906 symbols. ALLE's low above, 95.6800, matches Databento
+exactly; before the fix it read `0.0000`. MSFT's row did not move, which is why
+one graded symbol could never have caught the bug: MSFT has real auctions at
+both ends.
 
 ## The feed the exchange publishes (phase 12.2, P1)
 
-`p1-emitted-2019-12-30.json` and `emitted-itch-sha256.txt`. The matching engine
-now emits ITCH describing its own book mutations, so the project produces the
-wire format it consumes. P1 is the check that the emission is faithful: with no
-strategy orders, a consumer rebuilding from the published feed must land on the
-same book the phase-9 path builds from the original.
+The records are `p1-emitted-2019-12-30.json` and `emitted-itch-sha256.txt`. The
+matching engine now emits ITCH describing its own book mutations, so the project
+produces the wire format it consumes. P1 is the check that the emission is
+faithful: with no strategy orders, a consumer rebuilding from the published feed
+must land on the same book the phase-9 path builds from the original.
 
 **268,744,780 messages in, 264,496,253 published,
 0 book divergences after every message** and
@@ -52,32 +56,33 @@ byte-identical.
 
 **264,496,253 of those published messages are byte-identical
 to the input they were derived from; 0 are not.**
-That is the stronger form of P1 and it is what makes the check worth running.
-Book-to-book equality scores only the dozen or so fields a book actually reads,
-so an emitter could get the timestamp, the tracking number, every match number,
-the stock symbol, the MPID and the halt reason wrong and still pass. Carrying
-the header across and re-encoding every body field turns the whole message into
-the assertion.
+That is the stronger form of P1, and it is what makes the check worth running.
+Book-to-book equality scores only the dozen or so fields a book actually reads.
+An emitter could therefore get the timestamp, the tracking number, every match
+number, the stock symbol, the MPID and the halt reason wrong and still pass.
+Carrying the header across and re-encoding every body field turns the whole
+message into the assertion.
 
-The first run reported 8,906 differences, one per symbol, every one a Stock
-Directory message differing from offset 25 — the fourteen bytes carrying issue
-classification, authenticity, the LULD tier and the ETP flags, which this
-project has never decoded and the encoder was zeroing. They are now relayed
-verbatim, which is the only honest thing to do with content you are
-republishing and cannot parse, and it means P1 says nothing about those
+The first run reported 8,906 differences, one per symbol. Every one was a Stock
+Directory message that differed from offset 25. Those fourteen bytes carry issue
+classification, authenticity, the LULD tier and the ETP flags, none of which
+this project has ever decoded, and the encoder was zeroing them. They are now
+relayed verbatim, which is the only honest treatment of content that is being
+republished and cannot be parsed, and it means P1 says nothing about those
 fourteen bytes. Everything else is re-encoded from a decoded field.
 
-`4,248,527` input messages were not republished at all:
-they are types this project does not parse, they have no book effect, and
+`4,248,527` input messages were not republished at all.
+They are types this project does not parse, they have no book effect, and
 inventing bytes for them would be worse than the gap. They are counted so the
 gap is visible.
 
 **Determinism.** `emitted-itch-sha256.txt` pins the stream published from
-`python/make_sample.py` — regenerable from a committed script, and carrying
-every message type the reference book models. The gate runs the input twice and
-requires byte-identical output, then checks the hash: two runs alone cannot tell
-correct from drifted-together, and a stored hash alone cannot tell deterministic
-from broken-the-same-way-every-time.
+`python/make_sample.py`, which is regenerable from a committed script and
+carries every message type the reference book models. The gate runs the input
+twice and requires byte-identical output, and only then does it check the hash.
+Two runs on their own cannot separate correct from drifted-together, and a
+stored hash on its own cannot separate deterministic from
+broken-the-same-way-every-time.
 
 **Read by a decoder that did not write it.** The emitter writes at offsets from
 `messages.hpp` and the consumer reads at the same offsets, so an error in this
@@ -87,28 +92,29 @@ the one it produces from the original feed.
 
 ## The split replayer against the phase-9 path (phase 12.1)
 
-`split-replay-2019-12-30.json`. Phase 12 drives the book two ways at once:
-historical adds, cancels, replaces and deletes are APPLIED, while historical
-executions are replayed as synthesised aggressors that walk the queue, so that a
-strategy order resting ahead of the named order can take those shares first.
-With no strategy orders present the two must be the same book.
+The record is `split-replay-2019-12-30.json`. Phase 12 drives the book two ways
+at once. Historical adds, cancels, replaces and deletes are APPLIED. Historical
+executions are instead replayed as synthesised aggressors that walk the queue,
+so that a strategy order resting ahead of the named order can take those shares
+first. With no strategy orders present the two must be the same book.
 
 **268,744,780 messages; 5,722,824 executions replayed as crossing events; 0
-divergences.** The books are compared after EVERY message, not at the close:
-both paths run over one feed in one process, and the book the current message
+divergences.** The books are compared after EVERY message, not at the close.
+Both paths run over one feed in one process, and the book the current message
 touched is compared each time. A divergence that opens mid-morning and closes by
 16:00 is invisible to a comparison of final states, and it is exactly the kind a
 strategy would have traded through. The end-of-day per-symbol CSVs are also
-byte-identical, written by the single writer in `report.hpp` so the check
-compares books rather than two transcriptions of books.
+byte-identical, written by the single writer in `report.hpp`, so the check
+compares books and not two transcriptions of books.
 
 **0 partition violations.** Strategy order references take the high half of the
-64-bit space, and no historical NASDAQ reference on this day had bit 63 set —
-across every message that names an order, including the *new* reference of a
-replace, which is the one an original-reference-only check would miss.
+64-bit space, and no historical NASDAQ reference on this day had bit 63 set.
+That holds across every message that names an order, including the *new*
+reference of a replace, which is the one an original-reference-only check would
+miss.
 
 Two classifications in `docs/phase12-design.md` §3 were corrected by measuring
-where each executed order sat in its own queue: `C` (execute-with-price) names an
+where each executed order sat in its own queue. `C` (execute-with-price) names an
 order behind the front of its level 82.4% of the time against `E`'s 0.185%, and
 all 273 away-from-best cases happened while the book was crossed. Those trades
 bypassed displayed priority, so replaying them as queue-walking aggressors would
@@ -117,49 +123,50 @@ manufacture strategy fills. `C` and `P` are applied as state.
 ## The auction prints, graded against the venue itself
 
 The daily bars above say the day reconstructs. They say nothing about the
-auctions, which are a different message type, rare, and the part of an ITCH book
-most likely to be quietly wrong. `scripts/check-crosses.sh` grades those
-separately, and it now does it against **Databento's `statistics` schema on
-`XNAS.ITCH`** — the venue's own published `OPENING_PRICE` and `CLOSE_PRICE`,
-committed per symbol-day as `databento-stats-<SYM>-<DATE>.json`:
+auctions, which are a different message type, are rare, and are the part of an
+ITCH book most likely to be quietly wrong. `scripts/check-crosses.sh` grades
+those separately, and it now does so against **Databento's `statistics` schema
+on `XNAS.ITCH`**, which is the venue's own published `OPENING_PRICE` and
+`CLOSE_PRICE`, committed per symbol-day as
+`databento-stats-<SYM>-<DATE>.json`:
 
 **10 symbol-days graded, 0 failed. 13 auction prices exact; 7 absences agreed.**
 
 The absences are the half a consolidated source cannot check at all. ALLE is
 NYSE-listed and holds no NASDAQ auction on either day: we reconstruct no cross
-print and the venue publishes `UNDEF_PRICE`, and those agreeing is a result
-rather than a gap. AQB has an opening cross and no closing one on both days;
-MKD, which halted 16 times, has a closing cross and no opening one. Every one of
-those matches what the feed said.
+print and the venue publishes `UNDEF_PRICE`, and their agreeing is a result and
+not a gap. AQB has an opening cross and no closing one on both days. MKD, which
+halted 16 times, has a closing cross and no opening one. Every one of those
+matches what the feed said.
 
 **This replaced an oracle that was the wrong universe.** The prices were
-previously read by hand off a consolidated quote history, which is correct for
-the close — for a NASDAQ-listed stock the official closing price *is* the
-closing cross — and wrong for the open, where a consolidated bar reports the
-first print across every US venue. That coincided with the opening cross four
-times out of five and failed on MSFT 2019-08-30: ours 139.1000 against a
-published 139.15. The volumes gave it away — Yahoo reports 23,940,100 shares for
-that day where `XNAS.ITCH` carries 9,674,474, and Yahoo's high is *lower* than
-ours. Two views of one tape cannot do that. **The venue's own figure is
-139.1000**, so the reconstruction was right and the oracle was not; the four
-that passed had been passing by luck. The whole `statistics` basket cost
-**$0.0000143**.
+previously read by hand off a consolidated quote history. That is correct for
+the close, because for a NASDAQ-listed stock the official closing price *is* the
+closing cross, and it is wrong for the open, where a consolidated bar reports
+the first print across every US venue. The two coincided four times out of five
+and failed on MSFT 2019-08-30: ours 139.1000 against a published 139.15. The
+volumes settled it. Yahoo reports 23,940,100 shares for that day where
+`XNAS.ITCH` carries 9,674,474, and Yahoo's high is *lower* than ours. Two views
+of one tape cannot do that. **The venue's own figure is 139.1000**, so the
+reconstruction was right and the oracle was not; the four that passed had been
+passing by luck. The whole `statistics` basket cost **$0.0000143**.
 
 Graded against Databento `XNAS.ITCH` `ohlcv-1d`. All five fields match exactly.
-The message count is the record's own `messages_read` — the `--utc-day` window,
-not the whole file. The JSON's `symbol` is `null` because the reconstruction
-that produced it was run on a pre-sliced file without `--symbol`; the filename
-carries it, and the command below now passes the flag so a re-run records it.
+The message count is the record's own `messages_read`, which is the `--utc-day`
+window and not the whole file. The JSON's `symbol` is `null` because the
+reconstruction that produced it was run on a pre-sliced file without `--symbol`;
+the filename carries it, and the command below now passes the flag so that a
+re-run records it.
 
 Source: `12302019.NASDAQ_ITCH50.gz` from `emi.nasdaq.com/ITCH/Nasdaq ITCH/`,
 sliced with `python/slice_symbol.py`.
 
-The C++ book and the Python oracle agree on all of it — 61,228 identical
-snapshot rows at a one-second interval, identical summaries, zero unknown order
-references. That is phase 3's done-condition.
+The C++ book and the Python oracle agree on all of it. There are 61,228
+identical snapshot rows at a one-second interval, the summaries are identical,
+and no order reference is unknown. That is phase 3's done-condition.
 
-Two windows are in play and their figures differ, which is expected rather than
-a discrepancy:
+Two windows are in play and their figures differ. This is expected and is not a
+discrepancy:
 
 | | messages | snapshot rows at 1 s |
 |---|---:|---:|
@@ -168,7 +175,7 @@ a discrepancy:
 
 The 688-message difference is the after-hours tail described below. The
 differential runs unbounded on both sides because it asks whether two
-implementations agree, not whether either matches a vendor's bucket.
+implementations agree, and not whether either matches a vendor's bucket.
 
 ## The session window
 
@@ -186,21 +193,21 @@ python3 python/analysis/validate.py validation/MSFT_2019-12-30.json \
 
 ITCH timestamps are nanoseconds since midnight **Eastern**. Databento buckets
 `ohlcv-1d` by **UTC** day, which rolls over at 19:00 ET in winter and 20:00 ET
-in summer. Replaying the whole ITCH file therefore includes after-hours trades
-that belong to the *next* UTC bar: 519 shares in this case, which showed up as a
+in summer. A replay of the whole ITCH file therefore includes after-hours trades
+that belong to the *next* UTC bar: 519 shares in this case, which appeared as a
 volume excess of 519 and a close of 157.63 against their 157.57.
 
-That is two different questions being asked, not a parser bug. Bounding the
-replay to the same window makes all five fields match exactly. `validate.py`
-now refuses to grade a reconstruction whose window does not match the oracle's,
-rather than reporting a confusing FAIL.
+Two different questions are being asked, and this is not a parser bug. When the
+replay is bounded to the same window, all five fields match exactly.
+`validate.py` now refuses to grade a reconstruction whose window does not match
+the oracle's, instead of reporting a confusing FAIL.
 
 
 ## The framing, checked against a whole day of every symbol
 
-Everything else on this page is about one symbol. This is about the wire format
-itself, and it is the only check here that needs the *full* file rather than a
-slice — a single-symbol slice contains that symbol's messages and the system
+Everything else on this page is about one symbol. This section is about the wire
+format itself, and it is the only check here that needs the *full* file and not
+a slice: a single-symbol slice contains that symbol's messages and the system
 events, so it can never exercise a type the symbol did not produce.
 
 ```
@@ -223,24 +230,24 @@ framing is right, and it is cheap: one pass, no oracle, no subscription.
 
 It also settles a question the synthetic feeds could not. Ten spec lengths were
 added for types the book does not model, so that a desync landing inside one is
-caught at that message rather than at the next one the book cares about. No
+caught at that message and not at the next one the book cares about. No
 generator in this repository emits them, so CI cannot reach them, and a wrong
 constant would have sat there until someone ran a real file. This day exercised
-six of the ten — `I` (4,024,315 of them), `L`, `Y`, `J`, `K` and `V` — and all
-six framed correctly.
+six of the ten, namely `I` (4,024,315 of them), `L`, `Y`, `J`, `K` and `V`, and
+all six framed correctly.
 
 `V` is the interesting one. It appears **exactly once**, at 35 bytes, which is
 the MWCB Decline Level published at the start of the session. Had `V` and `W`
-been transposed — the obvious mistake, since both are circuit-breaker messages
-— that single message would have been checked against 12 bytes and thrown
+been transposed, the obvious mistake because both are circuit-breaker messages,
+that single message would have been checked against 12 bytes and thrown
 immediately. One occurrence in 268 million was enough.
 
 **Still unexercised: `W`, `h`, `B`, `N`, `O`.** Nothing on this day breached a
 circuit-breaker level, operationally halted a symbol, busted a trade, or
 published retail price improvement, and `O` postdates the file. Those five
 constants remain read from the spec and unconfirmed against real bytes. A day
-containing a halt would settle `h` and `W`; that is the argument for running
-this against a second, more eventful day.
+containing a halt would settle `h` and `W`, which is the argument for running
+this against a second and more eventful day.
 
 ## Sizing phase 9, out of the same pass
 
@@ -256,24 +263,24 @@ ls -l 12302019.NASDAQ_ITCH50.gz            # the compressed size, next to the 8.
 ```
 
 `--peak-orders` reports the high-water mark of orders resting simultaneously
-across every symbol. It keeps twelve bytes per live order rather than the book's
-forty — no levels, no pool — because the question is how many, not where. The
-structure also reports whether `inserted == live + removed + emptied`, which is
-an identity rather than an estimate: if it does not hold, the count is worthless
-and says so.
+across every symbol. It keeps twelve bytes per live order where the book keeps
+forty, with no levels and no pool, because the question is how many and not
+where. The structure also reports whether `inserted == live + removed + emptied`.
+That is an identity and not an estimate: if it does not hold, the count is
+worthless and says so.
 
 `--per-symbol` writes one record per locate: message counts by kind, the range
 of prices that symbol actually **quoted** (trade prints excluded, because the
 dense band has to cover where orders rest and a cross prints outside it),
 opening and closing cross counts, and the two message types that can make a
-vendor's daily bar legitimately disagree with ours — `B` broken trades and `h`
-operational halts.
+vendor's daily bar legitimately disagree with ours, which are `B` broken trades
+and `h` operational halts.
 
 `time` is not decoration. This pass decompresses, frames and length-checks the
 whole file while building nothing, so its wall clock is the **floor** for any
 all-symbols replay: no end-to-end number phase 9 reports can be below it, and
 the gap between the two is the book's own cost. It is the cheapest measurement
-in the project and it was skipped the first time this ran.
+in the project, and it was skipped the first time this ran.
 
 The table below is **generated** from `validation/census-2019-12-30.json` by
 `scripts/census-report.py`, and CI runs that script with `--check` on every push.
@@ -329,9 +336,9 @@ No replay of this file can beat 16.51 s, and the difference between that and any
 <!-- census:end -->
 
 
-Also checked on every push, on generated data: the census and the book agree.
-Two implementations that share no code count the live orders in the same feed
-and must return the same number.
+The census and the book also agree, and that is checked on every push against
+generated data. Two implementations that share no code count the live orders in
+the same feed, and they must return the same number.
 
 ## The regression baseline, and why it is generated
 
@@ -344,26 +351,26 @@ and diffs them on every push.
 ./scripts/regression-gate.sh --update   # re-record, deliberately
 ```
 
-It exists because phase 9 rewrote the inside of the book — storage moved out
-from under it, every order gained a field, messages now arrive through a router
-— and none of that is supposed to change what a reconstruction produces.
-"Supposed to" is not a standard this project accepts, so the claim is checked
-rather than asserted.
+It exists because phase 9 rewrote the inside of the book. Storage moved out from
+under it, every order gained a field, and messages now arrive through a router.
+None of that is supposed to change what a reconstruction produces, and "supposed
+to" is not a standard this project accepts, so the claim is checked and not
+merely asserted.
 
-The baseline is a **generated** feed with a fixed seed, not MSFT, for the
+The baseline is a **generated** feed with a fixed seed rather than MSFT, for the
 obvious reason: licensed market data cannot live in a repository. That is a real
-weakness and worth naming — a generated feed does not contain the paths a real
-day contains, which is the entire argument of
+weakness and worth naming, because a generated feed does not contain the paths a
+real day contains, which is the entire argument of
 [`what-synthetic-data-hides.md`](../docs/writing/what-synthetic-data-hides.md).
-What this gate catches is *drift*: a change that alters output the author did
-not intend to alter. What it cannot catch is a reconstruction that was already
-wrong, which is what the oracle differential and the Databento comparison above
-are for. Three checks, three different questions.
+What this gate catches is *drift*, meaning a change that alters output the
+author did not intend to alter. What it cannot catch is a reconstruction that
+was already wrong, and that is the work of the oracle differential and the
+Databento comparison above. Three checks, three different questions.
 
 The gate hashes the feed before it compares anything else. A generator whose
-output moved and a book whose output moved fail in the same place and mean
-opposite things, so it says which — the difference between a five-minute fix and
-an afternoon.
+output moved and a book whose output moved fail in the same place while meaning
+opposite things, so the gate says which of the two it is. That is the difference
+between a five-minute fix and an afternoon.
 
 **The real-day equivalent belongs here too, and cannot be committed.** With
 `12302019.NASDAQ_ITCH50.gz` on the machine:
@@ -376,32 +383,32 @@ an afternoon.
 Keep those two files somewhere outside the repository and diff them after any
 change to the book. The committed `MSFT_2019-12-30.json` above already serves
 part of this purpose: it is a recorded reconstruction, and a later change that
-alters it will show up when it is re-graded.
+alters it will be visible when it is re-graded.
 
 ## Which oracle, and why not the one the plan named
 
 The build plan's done-condition says match "NASDAQ's published daily summary
 for that date — or match LOBSTER's published orderbook file". This project
 matched **Databento's XNAS.ITCH daily bar** instead. That was a substitution,
-and it is worth stating plainly rather than being caught on.
+and it is worth stating plainly.
 
 The reason is that the obvious NASDAQ sources do not answer the question:
 
-* A **consolidated** daily bar — what almost every public source publishes — is
-  every venue at once. ITCH is one venue. MSFT traded roughly 20M shares that
-  day across the market and **6.15M of them on NASDAQ**. Comparing the two
-  fails for an entirely correct reason, and passing would mean something was
-  wrong.
+* A **consolidated** daily bar, which is what almost every public source
+  publishes, is every venue at once. ITCH is one venue. MSFT traded roughly 20M
+  shares that day across the market and **6.15M of them on NASDAQ**. A
+  comparison of the two fails for an entirely correct reason, and passing would
+  mean something was wrong.
 * **NasdaqTrader's per-symbol matched volume** is venue-specific and would be
   exactly right. The site keeps a rolling window and will not go back to 2019.
 * **LOBSTER's** free samples are 2012-06-21 for five tickers, and NASDAQ's free
-  ITCH sample days do not include that date. Checking against it means buying
+  ITCH sample days do not include that date. A check against it means buying
   data to confirm something already confirmed.
 
 Databento is venue-specific (`XNAS.ITCH`), which is the property that matters,
-and is arguably a stronger oracle than a summary line because it is a full
-independent reconstruction rather than an aggregate. But it is not a source the
-plan named, and the plan named those sources for a reason: they are free and
+and it is arguably a stronger oracle than a summary line, because it is a full
+independent reconstruction and not an aggregate. It is nonetheless not a source
+the plan named, and the plan named those sources for a reason: they are free and
 anyone can check them.
 
 ## The check anyone can run
@@ -414,9 +421,9 @@ NASDAQ-listed stock the official closing price *is* the closing cross.
 Two minutes, start to finish:
 
 1. Open `www.nasdaq.com/market-activity/stocks/msft/historical`. Set a custom
-   date range covering **30 December 2019** — the picker goes back ten years,
-   unlike NasdaqTrader's, which is why this route works where the volume one
-   does not. Or hit *Download historical data* for the CSV.
+   date range covering **30 December 2019**. That picker goes back ten years
+   where NasdaqTrader's does not, which is why this route works and the volume
+   one does not. The CSV is also available under *Download historical data*.
 2. Read `Open` and `Close/Last` off that row.
 3. Run:
 
@@ -427,9 +434,9 @@ python3 python/analysis/check_cross.py validation/MSFT_2019-12-30.json \
 ```
 
 Read those two numbers off the page yourself. Do not take them from a chat
-transcript, a model, or this file — the whole value of the check is that the
-figure came from somewhere that is not this project, and supplying it from
-memory and then agreeing with it is not validation, it is a tautology with
+transcript, from a model, or from this file. The whole value of the check is
+that the figure came from somewhere that is not this project, and supplying it
+from memory and then agreeing with it is not validation; it is a tautology with
 extra steps.
 
 Expect the **close** to be the strong signal. For a NASDAQ-listed security the
@@ -439,11 +446,11 @@ opening cross and others the first consolidated print of the day, which are
 different numbers. If the close matches and the open does not, find out which
 definition that page uses before concluding the reconstruction is wrong.
 
-This is a real test rather than a formality. Cross handling is the part of an
-ITCH book most likely to be quietly wrong — it is rare, it is a separate
+This is a real test and not a formality. Cross handling is the part of an ITCH
+book most likely to be quietly wrong, because it is rare, it is a separate
 message type, and it never appears in a day's ordinary flow, so nothing else
-exercises it. Note it is a different number from the summary's `close`, which
-is the last trade of the session including late prints.
+exercises it. Note that it is a different number from the summary's `close`,
+which is the last trade of the session including late prints.
 
 **Status: the closing cross is verified. The opening cross is not, and cannot
 be from this source.**
@@ -462,28 +469,28 @@ Source: nasdaq.com's own historical-quotes CSV (MAX range, downloaded), row
 
 **The close matches to the cent, from NASDAQ's own website.** For a
 NASDAQ-listed security the official closing price *is* the closing cross, so
-this is the auction print itself and not a proxy for it — and cross handling is
-the part of an ITCH book most likely to be quietly wrong, because it is rare, it
-is a separate message type, and nothing in a day's ordinary flow exercises it.
-That is now checked against a figure anyone can download for free, which is
-what the Databento comparison above is not.
+this is the auction print itself and not a proxy for it. Cross handling is the
+part of an ITCH book most likely to be quietly wrong, because it is rare, it is
+a separate message type, and nothing in a day's ordinary flow exercises it. That
+is now checked against a figure anyone can download for free, which is what the
+Databento comparison above is not.
 
 **The open is a different quantity, and finding that out was the point.** That
-CSV gives $158.987 — a sub-penny price. NASDAQ's crosses clear at a single
-price built from orders that are themselves priced in pennies, since Reg NMS
-Rule 612 forbids sub-penny quoting at or above $1.00, so an auction cannot
-print at $158.987. Whatever that column is — most likely the first consolidated
-print of the session, which *can* be sub-penny — it is not the opening cross,
-and it cannot check ours.
+CSV gives $158.987, a sub-penny price. NASDAQ's crosses clear at a single price
+built from orders that are themselves priced in pennies, since Reg NMS Rule 612
+forbids sub-penny quoting at or above $1.00, so an auction cannot print at
+$158.987. Whatever that column is, and most likely it is the first consolidated
+print of the session, which *can* be sub-penny, it is not the opening cross and
+it cannot check ours.
 
 The first version of this check reported it as a MATCH. It compared at two
 decimals, rounded $158.987 to $158.99, and agreed with our $158.9900. That is a
 check passing by discarding the precision that would have shown its two inputs
 were not the same kind of number. `check_cross.py` now refuses a figure that is
-not on a penny increment and says why, rather than rounding it into agreement.
+not on a penny increment and says why, instead of rounding it into agreement.
 
 The rest of the day's OHLC corroborates the reading. That CSV's low, $156.73,
 equals ours exactly; its high, $159.02, is below our $159.30, and its volume,
-16,356,720, is 2.7x our 6,154,278 — which is what a regular-session
-consolidated figure should look like against a full-session NASDAQ-only one.
-Same day, different windows and different venues, agreeing where they overlap.
+16,356,720, is 2.7x our 6,154,278, which is what a regular-session consolidated
+figure should look like against a full-session NASDAQ-only one. Same day,
+different windows and different venues, agreeing where they overlap.

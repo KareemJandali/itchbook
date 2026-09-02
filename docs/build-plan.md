@@ -2,7 +2,7 @@
 
 **Started:** August 2026
 **Hard deadline:** September 2027 (full-time new grad applications open)
-**Soft deadline:** March 2027 (fall-2027 stage applications — phases 1–4 must be public by then)
+**Soft deadline:** March 2027 (fall-2027 stage applications: phases 1–4 must be public by then)
 
 ---
 
@@ -13,16 +13,18 @@ backtester, built from raw NASDAQ TotalView-ITCH 5.0 binary data.
 
 Four things it must prove, in priority order:
 
-1. **You can handle binary protocols correctly** — parse a real exchange feed and
+1. **You can handle binary protocols correctly**: parse a real exchange feed and
    reconstruct state that matches ground truth exactly.
-2. **You can make code fast, empirically** — measure, find the bottleneck, fix it,
+2. **You can make code fast, empirically**: measure, find the bottleneck, fix it,
    measure again, and explain each speedup with a hardware counter.
-3. **You understand market microstructure** — queue position, adverse selection,
-   the difference between a fill you'd actually get and a fill you'd like to have.
-4. **You can build systems that fail safely** — gap detection, resync, kill switches.
+3. **You understand market microstructure**: queue position, adverse selection,
+   and the difference between a fill you would actually get and a fill you would
+   like to have.
+4. **You can build systems that fail safely**: gap detection, resync, kill
+   switches.
 
-Each phase has a **done-condition you can fail**. If a phase has no external
-oracle, you are grading your own homework and the phase is worthless.
+Each phase has a **done-condition you can fail**. A phase with no external oracle
+leaves you checking your own work against itself, and such a phase is worthless.
 
 ---
 
@@ -120,7 +122,7 @@ something people can depend on.
 ```
 
 Parser knows nothing about books. Book knows nothing about strategies. The parser
-should be usable standalone — that is what makes it a library other people want.
+should be usable standalone, which is what makes it a library other people want.
 
 ### 2.2 The order book — the core design decision
 
@@ -129,11 +131,11 @@ Three structures, and the choice for each matters:
 **A. Order lookup: `order_ref → Order*`**
 
 Every Execute / Cancel / Delete / Replace message carries only an order reference
-number. You must find that order in O(1) or the whole thing is dead.
+number. You must find that order in O(1), or the whole thing is dead.
 
 Do *not* use `std::unordered_map`. It stores nodes in separately-allocated buckets,
-so every lookup is a pointer chase into cold memory — one cache miss per message,
-on the hottest path in the program.
+so every lookup is a pointer chase into cold memory, which is one cache miss per
+message on the hottest path in the program.
 
 Use an **open-addressing hash table with linear probing** over a flat array. ITCH
 order references within a day are roughly monotonic, so the low bits distribute
@@ -141,19 +143,19 @@ well. Start with `capacity = 2^22` slots and grow.
 
 **B. Price level: FIFO queue of orders**
 
-An **intrusive doubly-linked list** — the `next`/`prev` pointers live inside the
-`Order` struct itself, not in a wrapper node. This is why C++ over Rust: cancel
-by order reference becomes `unlink(order)` — two pointer writes, no search, no
-allocation. With `std::list<Order>` you get a separate node allocation per order
-and a pointer chase to reach the payload.
+Use an **intrusive doubly-linked list**: the `next`/`prev` pointers live inside
+the `Order` struct itself, not in a wrapper node. This is the reason for C++ over
+Rust. Cancel by order reference becomes `unlink(order)`, which is two pointer
+writes with no search and no allocation. With `std::list<Order>` you get a
+separate node allocation per order, and a pointer chase to reach the payload.
 
 **C. Side: `price → PriceLevel`**
 
 Options, worst to best:
 
-- `std::map<price, Level>` — O(log n) plus red-black tree pointer chasing. No.
-- Sorted `std::vector` — decent cache behavior, O(n) insert. Acceptable.
-- **Dense array indexed by tick offset** — this is the answer.
+- `std::map<price, Level>`: O(log n) plus red-black tree pointer chasing. No.
+- Sorted `std::vector`: decent cache behavior, O(n) insert. Acceptable.
+- **Dense array indexed by tick offset**: this is the answer.
 
 Prices in ITCH are `Price(4)`: integers with 4 implied decimals. For a single
 symbol on a single day, prices live in a narrow band. Allocate an array covering
@@ -165,9 +167,10 @@ size_t index(int32_t price) const {
 }
 ```
 
-O(1) insert, O(1) lookup, and — the actual point — the few levels near the touch
-get hammered millions of times a day and stay resident in L1. Keep a small
-overflow `std::map` for prices outside the band (they're rare and cold).
+Insert is O(1) and lookup is O(1). The actual point is that the few levels near
+the touch are read and written millions of times a day and stay resident in L1.
+Keep a small overflow `std::map` for prices outside the band, which are rare and
+cold.
 
 **D. Best bid / ask**
 
@@ -215,8 +218,8 @@ sudo apt install build-essential cmake ninja-build clang clang-format \
 perf stat ls
 ```
 
-If you're on the MacBook, set up a Linux VM or a cheap cloud box now rather than
-in month five. Do the phase 1–3 work anywhere; phase 4 needs Linux.
+If you are on the MacBook, set up a Linux VM or a cheap cloud box now, not in
+month five. The phase 1–3 work can be done anywhere; phase 4 needs Linux.
 
 ### 3.2 CMake skeleton
 
@@ -252,9 +255,9 @@ wget ftp://anonymous:@emi.nasdaq.com/ITCH/01302019.NASDAQ_ITCH50.gz -P data/raw/
 # NQTVITCHspecification.pdf from nasdaqtrader.com
 ```
 
-If the FTP is down, alternatives: LOBSTER publishes sample message + orderbook
-files built from the same NASDAQ source (useful as an oracle regardless), and
-Databento gives free credits for `XNAS.ITCH`.
+If the FTP is down there are alternatives. LOBSTER publishes sample message and
+orderbook files built from the same NASDAQ source, which are useful as an oracle
+regardless, and Databento gives free credits for `XNAS.ITCH`.
 
 ---
 
@@ -286,10 +289,10 @@ volume check.
    type; if it ever disagrees you have desynced, and you want to know immediately
    rather than 200MB later.
 
-2. **Everything is big-endian.** You're on x86. Byteswap every integer field.
+2. **Everything is big-endian.** You are on x86. Byteswap every integer field.
 
 3. **Timestamps are 6 bytes.** Nanoseconds since midnight. There is no 6-byte
-   integer type — assemble by hand:
+   integer type, so assemble it by hand:
    ```cpp
    uint64_t ts = 0;
    for (int i = 0; i < 6; ++i) ts = (ts << 8) | buf[off + i];
@@ -301,7 +304,7 @@ volume check.
    appeared as displayed orders.
 
 **Read fields at explicit byte offsets. Do not `reinterpret_cast` to a packed
-struct** — it's alignment and strict-aliasing UB, and after inlining it isn't
+struct**: that is alignment and strict-aliasing UB, and after inlining it is not
 faster anyway.
 
 ---
@@ -317,7 +320,7 @@ faster anyway.
 5. Write `itch_dump`: print type, timestamp, hex payload for the first N messages.
 6. Write `itch_census`: count messages by type across the whole day. You should
    see mostly `A`/`D`/`X`/`E`, a few thousand `R` at the top, and a small fixed
-   number of `S`. Anything wildly off means framing is broken.
+   number of `S`. Anything clearly off means framing is broken.
 7. Write `itch_slice`: read the `R` block, find your symbol's stock locate code,
    filter the whole file on a 2-byte header compare, write a small per-symbol file.
 
@@ -336,7 +339,7 @@ structurally sane.
 ### Phase 2 — Python reference book (3 weeks, by ~Sept 26)
 
 Write the whole thing again in Python, slowly and obviously. Dicts everywhere.
-No cleverness. This is not wasted work — it is your oracle for the next six months.
+No cleverness. This is not wasted work; it is your oracle for the next six months.
 
 1. Parser in Python (`struct.unpack`, big-endian format strings).
 2. Book as `{price: [list of orders]}` and `{ref: order}`.
@@ -345,11 +348,11 @@ No cleverness. This is not wasted work — it is your oracle for the next six mo
 5. Emit total daily volume, OHLC, VWAP.
 
 **Done:** your reconstructed daily volume and OHLC for the symbol match NASDAQ's
-published daily summary for that date — or match LOBSTER's published orderbook
+published daily summary for that date, or match LOBSTER's published orderbook
 file for the same symbol/day, level for level.
 
-This is the moment the project becomes real. Until you've matched an external
-number, you don't know anything.
+This is the moment the project becomes real. Until you have matched an external
+number, you know nothing.
 
 ---
 
@@ -357,7 +360,7 @@ number, you don't know anything.
 
 1. `messages.hpp`: field offsets as `constexpr`, one accessor per field.
 2. `parser.hpp`: framing, dispatch to handler callbacks (templated on handler type
-   so it inlines — no virtual dispatch on the hot path).
+   so it inlines, with no virtual dispatch on the hot path).
 3. `pool.hpp`: slab allocator + free list.
 4. `order.hpp` / `level.hpp`: intrusive list, `static_assert` on `sizeof`.
 5. `book.hpp`: dense tick array + open-addressing ref map + best bid/ask cursors.
@@ -368,9 +371,9 @@ number, you don't know anything.
 Not "close." Identical.
 
 **Ship it here.** Tag v0.1, write the README, post it. A working ITCH parser and
-book reconstructor is genuinely useful to other people on its own — this is the
-part that gets stars and issues. Phases 5–6 are more interesting engineering but
-far less reusable.
+book reconstructor is genuinely useful to other people on its own, and this is
+the part that gets stars and issues. Phases 5–6 are more interesting engineering
+but far less reusable.
 
 ---
 
@@ -381,8 +384,8 @@ far less reusable.
 1. `rdtsc`-based timing around each message handler. Store into a preallocated
    array; never allocate or print inside the measured region.
 2. Compute p50 / p99 / p99.9 per-message latency. Save the baseline.
-3. `perf stat ./book_replay` — record cache misses, branch mispredicts, IPC.
-4. `perf record` / `perf report` — find the top three hotspots.
+3. `perf stat ./book_replay`: record cache misses, branch mispredicts, IPC.
+4. `perf record` / `perf report`: find the top three hotspots.
 5. Optimize one thing. Re-measure both latency and the counter you were targeting.
 6. Repeat.
 
@@ -419,24 +422,24 @@ invariants never violated:
 - FIFO priority is preserved within a price level
 
 Use libFuzzer with a structured input decoder. This is the phase where fuzzing
-earns its keep — hand-written tests will not find the ordering bugs.
+matters most, since hand-written tests will not find the ordering bugs.
 
 ---
 
 ### Phase 6 — Queue-position backtester (8 weeks, by ~Mar 27)
 
-**This is the differentiator.** Everything before it is competent; this is what
-makes an interviewer lean in.
+**This is the differentiator.** Everything before it is competent work; this is
+the part an interviewer will ask about.
 
 The mechanic: when you place a passive order at price P, record the number of
 shares already resting at that level. You are behind all of them. You only fill
 after that many shares have executed *or cancelled* ahead of you.
 
-The hard part — and the part worth writing about publicly:
+The hard part, and the part worth writing about publicly:
 
 > A public market data feed tells you a cancel happened at your price level. It
 > does not tell you whether that cancel was **ahead of** or **behind** your order.
-> Ahead means you moved up the queue. Behind means you didn't.
+> Ahead means you moved up the queue. Behind means you did not.
 
 You cannot resolve this. So model both bounds:
 - **Optimistic:** every cancel at your level was ahead of you.
@@ -449,17 +452,17 @@ Also build:
 1. **Latency model.** Your order takes N microseconds to reach the exchange. The
    book moves in between. Make N configurable and show P&L sensitivity to it.
 2. **Adverse selection measurement.** After you fill, where does the mid go over
-   the next 100ms / 1s / 10s? If it consistently moves against you, you're being
-   picked off — quantify it.
+   the next 100ms / 1s / 10s? If it consistently moves against you, you are being
+   picked off, and the size of that effect should be measured.
 3. **Transaction costs.** Exchange fees, rebates for passive fills. Maker-taker
    changes the sign of many strategies.
 
-**Done:** the headline chart. Same trivial strategy, three fill models — naive
-touch-fill, optimistic queue, pessimistic queue — plotted P&L side by side. The
-gap between naive and pessimistic is the entire point of the project.
+**Done:** the headline chart. One trivial strategy under three fill models, naive
+touch-fill, optimistic queue and pessimistic queue, with P&L plotted side by side.
+The gap between naive and pessimistic is the entire point of the project.
 
 Run a strategy you *know* is unprofitable and confirm it loses money. A backtester
-that can't produce a loss is broken.
+that cannot produce a loss is broken.
 
 ---
 
@@ -483,26 +486,27 @@ safely. Never silently wrong.
 
 ### Phase 8 — Write-up (shipped August 2026)
 
-*Done. The README is the deliverable and it now leads with the verification
-claim. The engineering phases that follow it are numbered 9-12 —
-see [`build-plan-9-12.md`](build-plan-9-12.md), which supersedes the numbering
+*Done. The README is the deliverable, and it now leads with the verification
+claim. The engineering phases that follow it are numbered 9-12; see
+[`build-plan-9-12.md`](build-plan-9-12.md), which supersedes the numbering
 below and the September 2027 timeline in section 7.*
 
 The README is the deliverable a recruiter actually sees. Structure:
 
-1. One paragraph: what it is, one sentence on why it's hard.
+1. One paragraph: what it is, one sentence on why it is hard.
 2. **The verification claim, up front.** "Reconstructs NASDAQ's book for
    [symbol] on [date], validated against [oracle], across N million messages."
 3. Latency histogram, with the hardware counters behind each optimization.
 4. The queue-position fill comparison chart.
-5. Architecture section — the dense tick array, the intrusive lists, and *why*.
+5. Architecture section: the dense tick array, the intrusive lists, and *why*.
 6. Reproduction instructions that actually work on a clean machine.
 
-Then: one technical blog post. Best candidates are the queue-position ambiguity
-problem (novel and interesting to practitioners) or the cache-layout work with
-before/after counters (concrete and verifiable). Post it. Engineers at these firms
-read this material, and a post that lands gets you replies from people who work
-there — which is worth more than any number of cold applications.
+Then one technical blog post. The best candidates are the queue-position
+ambiguity problem, which is novel and interesting to practitioners, or the
+cache-layout work with before/after counters, which is concrete and verifiable.
+Post it. Engineers at these firms read this material, and a post that lands gets
+you replies from people who work there, which is worth more than any number of
+cold applications.
 
 ---
 
@@ -545,7 +549,7 @@ The project does not teach these, and they are what the screen tests:
 - **C++ fundamentals.** Move semantics, RAII, templates, `constexpr`, the memory
   model. Read *Effective Modern C++*, then *C++ Concurrency in Action*.
 - **DS&A in the extended-collaborative format.** Take one problem, solve it, then
-  keep extending it as constraints change. That's the format these firms use.
+  keep extending it as constraints change. That is the format these firms use.
   Speed-rep LeetCode does not prepare you for it.
 - **CV rewrite.** Your current one reads as data analyst. Reframe in systems
   language where honest, and put this project at the top.
@@ -554,23 +558,23 @@ The project does not teach these, and they are what the screen tests:
 
 ## 9. First session checklist
 
-Closed 2026-08-28, long after the fact. These were the day-one items and every
+Closed 2026-08-28, long after the fact. These were the day-one items, and every
 one of them was done within the first sessions; the boxes were simply never
 ticked, so the plan went on asserting that the project had not started. A
 checklist that disagrees with the repository is worse than no checklist.
 
-- [x] `git init itchbook`, push empty repo with MIT license — `LICENSE`
-- [x] CMake skeleton building an empty binary with `-Werror` and sanitizers —
-      `CMakeLists.txt`, and `scripts/verify-local.sh` builds an ASan/UBSan
+- [x] `git init itchbook`, push empty repo with MIT license (`LICENSE`)
+- [x] CMake skeleton building an empty binary with `-Werror` and sanitizers
+      (`CMakeLists.txt`), and `scripts/verify-local.sh` builds an ASan/UBSan
       configuration on every run
-- [x] Download one ITCH day into `data/raw/` — licensed, gitignored, and the
+- [x] Download one ITCH day into `data/raw/`: licensed, gitignored, and the
       whole of phases 9-12 runs off it
-- [x] Download the ITCH 5.0 spec PDF, print the message table — the offsets were
+- [x] Download the ITCH 5.0 spec PDF, print the message table. The offsets were
       later triangulated three independent ways for phase 12.3, which found a
       font-decoding bug in one extraction pass
-- [x] Write `Reader` — stream the gz, count total bytes —
-      `include/itchbook/itch/reader.hpp`
-- [x] Write the framing loop, print the first 100 message type bytes —
-      `include/itchbook/itch/parser.hpp`
-- [x] Confirm the type distribution looks like a market and not like noise —
-      `tools/itch_census.cpp`
+- [x] Write `Reader`, stream the gz and count total bytes
+      (`include/itchbook/itch/reader.hpp`)
+- [x] Write the framing loop, print the first 100 message type bytes
+      (`include/itchbook/itch/parser.hpp`)
+- [x] Confirm the type distribution looks like a market and not like noise
+      (`tools/itch_census.cpp`)

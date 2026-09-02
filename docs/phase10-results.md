@@ -2,37 +2,38 @@
 
 Every latency figure in this repository before phase 10 was **handler cost**:
 cycles between two `rdtsc` reads around a function call, one thread, over a feed
-already in memory. 82 cycles per message is a true statement about a function
-and it is not a latency. This phase measures the thing a trading system means by
-the word — bytes arriving to book updated, across a thread boundary, through a
-queue, under a load that may exceed what the consumer can absorb.
+already in memory. 82 cycles per message is a true statement about a function,
+and it is not a latency. What a trading system means by the word is the interval
+from bytes arriving to book updated, taken across a thread boundary with a queue
+in the middle. The load may exceed what the consumer can absorb. That interval
+is what this phase measures.
 
 > **Read `docs/phase10-methodology.md` first.** It was written before any of
-> this existed and it is the reason several decisions below look more paranoid
+> this existed, and it explains why several decisions below look more cautious
 > than the code needs.
 
 ## Where these numbers come from
 
-**Bare metal.** An i7-11700K — eight physical cores, sixteen logical — booted
-from a USB into an Ubuntu 26.04 live session, with the pipeline pinned to CPUs
-7, 6 and 5, which on this host are three distinct physical cores. The run was
-made as root, so `SCHED_FIFO` and `mlockall` were granted rather than requested
-and denied. `/proc/cpuinfo` carries no `hypervisor` flag; `tools/cpu_jitter`
-confirms what that is worth below.
+**Bare metal.** An i7-11700K, with eight physical cores and sixteen logical, was
+booted from a USB into an Ubuntu 26.04 live session. The pipeline was pinned to
+CPUs 7, 6 and 5, which on this host are three distinct physical cores. The run
+was made as root, so `SCHED_FIFO` and `mlockall` were granted rather than
+requested and denied. `/proc/cpuinfo` carries no `hypervisor` flag, and
+`tools/cpu_jitter` confirms below what that is worth.
 
 That sentence is the whole difference between this document and the three
 versions of it that came before. Every earlier attempt was made in a WSL2 guest,
-and every one of them reported `NO RATE QUALIFIED` — the load generator missed
+and every one of them reported `NO RATE QUALIFIED`: the load generator missed
 its own schedule at every rate on the ladder, so the numbers described the
 generator. Those runs are kept in the comparison below, because two machines
 measured the same way say more than either alone.
 
 ## The machine passed its entrance exam
 
-`docs/phase10-methodology.md` §1 asks for one thing before anything else: run
-the sender alone, against a port nothing is listening on, and see whether it can
-hold a schedule. If it cannot, nothing measured afterwards is about the
-pipeline. Recorded under `validation/sender-qualification/`:
+Before anything else, §1 of `docs/phase10-methodology.md` asks for a single
+check. Run the sender alone, against a port nothing is listening on, and see
+whether it can hold a schedule. Nothing measured after a failed check is about
+the pipeline. The results are recorded under `validation/sender-qualification/`:
 
 | host | rate | p50 | p99 | **p99.9** | worst |
 |---|---:|---:|---:|---:|---:|
@@ -41,20 +42,22 @@ pipeline. Recorded under `validation/sender-qualification/`:
 | WSL2 | 200,000 msg/s | 30 | 22,490 | 106,002 | 1,338,978 |
 | WSL2 | 83,849 msg/s (1×) | 40 | 28,758 | 294,423 | 4,319,590 |
 
-Nanoseconds; the bar is 10,000 at p99.9. Bare metal clears it by **217×** at
-200,000 msg/s and by **12×** at one times real time. The same binary on the same
-silicon under a hypervisor missed it by 10.6× and 29×. Nothing about the program
-changed between those rows — only what was underneath it.
+The units are nanoseconds and the bar is 10,000 at p99.9. Bare metal clears it
+by **217×** at 200,000 msg/s and by **12×** at one times real time. Under a
+hypervisor the same binary on the same silicon missed it by 10.6× and 29×.
+Nothing about the program changed between those rows; what changed was the layer
+underneath it.
 
-Both bare-metal rows record `scheduler_granted: true`, `memory_locked: true` and
-zero send errors, and both achieved exactly the rate they were offered.
+Both bare-metal rows record `scheduler_granted: true` and `memory_locked: true`,
+with zero send errors, and both achieved exactly the rate they were offered.
 
 ## What the hypervisor was actually costing
 
-`tools/cpu_jitter` asks the question underneath every latency figure in this
-phase: a thread pinned to a CPU, asking for nothing, reading a monotonic clock
-in a loop. A gap between consecutive reads is time the thread was **not
-executing**, because nothing in the loop can take longer than a clock read.
+`tools/cpu_jitter` puts a thread on a pinned CPU, asks the kernel for nothing,
+and reads a monotonic clock in a loop. Nothing in that loop can take longer than
+a clock read, so a gap between consecutive reads is time during which the thread
+was **not executing**. The question sits underneath every latency figure in this
+phase.
 
 | host | CPU | gaps/s > 10 µs | gaps/s > 100 µs | gaps/s > 1 ms | worst gap |
 |---|---:|---:|---:|---:|---:|
@@ -65,101 +68,106 @@ executing**, because nothing in the loop can take longer than a clock read.
 | WSL2 | 15 (isolated) | 1,355 | 96 | 4.4 | 11,087,271 ns |
 | WSL2 | 5 (not isolated) | 1,306 | 79 | 3.3 | 9,850,366 ns |
 
-`validation/cpu-jitter-baremetal.json` and `validation/cpu-jitter.json`. Roughly
-**45× fewer** interruptions over 10 µs, **none at all** over 100 µs against ~90 a
-second, and a worst case **250× smaller** — 43 µs against 11 ms.
+The two files are `validation/cpu-jitter-baremetal.json` and
+`validation/cpu-jitter.json`. Bare metal shows roughly **45× fewer**
+interruptions over 10 µs and **none at all** over 100 µs, against ~90 a second
+under WSL2. The worst case is **250× smaller**: 43 µs against 11 ms.
 
 One note on those two files. Both carry `holds_a_cpu: false`, and for the
-bare-metal one that field is wrong: the binary that wrote it gated on *literally
-zero* gaps over 10 µs, a bar no real machine clears. The tool now gates on gaps
-over 100 µs — long enough to move a microsecond-scale p99.9, where a 43 µs blip
-at 30 a second is not — and recomputing from the numbers those same files record
-gives **true** for bare metal and false for WSL2. The gap counts in the table
-above are what the tool measured and are unaffected; only the verdict field
-predates the fix.
+bare-metal one that field is wrong. The binary that wrote it gated on *literally
+zero* gaps over 10 µs, which is a bar no real machine clears. The tool now gates
+on gaps over 100 µs, long enough to move a microsecond-scale p99.9 in a way that
+a 43 µs blip at 30 a second is not, and a recomputation from the numbers those
+same files record gives **true** for bare metal and false for WSL2. The gap
+counts in the table above are what the tool measured, so they are unaffected;
+only the verdict field predates the fix.
 
-Three things the WSL2 side of that table settles, and they are worth keeping
+The WSL2 side of that table settles three questions. Each is worth keeping,
 because each was a plausible theory that turned out to be wrong:
 
-**`isolcpus` bought nothing.** It is available under WSL2 —
+**`isolcpus` changed nothing.** It is available under WSL2, since
 `kernelCommandLine = isolcpus=13,14,15` in `.wslconfig` puts it in
-`/proc/cmdline` — and the isolated CPUs came out marginally *worse* than the
-ones left in the general pool. It removes a CPU from the guest scheduler's
-load-balancing mask and has no representation on the host side at all.
+`/proc/cmdline`, and the isolated CPUs came out marginally *worse* than the ones
+left in the general pool. The setting removes a CPU from the guest scheduler's
+load-balancing mask, and it has no representation on the host side at all.
 
 **The guest could not see what it was losing.** Over 20 seconds the kernel
-credited each thread with 19,998.7 ms of CPU against 20,000.0 ms of wall and
+credited each thread with 19,998.7 ms of CPU against 20,000.0 ms of wall, and it
 reported **5 involuntary context switches** against roughly 27,000 gaps longer
-than 10 µs. `/proc/pressure/cpu` read 0.00 and `/proc/stat` steal read 0. A
-guest losing the CPU underneath the kernel cannot diagnose itself from either.
+than 10 µs. `/proc/pressure/cpu` read 0.00, and `/proc/stat` steal read 0. When
+a guest loses the CPU underneath its own kernel, neither file can diagnose the
+loss.
 
-**It happened to every CPU at once.** The ten worst gaps on all four clustered
+**It happened to every CPU at once.** On all four CPUs the ten worst gaps fell
 in the same ~300 ms window, each around 10 ms, isolated and non-isolated alike.
-That is the whole VM being descheduled, not per-CPU scheduling — which is why no
-in-guest setting reached it and the remedy was a different host rather than a
-different flag.
+The whole VM was being descheduled, which is why no in-guest setting reached the
+problem and why the remedy was a different host instead of a different flag.
 
-`nproc` is worth one warning. It reports the calling shell's *affinity mask*, so
-under `isolcpus=13,14,15` it returned **13**, not 16 — and `pinned-run.sh`'s
-last-three default therefore proposed CPUs that were SMT siblings. The script now
-reads `core_id` from sysfs and says so when two of the three share a core.
+`nproc` deserves one warning. It reports the calling shell's *affinity mask*, so
+under `isolcpus=13,14,15` it returned **13** where 16 was expected, and the
+last-three default in `pinned-run.sh` therefore proposed CPUs that were SMT
+siblings. The script now reads `core_id` from sysfs and says so when two of the
+three share a core.
 
 ## The clock
 
 `tsc_offset` pins two threads to two separate CPUs and ping-pongs 200,000
 samples in each direction. The offset comes back **smaller than the method can
-resolve** — bounded rather than measured, which is what healthy hardware gives —
-against a wire-to-book p50 in the microseconds. The figures are in the generated
-table below rather than typed here, because they move run to run: four
-successive runs on this hardware reported 47, 48, 58 and 73 ns of resolution. A
-figure hand-copied into prose is a figure that is wrong by the next run.
+resolve**, so it is bounded and not measured, which is what healthy hardware
+gives, and the wire-to-book p50 it sits against is in the microseconds. The
+figures appear in the generated table below instead of being typed here, because
+they move from run to run: four successive runs on this hardware reported 47,
+48, 58 and 73 ns of resolution. A figure hand-copied into prose is a figure that
+is wrong by the next run.
 
 ## One thing these numbers do not explain
 
 The p99.9 column climbs to 1.5 ms at 5× and 3.4 ms at 10× on rows that are
-otherwise clean — no drops, sender holding its schedule to under a microsecond,
-peak ring occupancy of 2,318 and 5,107 slots out of 65,536. There is not enough
-queue at those rates for queueing to explain it, and `cpu_jitter` measured a
-worst gap of 43 µs on the same machine minutes earlier, so it is not obviously
-the scheduler either.
+otherwise clean. Those rows record no drops and a sender holding its schedule to
+under a microsecond, and peak ring occupancy was 2,318 and 5,107 slots out of
+65,536. There is not enough queue at those rates for queueing to explain the
+climb, and `cpu_jitter` measured a worst gap of 43 µs on the same machine
+minutes earlier, so the scheduler is not an obvious explanation either.
 
-It does not invalidate the run — the sender qualified, the drop accounting is
-sound, and p50 and p99 are stable across a 25-fold rate change. But the far tail
-below the knee is not yet accounted for, and it should be understood before any
-of it is quoted as a property of the pipeline rather than of the measurement.
+The run remains valid. The sender qualified and the drop accounting is sound.
+Across a 25-fold rate change, p50 and p99 are stable. What is missing is an
+account of the far tail below the knee, and that account should exist before any
+of it is quoted as a property of the pipeline instead of a property of the
+measurement.
 
 
 ## What the sweep does
 
 `bench/rate-sweep.py` offers the same feed at a ladder of rates and records what
-comes out. Four decisions in it are worth stating, because each was a way of
-being wrong:
+comes out. Four decisions inside it are worth stating, because each one was a
+way of being wrong:
 
 **One times real time is computed, not quoted.** The ladder is anchored to the
-feed's own clock — `itch_census --timing` reports the span between the first and
+feed's own clock: `itch_census --timing` reports the span between the first and
 last timestamp in the file, and the base rate is the message count over that
 span. A real-time figure typed into a script is a constant that drifts from the
 feed it claims to describe. (Standing rule 7 applies to inputs, not only to
 outputs.)
 
-**Best of N, not the median.** Latency noise here is one-sided: a descheduled
-thread or a competing process can only make a run slower. The best run at each
-rate is the one that measured the pipeline rather than the machine's other
-tenants — the same reasoning phase 9.9 used after a single outlier put the
+**Best of N, not the median.** Latency noise here is one-sided, because a
+descheduled thread or a competing process can only make a run slower. At each
+rate the best run is the one that measured the pipeline and not the machine's
+other tenants. Phase 9.9 used the same reasoning after a single outlier put the
 within-variant spread of a reproducible 1.9× effect at 190%. Runs that dropped
 and runs that did not are never pooled: a run that lost half the feed did almost
-no work, and letting it win its rate is how a cliff gets smoothed into a slope.
+no work, and a rate won by such a run turns a cliff into a slope.
 
 **The ladder extends itself until something drops.** If the top rung is still
-clean, the sweep doubles and runs again. Otherwise the "max sustainable rate" is
-a fact about how high the script was told to count, and it is reported as a
-lower bound (`≥`) rather than as a measurement whenever the cliff was not
-actually reached.
+clean, the sweep doubles the rate and runs again. Without that, the "max
+sustainable rate" would be a fact about how high the script was told to count,
+so whenever the cliff was not actually reached the figure is reported as a lower
+bound (`≥`) instead of as a measurement.
 
-**Kernel drops and ring drops are never added together.** On loopback the
-socket buffer can overflow before the ring does. A sustainable rate requires zero
-of both, and `/proc/net/udp` being unreadable is reported as UNKNOWN rather than
-as zero — "no drops" and "this platform cannot tell you" are different claims.
+**Kernel drops and ring drops are never added together.** On loopback the socket
+buffer can overflow before the ring does. A sustainable rate requires zero of
+both. When `/proc/net/udp` cannot be read the sweep reports UNKNOWN and not
+zero, because "no drops" and "this platform cannot tell you" are different
+claims.
 
 <!-- generated:begin -->
 
@@ -210,40 +218,40 @@ Offered is what the sender was told to send; achieved is what it managed. They a
 
 ## What the shape says
 
-Two observations survive the caveats, because they are about shape rather than
+Two observations survive the caveats, because both concern shape rather than
 magnitude.
 
-**p50 falls as the offered rate rises, then flattens.** That is not the
-pipeline getting faster. At low rates the two threads are descheduled between
-messages and every message pays a wake-up; the arrival stamp is taken once per
-`recvmmsg` batch, and at one times real time a batch is usually one packet. As
-the rate climbs the pipeline stays hot and the batch fills, so the per-message
-cost falls toward the work itself. A single-threaded benchmark cannot show this
-at all, which is most of why phase 10 exists.
+**p50 falls as the offered rate rises, then flattens.** The cause is not extra
+speed in the pipeline. At low rates the two threads are descheduled between
+messages and every message pays a wake-up, and since the arrival stamp is taken
+once per `recvmmsg` batch, at one times real time a batch is usually one packet.
+As the rate climbs the pipeline stays hot and the batch fills, so the
+per-message cost falls toward the work itself. A single-threaded benchmark
+cannot show this at all, which is most of why phase 10 exists.
 
 **The tail leaves long before the drops do.** p99.9 climbs by orders of
-magnitude while p50 is still flat and while both drop counters are still zero.
-The knee is a queueing phenomenon and the cliff is a capacity one, and the gap
-between them is the region where a system is already failing its latency
-budget while every counter it keeps still reads clean. That gap is the argument
-for measuring the distribution rather than a mean, and for keeping the bucket
+magnitude while p50 is still flat and while both drop counters still read zero.
+The knee is a queueing phenomenon and the cliff is a capacity one. Between them
+lies the region where a system is already failing its latency budget although
+every counter it keeps still reads clean, and that region is the argument for
+measuring the distribution instead of a mean, and for keeping the bucket
 histogram beside the curve.
 
 ## A hypothesis that died
 
 The sweep reports the sender missing its schedule at *every* rate, and the
-lateness is worse at low rates than at high ones — 33 ms at one times real time
-against 600 µs at twenty times. That is backwards from what a load generator
-usually does, and it had an obvious mechanism: at low rates the sender must
-sleep between packets, and `wire_to_book`'s book thread spins on the ring
-without pausing or yielding, so on two cores the spin owns one and the sender's
-`nanosleep` cannot get a core back to wake up on time.
+lateness is worse at low rates than at high ones: 33 ms at one times real time
+against 600 µs at twenty times. A load generator usually behaves the other way
+round, and an obvious mechanism was available. At low rates the sender must
+sleep between packets, and the book thread in `wire_to_book` spins on the ring
+without pausing or yielding, so on two cores the spin owns one core and the
+sender's `nanosleep` cannot get a core back in time to wake up on schedule.
 
 The first measurement agreed emphatically. Sender p99.9 lateness with nothing
-else running: 26 µs. With the pipeline consuming: 14,277,397 ns. **539×.** A
-bounded spin with a yield was written to fix it.
+else running was 26 µs. With the pipeline consuming it was 14,277,397 ns, a
+factor of **539×**. A bounded spin with a yield was written to fix it.
 
-It fixed nothing, because there was nothing there. Best of five runs per
+It fixed nothing, because there was nothing there to fix. Best of five runs per
 configuration:
 
 | | sender alone | sender + consumer |
@@ -251,17 +259,18 @@ configuration:
 | best of 5 | 811,999 ns | 562,005 ns |
 | range across repeats | 812 µs – 40 ms | 562 µs – 45 ms |
 
-Indistinguishable, and nominally *better* with the consumer running. The
-original pair was one sample from each side of a distribution that spans forty
-milliseconds; the 539× was noise wearing a mechanism's clothes. The scheduler
-jitter in this container is simply larger than anything being measured — which
-is what `NO RATE QUALIFIED` already said, in one line, before any of this.
+The two columns are indistinguishable, and the figure is nominally *better* with
+the consumer running. The original pair was one sample from each side of a
+distribution that spans forty milliseconds, so the 539× was noise and not a
+mechanism. Scheduler jitter in this container is larger than anything being
+measured, which is what `NO RATE QUALIFIED` had already said, in one line,
+before any of this work began.
 
 The yield was reverted and the spin left unbounded, which is the right design
-for a consumer that owns a core. The episode is recorded rather than deleted
-for two reasons: it is the second time in this phase that a single-sample
-measurement produced a confident and wrong mechanism, and the first thing a
-reader of the sweep output will reach for is the same hypothesis.
+for a consumer that owns a core. Two reasons keep this episode in the document.
+It is the second time in this phase that a single-sample measurement produced a
+confident and wrong mechanism, and a reader of the sweep output will reach for
+the same hypothesis first.
 
 <!-- generated:overlap:begin -->
 
@@ -320,52 +329,52 @@ Stall columns are **poll counts, not time**, and are not comparable across the t
 
 ## What 10.8 does and does not close
 
-Phase 9 reported a full trading day end to end and then reported, honestly and
+Phase 9 reported a full trading day end to end, and it reported, honestly and
 repeatedly, that a large part of that number was gzip. Those two costs were
-strictly sequential: `parse()` called `gzread`, then the handler, then `gzread`
-again, on one thread. The reader thread puts them on two, through the same ring
-phase 10 already built — a different slot type, a chunk instead of a message,
-because one publish per 64 KB is a rounding error where one publish per 40 bytes
-would not be.
+strictly sequential: on one thread, `parse()` called `gzread`, then the handler,
+then `gzread` again. The reader thread puts them on two threads, through the
+same ring phase 10 already built, with a different slot type that carries a
+chunk instead of a message, because one publish per 64 KB is a rounding error
+where one publish per 40 bytes would not be.
 
-What it does not close is the *decompression* cost itself. Overlap hides the
-smaller half behind the larger one; it does not make either faster, and the
-ceiling above says exactly how much is on the table. A feed that is
-decompression-bound has almost nothing to gain and the table will say so.
+The *decompression* cost itself remains open. Overlap hides the smaller half
+behind the larger one and makes neither faster, and the ceiling above says
+exactly how much is available. A feed that is decompression-bound has almost
+nothing to gain, and the table will say so.
 
 **Two bugs, and only one of them was findable by comparing books.**
 
 The first hung. The producer's fill limit was `c.len + 2 + 65535 > ChunkBytes`,
-which with the default 64 KB chunk is `c.len + 65537 > 65536` — true on the
-first iteration and every one after. It broke out before reading a byte,
-published nothing, never reached EOF, and spun forever. The reservation was
-larger than the buffer it was reserving from. It was found by running a tool and
-waiting, which is the slowest way to find anything.
+which with the default 64 KB chunk is `c.len + 65537 > 65536`, true on the first
+iteration and on every one after. The loop exited before reading a byte,
+published nothing, and never reached EOF, so it spun forever. The reservation
+was larger than the buffer it was reserving from. This one was found by running
+a tool and waiting, which is the slowest way to find anything.
 
 The second was a heap-buffer-overflow, and no book comparison could have caught
 it. A message that does not fit alongside what is already staged is carried
-whole to the next chunk — and the carry was `memcpy`'d in at the top of that
-chunk with no size check. A 902-byte message behind a 50-byte one, with a
-256-byte chunk, wrote 902 bytes into 256. ASan caught it on the first run of the
-new test. It could never fire on real data, because ITCH messages top out at 50
-bytes and the default chunk is 64 KB — which is exactly why it needed a test
-that chooses hostile chunk sizes rather than realistic ones. The check now
-happens on the read, where whether a message fits is a property of the message
-and the chunk size rather than of what happens to be staged.
+whole to the next chunk, and the carry was `memcpy`'d in at the top of that
+chunk with no size check. With a 256-byte chunk, a 902-byte message behind a
+50-byte one wrote 902 bytes into 256. ASan caught it on the first run of the new
+test. On real data it could never fire, because ITCH messages reach at most 50
+bytes and the default chunk is 64 KB, which is exactly why the test has to
+choose hostile chunk sizes instead of realistic ones. The check now happens on
+the read, where whether a message fits is a property of the message and the
+chunk size and not of what happens to be staged.
 
-`tests/test_reader_thread.cpp` compares the **message stream**, not the book:
-same types, same bytes, same order, same count, same failures on the same
-malformed input, at chunk sizes of 512 B, 1 KB and 4 KB where almost every
-message straddles a boundary. Two paths can agree on a book while disagreeing
-about which messages they saw.
+`tests/test_reader_thread.cpp` compares the **message stream**, not the book. It
+requires the same types, the same bytes, the same order and count, and the same
+failures on the same malformed input, at chunk sizes of 512 B, 1 KB and 4 KB
+where almost every message straddles a boundary. Two paths can agree on a book
+while disagreeing about which messages they saw.
 
 ## Figures
 
-- `docs/figures/rate-latency.svg` — p50/p99/p99.9 against offered rate,
+- `docs/figures/rate-latency.svg`: p50/p99/p99.9 against offered rate,
   log–log, with the knee and the max sustainable rate drawn as vertical rules.
-- `docs/figures/wire-to-book-hist.svg` — the distribution at the max
+- `docs/figures/wire-to-book-hist.svg`: the distribution at the max
   sustainable rate. Two pipelines can share a p50 and a p99 and have completely
-  different shapes; the second is a mechanism you can go and find.
+  different shapes, and a shape is a mechanism you can go and find.
 
 Both regenerate from the committed JSON:
 
@@ -384,6 +393,6 @@ python3 bench/rate-sweep.py --build build --out validation/rate-sweep.json \
 python3 scripts/phase10-report.py
 ```
 
-On a host with cores to spare, pin the two threads with `--cpu-recv` and
-`--cpu-book` on `wire_to_book` and run `tools/tsc_offset` first. If the offset
+On a host with spare cores, pin the two threads with `--cpu-recv` and
+`--cpu-book` on `wire_to_book`, and run `tools/tsc_offset` first. If the offset
 is not measurable, neither is the latency.

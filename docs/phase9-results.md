@@ -3,13 +3,13 @@
 **30 December 2019. 268,744,780 messages. 8,906 securities.**
 
 Phases 1–8 reconstructed one symbol. This one reconstructs the market, and the
-interesting result is not that it worked — it is what stopped being true when it
-did. Three claims this project had been carrying were refuted by the run, and one
-prediction, written down before it, was kept.
+interesting result is what stopped being true when it did, rather than the fact
+that it worked at all. The run refuted three claims this project had been
+carrying, and it kept one prediction that had been written down beforehand.
 
 Everything numeric below is generated from the artifacts in `validation/` by
 `scripts/phase9-report.py`, which CI runs with `--check`. Nothing here was read
-off a terminal and typed in.
+from a terminal and typed in.
 
 <!-- generated:begin -->
 
@@ -170,117 +170,125 @@ What is left is contention: the machine was not idle; top consumers were WindowS
 
 ### Decompression was never the bottleneck
 
-The plan asserted, for two revisions, that an end-to-end run would be
-"decompression-bound by 3–7×". It is not bound by decompression at all: framing
-the whole 8.25 GB file costs a fifth of the run. That claim came from an estimate
-of zlib's throughput made without measuring zlib, and one flagless pass of
-`itch_census` settled it.
+The plan asserted, over two revisions, that an end-to-end run would be
+"decompression-bound by 3–7×". The run is not bound by decompression at all:
+framing the whole 8.25 GB file costs a fifth of it. That claim came from an
+estimate of zlib's throughput made without measuring zlib, and a single flagless
+pass of `itch_census` settled the matter.
 
-The consequence runs forward. Phase 10's reader thread was justified partly by
-closing this gap; it can recover a fifth of the wall clock at best, and that is
-now what it will be sold as.
+The consequence carries forward. Phase 10's reader thread was justified partly
+by closing this gap. It can recover a fifth of the wall clock at best, and that
+is now the claim made for it.
 
 ### The cache-hot benchmark does not survive scale, and that is the phase
 
 `bench/` reports 22.8 ns per message on a one-symbol feed whose working set is a
-few megabytes. The same code over a whole day — 8,906 books, a reference map and
-bands that together are most of half a gigabyte — costs several times that per
-message. Nothing about the algorithm changed. The working set did.
+few megabytes. Over a whole day the same code costs several times that per
+message, with 8,906 books and a reference map and bands that together come to
+most of half a gigabyte. Nothing about the algorithm changed. The working set
+did.
 
 That was predicted before the run rather than explained after it, which is the
-only reason it is worth anything. The census had already priced the mechanism:
-adding live-order tracking to a framing pass cost 49 s for ~285 M hash operations
-against a 67 MB table — about 172 ns each, memory-bound — and the book's reference
-map does the same shape of work.
+only reason it is worth anything. The census had already priced the mechanism.
+Live-order tracking added to a framing pass cost 49 s for ~285 M hash operations
+against a 67 MB table, about 172 ns each and memory-bound, and the book's
+reference map does the same kind of work.
 
-**And then the prediction stopped being true, because the system got faster.**
-The table above grades it twice on purpose. Against the configuration it was
-written for — the reference map pre-sized to twice the peak, which was the
-default at the time — every one of its three bounds held. Phase 9.9 then swept
-the load factor, found 2.42x sitting in it, and moved the default; the same code
-on the same file now runs *below* the range predicted for it.
+**And then the prediction stopped being true, because the system became faster.**
+The table above grades it twice deliberately. Against the configuration it was
+written for, with the reference map pre-sized to twice the peak, which was the
+default at the time, every one of its three bounds held. Phase 9.9 then swept
+the load factor, found 2.42x available in it, and moved the default. The same
+code on the same file now runs *below* the range predicted for it.
 
 Both rows belong in this document. Deleting the first would hide that the
-prediction was right about the mechanism and the magnitude; deleting the second
-would leave a claim standing that the current build does not support. An earlier
-version of the script that generates this section printed the word "kept" as a
-literal beside whatever the latest numbers happened to be, and went on printing
-it after they moved outside the range. It computes the verdict now.
+prediction was right about the mechanism and the magnitude, and deleting the
+second would leave a claim standing that the current build does not support. An
+earlier version of the script that generates this section printed the word
+"kept" as a literal beside whatever the latest numbers happened to be, and it
+continued to print it after they moved outside the range. The verdict is
+computed now.
 
 ### The band is where the design actually failed
 
-A dense array of price levels near the touch is the phase-3 story: the levels that
-matter stay in L1. Across 8,906 symbols, at 512 slots per side, the median symbol
-has a fifth of its adds outside that array and nearly a third of symbols have more
-than half.
+A dense array of price levels near the touch is the phase-3 story: the levels
+that matter stay in L1. Across 8,906 symbols, at 512 slots per side, the median
+symbol has a fifth of its adds outside that array, and nearly a third of symbols
+have more than half.
 
-The aggregate figure — 13% — is the one a less careful write-up would report, and
-it is dominated by a handful of very active symbols whose bands happen to work. The
+The aggregate figure of 13% is the one a less careful write-up would report, and
+a handful of very active symbols whose bands happen to work dominate it. The
 per-symbol distribution is the honest picture.
 
 Three distinct failures, and they want three different fixes:
 
 1. **Never evaluated.** The re-centre policy looks once, at 1,000 adds. Most
-   symbols never get there, so their bands are never checked, and they are the
-   worst offenders by mean. They are also cheap: illiquid symbols contribute
-   little in absolute terms. A policy that looked at *elapsed session time* rather
-   than an add count would reach them.
-2. **Judged fine, then drifted.** A handful of large names — FB, BABA, NFLX —
-   passed the check at 1,000 adds and ended the day almost entirely off-band. One
-   look per session is not enough for a symbol that trades all day. This is the
-   expensive failure, and the fix is a standing check rather than a one-shot.
+   symbols never reach that count, so their bands are never checked, and they
+   are the worst offenders by mean. They are also cheap, since illiquid symbols
+   contribute little in absolute terms. A policy keyed to *elapsed session time*
+   instead of an add count would reach them.
+2. **Judged fine, then drifted.** A handful of large names, among them FB, BABA
+   and NFLX, passed the check at 1,000 adds and ended the day almost entirely
+   off-band. One look per session is not enough for a symbol that trades all
+   day. This is the expensive failure, and the fix is a standing check in place
+   of a one-shot.
 3. **No affordable band exists.** GOOGL, GOOG, AMZN and TSLA are 98–100% off-band
    and re-centring did not help, because at $1,340 a 512-slot penny grid spans
    ±0.19% of the price. The prediction written into the plan before the run said
-   the failures would be the high-priced names and that the honest conclusion
-   would be that a production system needs a per-symbol tick regime rather than
+   the failures would be the high-priced names, and that the honest conclusion
+   would be that a production system needs a per-symbol tick regime instead of
    one global grid. Both halves held.
 
-None of this is a correctness problem, and that is worth stating plainly: an
-off-band level lives in the cold `std::map` and is found by price, so the
-reconstruction is identical either way. CI asserts exactly that, sweeping the band
-width and requiring byte-identical output. The band is a locality knob, and this
-section is a measurement of how well it was set — not of whether the book is right.
+None of this is a correctness problem, and that deserves to be stated plainly:
+an off-band level lives in the cold `std::map` and is found by price, so the
+reconstruction is identical either way. CI asserts exactly that, with a sweep of
+the band width that requires byte-identical output. The band is a locality
+parameter, and this section measures how well it was set rather than whether the
+book is right.
 
 ### The stub quotes, which no generated feed has
 
 77.6% of the symbols that quoted posted an order at or above $100,000, and 80.2%
 posted one at or below $0.01, clustered on $199,999.99, $199,999.00 and
-$100,000.00. Those are two-sided quoting obligations parked where they cannot
+$100,000.00. Those are two-sided quoting obligations placed where they cannot
 fill. Nothing on the wire marks one.
 
-They are a permanent, irreducible population in the overflow map, and they are why
-a symbol's *quoted* price range cannot size a band: for three symbols in four it
-spans the whole price axis. No generator in this repository emits one, so nothing
-here would ever have shown it — which is the argument
+They form a permanent and irreducible population in the overflow map, and they
+are why a symbol's *quoted* price range cannot size a band: for three symbols in
+four it spans the whole price axis. No generator in this repository emits one, so
+nothing here would ever have shown it. That is the argument
 [`what-synthetic-data-hides.md`](writing/what-synthetic-data-hides.md) was already
 making, now with a second worked example from real bytes.
 
 ## What was verified
 
-The oracle cannot chew 268 million messages, so verification changed shape:
+The oracle cannot process 268 million messages, so verification took a different
+form:
 
 * **Global invariants**, in `scripts/full-day-check.py`: the census counts from
   the wire with no book at all, the run counts while building 8,906 of them, and
-  they must agree. Orders added, orders resting at the close, volume summed across
-  symbols, message accounting — ten of them, all holding. Two more could not run,
-  because the committed census predates the type histogram they need, and the
-  script says so and exits non-zero rather than reporting ten passes as twelve.
-* **Zero unknown references** across the whole feed. Not one symbol on one day —
-  every reference in 268 million messages named an order the book was holding.
+  the two must agree. Orders added, orders resting at the close, volume summed
+  across symbols and message accounting come to ten such invariants, all of them
+  holding. Two more could not run, because the committed census predates the type
+  histogram they need, and the script says so and exits non-zero instead of
+  reporting ten passes as twelve.
+* **Zero unknown references** across the whole feed. This covers more than one
+  symbol on one day: every reference in 268 million messages named an order the
+  book was holding.
 * **Zero locate mismatches.** Every reference resolved to an order belonging to
   the symbol the message named, which is the check `Order::locate` exists for.
 * **`--symbol` output byte-identical** to the pre-phase-9 binary, gated in CI, so
-  everything above was bought without moving the single-symbol path.
+  everything above was obtained without moving the single-symbol path.
 
 ## What is still open
 
-* The band width was set to 512 and graded, not swept. The curve of off-band
-  fraction against N is one run per point and has not been produced.
+* The band width was set to 512 and graded, and it was not swept. The curve of
+  off-band fraction against N is one run per point and has not been produced.
 * A per-symbol width, or a per-symbol tick regime, is the obvious answer to
   failure mode 3 and has not been measured. An earlier attempt to derive one from
   the census's price ranges was refuted before it was built, which is not the same
   as having tried it.
 * `h`, `W` and `B` did not occur on this day, so their handling has been exercised
-  only by a generated feed and their offsets remain unconfirmed against real bytes.
+  only by a generated feed, and their offsets remain unconfirmed against real
+  bytes.
 * One trading day. A second is the next thing that would change what is known.
